@@ -13,8 +13,12 @@
 //	        cost, modelID/providerID, time{created,completed}, path{root,cwd}.
 //	        Only rows with a usage payload are used: v1 rows need
 //	        role='assistant' and a non-null tokens object, v2 rows need
-//	        type='assistant' (session_message also stores agent-switched /
-//	        model-switched rows that carry no usage).
+//	        type='assistant' or type='compaction' (session_message also stores
+//	        agent-switched / model-switched rows that carry no usage).
+//	        `type='compaction'` rows are the compaction requests themselves; they
+//	        carry their own usage and additionally mark a context replacement
+//	        point, which is reported as model.BoundaryCompact on the first
+//	        request after them.
 //	json    <root>/storage/message/<sessionID>/<messageID>.json  (legacy, pre-sqlite)
 //	        <root>/storage/session/<projectID>/<sessionID>.json
 //
@@ -257,6 +261,21 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 type dbState struct {
 	V1 tableWatermark `json:"m"`
 	V2 tableWatermark `json:"sm"`
+	// Compact is the per-session compaction boundary state. It lives in the
+	// cursor because a compaction row and the first request after it routinely
+	// arrive in different incremental batches.
+	Compact map[string]compactMark `json:"c,omitempty"`
+}
+
+// compactMark remembers the newest compaction row seen for a session (At) and
+// the compaction whose boundary has already been emitted (Done). A v2
+// `session_message` row of type 'compaction' is a real request that carries the
+// compaction call's own usage, but the context it replaces only shows up in the
+// requests after it, so exactly one later request is marked
+// model.BoundaryCompact.
+type compactMark struct {
+	At   int64 `json:"a,omitempty"`
+	Done int64 `json:"d,omitempty"`
 }
 
 // tableWatermark is the (time_updated, id) resume point of a single table.
@@ -272,10 +291,11 @@ type tableWatermark struct {
 // idempotent for consumers that merge by DedupKey.
 func (s *dbState) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		M  *tableWatermark `json:"m"`
-		SM *tableWatermark `json:"sm"`
-		U  *int64          `json:"u"`
-		I  *string         `json:"i"`
+		M  *tableWatermark        `json:"m"`
+		SM *tableWatermark        `json:"sm"`
+		C  map[string]compactMark `json:"c"`
+		U  *int64                 `json:"u"`
+		I  *string                `json:"i"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
@@ -286,6 +306,9 @@ func (s *dbState) UnmarshalJSON(data []byte) error {
 	}
 	if wire.SM != nil {
 		s.V2 = *wire.SM
+	}
+	if wire.C != nil {
+		s.Compact = wire.C
 	}
 	if wire.U != nil {
 		s.V1.Updated = *wire.U
@@ -380,6 +403,7 @@ func (p *Parser) parseDB(ctx context.Context, src harness.Source, cur harness.Cu
 	if cur.Extra != "" {
 		_ = json.Unmarshal([]byte(cur.Extra), &state)
 	}
+	acc.useCompactionState(&state)
 	state.V1 = resetWatermark(ctx, db, tables, "message", state.V1)
 	state.V2 = resetWatermark(ctx, db, tables, "session_message", state.V2)
 
@@ -556,11 +580,15 @@ func maxTableUpdated(ctx context.Context, db *sql.DB, tables map[string]map[stri
 // watermark and advancing only that watermark.
 func readMessages(ctx context.Context, db *sql.DB, tables map[string]map[string]bool, acc *accumulator, sessions map[string]sessionInfo, state *dbState) {
 	queries := []struct {
-		table, filter string
-		wm            *tableWatermark
+		table, filter, kindExpr string
+		wm                      *tableWatermark
 	}{
-		{"message", "json_valid(data) AND json_extract(data,'$.role')='assistant' AND json_extract(data,'$.tokens') IS NOT NULL", &state.V1},
-		{"session_message", "json_valid(data) AND type='assistant' AND json_extract(data,'$.tokens') IS NOT NULL", &state.V2},
+		{"message", "json_valid(data) AND json_extract(data,'$.role')='assistant' AND json_extract(data,'$.tokens') IS NOT NULL", "''", &state.V1},
+		// The v2 table also stores the compaction requests themselves
+		// (type 'compaction'). Their usage is a real request and must stay in the
+		// ledger; the row additionally marks a context replacement point. Rows
+		// still being written ('running') carry no tokens and are skipped.
+		{"session_message", "json_valid(data) AND type IN ('assistant','compaction') AND json_extract(data,'$.tokens') IS NOT NULL", "type", &state.V2},
 	}
 	for _, q := range queries {
 		cols, ok := tables[q.table]
@@ -577,7 +605,7 @@ func readMessages(ctx context.Context, db *sql.DB, tables map[string]map[string]
 		if !complete {
 			continue
 		}
-		sqlText := "SELECT id, session_id, data, time_updated FROM " + quoteIdent(q.table) +
+		sqlText := "SELECT id, session_id, data, time_updated, " + q.kindExpr + " FROM " + quoteIdent(q.table) +
 			" WHERE " + q.filter +
 			" AND (time_updated > ? OR (time_updated = ? AND id > ?))" +
 			" ORDER BY time_updated, id"
@@ -587,10 +615,10 @@ func readMessages(ctx context.Context, db *sql.DB, tables map[string]map[string]
 		}
 		for rows.Next() {
 			var (
-				id, sid, data string
-				updated       int64
+				id, sid, data, kind string
+				updated             int64
 			)
-			if err := rows.Scan(&id, &sid, &data, &updated); err != nil {
+			if err := rows.Scan(&id, &sid, &data, &updated, &kind); err != nil {
 				continue
 			}
 			if id == "" {
@@ -601,7 +629,7 @@ func readMessages(ctx context.Context, db *sql.DB, tables map[string]map[string]
 				continue
 			}
 			info := sessions[sid]
-			acc.emit("opencode:"+id, payload, sid, info.ParentID, firstNonEmpty(info.Directory, payload.Path.Root), updated)
+			acc.emit("opencode:"+id, payload, sid, info.ParentID, firstNonEmpty(info.Directory, payload.Path.Root), updated, kind == "compaction")
 			if updated > q.wm.Updated || (updated == q.wm.Updated && id > q.wm.ID) {
 				q.wm.Updated, q.wm.ID = updated, id
 			}
@@ -674,7 +702,7 @@ func (p *Parser) parseLegacyJSON(ctx context.Context, src harness.Source, cur ha
 			sid = parent
 		}
 	}
-	acc.emit("opencode:"+id, file.messagePayload, sid, "", file.Path.Root, 0)
+	acc.emit("opencode:"+id, file.messagePayload, sid, "", file.Path.Root, 0, false)
 	return acc.batch(next), nil
 }
 
@@ -759,16 +787,34 @@ type accumulator struct {
 	order []string
 	metas map[string]model.SessionMeta
 	mord  []string
+	// marks is the per-session compaction boundary state. For sqlite sources it
+	// is the same map the cursor state holds, so a boundary found in one
+	// incremental batch survives into the next.
+	marks map[string]compactMark
+	// compactions holds the dedup keys of compaction rows: those rows are
+	// emitted like any other request but never carry the boundary themselves.
+	compactions map[string]bool
 }
 
 func newAccumulator() *accumulator {
 	return &accumulator{
-		evs:   map[string]model.UsageEvent{},
-		metas: map[string]model.SessionMeta{},
+		evs:         map[string]model.UsageEvent{},
+		metas:       map[string]model.SessionMeta{},
+		marks:       map[string]compactMark{},
+		compactions: map[string]bool{},
 	}
 }
 
-func (a *accumulator) emit(dedup string, p messagePayload, sid, parent, project string, fallbackUpdatedMS int64) {
+// useCompactionState attaches the cursor's compact state to the accumulator so
+// mutations are persisted with the next cursor.
+func (a *accumulator) useCompactionState(state *dbState) {
+	if state.Compact == nil {
+		state.Compact = map[string]compactMark{}
+	}
+	a.marks = state.Compact
+}
+
+func (a *accumulator) emit(dedup string, p messagePayload, sid, parent, project string, fallbackUpdatedMS int64, compaction bool) {
 	if dedup == "" || p.Tokens == nil {
 		return
 	}
@@ -780,6 +826,10 @@ func (a *accumulator) emit(dedup string, p messagePayload, sid, parent, project 
 	ts := payloadTime(p)
 	if ts.IsZero() {
 		ts = epochMS(fallbackUpdatedMS)
+	}
+	if compaction {
+		a.markCompaction(sid, ts)
+		a.compactions[dedup] = true
 	}
 	ev := model.UsageEvent{
 		Harness:     model.OpenCode,
@@ -794,6 +844,48 @@ func (a *accumulator) emit(dedup string, p messagePayload, sid, parent, project 
 		CostUSD:     cost,
 	}
 	a.add(ev)
+}
+
+// markCompaction records that the session's context was replaced at ts. Only the
+// newest mark per session is kept: older compactions are already covered by it.
+func (a *accumulator) markCompaction(sid string, ts time.Time) {
+	if sid == "" || ts.IsZero() {
+		return
+	}
+	if a.marks == nil {
+		a.marks = map[string]compactMark{}
+	}
+	m := a.marks[sid]
+	if at := ts.UnixMilli(); at > m.At {
+		m.At = at
+	}
+	a.marks[sid] = m
+}
+
+// applyCompactionBoundaries marks the first request at or after a session's
+// newest compaction with model.BoundaryCompact, once per compaction row. It runs
+// on the sorted batch so the mark lands on the request that actually follows the
+// compaction, and it reads the cursor's state so a compaction seen in an earlier
+// incremental batch still marks the next batch's first request.
+func (a *accumulator) applyCompactionBoundaries(events []model.UsageEvent) {
+	if len(a.marks) == 0 {
+		return
+	}
+	for i := range events {
+		m, ok := a.marks[events[i].SessionID]
+		if !ok || m.At == 0 || m.Done == m.At {
+			continue
+		}
+		if a.compactions[events[i].DedupKey] {
+			continue
+		}
+		if events[i].Timestamp.UnixMilli() < m.At {
+			continue
+		}
+		events[i].Boundary = model.BoundaryCompact
+		m.Done = m.At
+		a.marks[events[i].SessionID] = m
+	}
 }
 
 func (a *accumulator) add(ev model.UsageEvent) {
@@ -857,6 +949,7 @@ func (a *accumulator) batch(next harness.Cursor) harness.Batch {
 		}
 		return events[i].DedupKey < events[j].DedupKey
 	})
+	a.applyCompactionBoundaries(events)
 	metas := make([]model.SessionMeta, 0, len(a.mord))
 	for _, id := range a.mord {
 		metas = append(metas, a.metas[id])

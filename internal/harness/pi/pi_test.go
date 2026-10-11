@@ -507,6 +507,109 @@ func TestZeroUsageSkipped(t *testing.T) {
 	}
 }
 
+// TestCompactionMarkerWithUnmodeledUsage covers the compaction record as it
+// appears in the wild: it carries the compaction call's own top-level usage,
+// whose "cost" is an object rather than the plain number an async usage record
+// uses. That shape used to fail the whole record's decode, and the marker was
+// thrown away with it. The compaction call is a real request, so it is counted:
+// its tokens and its log cost reach the ledger, its model and provider are
+// inherited from the nearest request in the session, and the marker it carries
+// lands on the request that follows it.
+func TestCompactionMarkerWithUnmodeledUsage(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "compact.jsonl")
+	body := `{"type":"session","version":3,"id":"01a00000-0000-7000-8000-00000000000c","timestamp":"2026-01-05T00:00:00.000Z","cwd":"/home/user/proj-compact"}
+{"type":"message","id":"k1","parentId":null,"timestamp":"2026-01-05T00:00:01.000Z","message":{"role":"assistant","provider":"rn","model":"gpt-6-sol","responseId":"gen_k1","usage":{"input":900,"output":30,"cacheRead":100,"cacheWrite":0,"totalTokens":1030,"cost":{"total":0.5}}}}
+{"type":"compaction","id":"k2","parentId":"k1","timestamp":"2026-01-05T00:00:02.000Z","summary":"PLACEHOLDER_SUMMARY","firstKeptEntryId":"k1","tokensBefore":1030,"details":{"readFiles":[],"modifiedFiles":[]},"usage":{"input":1030,"output":120,"cacheRead":0,"cacheWrite":0,"totalTokens":1150,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0.9}},"fromHook":false,"systemMessage":{"role":"system","content":"PLACEHOLDER_SYSTEM"}}
+{"type":"message","id":"k3","parentId":null,"timestamp":"2026-01-05T00:00:03.000Z","message":{"role":"assistant","provider":"rn","model":"gpt-6-sol","responseId":"gen_k3","usage":{"input":40,"output":10,"cacheRead":300,"cacheWrite":0,"totalTokens":350,"cost":{"total":0.01}}}}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := NewWithRoots(dir).Parse(context.Background(), harness.Source{Path: path, Kind: kindJSONL}, harness.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Events) != 3 {
+		t.Fatalf("got %d events, want 3 (the compaction call is a real request)", len(b.Events))
+	}
+	first, compact, last := b.Events[0], b.Events[1], b.Events[2]
+	if first.Boundary != "" || first.DedupKey != "gen_k1" {
+		t.Errorf("event before the compaction = %+v", first)
+	}
+	if compact.DedupKey != "k2" || compact.Boundary != "" {
+		t.Errorf("compaction event = %+v, want its own id and no boundary", compact)
+	}
+	if compact.Model != "gpt-6-sol" || compact.Provider != "rn" {
+		t.Errorf("compaction model/provider = %q/%q, want the preceding request's", compact.Model, compact.Provider)
+	}
+	if want := (model.Tokens{Input: 1030, Output: 120}); compact.Tokens != want {
+		t.Errorf("compaction tokens = %+v, want %+v", compact.Tokens, want)
+	}
+	if compact.CostUSD == nil || *compact.CostUSD != 0.9 {
+		t.Errorf("compaction cost = %v, want the record's own 0.9", compact.CostUSD)
+	}
+	if last.Boundary != model.BoundaryCompact || last.DedupKey != "gen_k3" {
+		t.Errorf("event after the compaction = %+v", last)
+	}
+	if got, want := sum(b.Events), (model.Tokens{Input: 1970, Output: 160, CacheRead: 400}); got != want {
+		t.Errorf("totals = %+v, want %+v", got, want)
+	}
+}
+
+// TestCompactionOnlySessionHasUnknownModel covers a session whose log holds a
+// compaction record and nothing else: there is no request to inherit a model or
+// provider from, so the event is attributed to "unknown" rather than dropped.
+func TestCompactionOnlySessionHasUnknownModel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "compact.jsonl")
+	body := `{"type":"session","version":3,"id":"01a00000-0000-7000-8000-00000000000d","timestamp":"2026-01-06T00:00:00.000Z","cwd":"/home/user/proj-compact"}
+{"type":"compaction","id":"m1","timestamp":"2026-01-06T00:00:02.000Z","summary":"PLACEHOLDER_SUMMARY","tokensBefore":10,"usage":{"input":10,"output":5,"cacheRead":0,"cacheWrite":0,"totalTokens":15,"cost":{"total":0.7}}}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := NewWithRoots(dir).Parse(context.Background(), harness.Source{Path: path, Kind: kindJSONL}, harness.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Events) != 1 {
+		t.Fatalf("got %d events, want 1", len(b.Events))
+	}
+	if got := b.Events[0]; got.Model != "unknown" || got.Provider != "" || got.DedupKey != "m1" {
+		t.Errorf("compaction-only event = %+v, want model unknown and no provider", got)
+	}
+}
+
+// TestCompactionInheritsModelFromNextRequest covers a compaction record that
+// precedes every request in its log: the model has to come from the request
+// after it.
+func TestCompactionInheritsModelFromNextRequest(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "compact.jsonl")
+	body := `{"type":"session","version":3,"id":"01a00000-0000-7000-8000-00000000000e","timestamp":"2026-01-07T00:00:00.000Z","cwd":"/home/user/proj-compact"}
+{"type":"compaction","id":"n1","timestamp":"2026-01-07T00:00:01.000Z","summary":"PLACEHOLDER_SUMMARY","usage":{"input":20,"output":5,"cacheRead":0,"cacheWrite":0,"totalTokens":25,"cost":{"total":0.2}}}
+{"type":"message","id":"n2","timestamp":"2026-01-07T00:00:02.000Z","message":{"role":"assistant","provider":"rn","model":"gpt-6.1-sol","responseId":"gen_n2","usage":{"input":40,"output":10,"cacheRead":0,"cacheWrite":0,"totalTokens":50,"cost":{"total":0.01}}}}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := NewWithRoots(dir).Parse(context.Background(), harness.Source{Path: path, Kind: kindJSONL}, harness.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Events) != 2 {
+		t.Fatalf("got %d events, want 2", len(b.Events))
+	}
+	compact, next := b.Events[0], b.Events[1]
+	if compact.Model != "gpt-6.1-sol" || compact.Provider != "rn" {
+		t.Errorf("compaction model/provider = %q/%q, want the next request's", compact.Model, compact.Provider)
+	}
+	if next.Boundary != model.BoundaryCompact || next.DedupKey != "gen_n2" {
+		t.Errorf("event after the compaction = %+v", next)
+	}
+}
+
 // TestIncrementalResume parses a log in two halves and requires the resumed
 // totals to equal a single full parse.
 func TestIncrementalResume(t *testing.T) {

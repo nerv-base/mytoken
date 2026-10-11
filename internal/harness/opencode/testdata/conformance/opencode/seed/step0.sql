@@ -5,6 +5,13 @@
 -- The v2 `session_message` row msg_c4 is deliberately older than message rows
 -- written by a later growth step: the two tables resume from independent
 -- watermarks, so an interleaved layout must not lose it.
+--
+-- msg_c_comp is a v2 `type='compaction'` row: the compaction request itself
+-- (its own cost/tokens must stay in the ledger) and a context replacement point.
+-- The first request at or after it, msg_c5, is written by growth step 1, so the
+-- boundary mark has to survive in the cursor between the two batches. Its text
+-- carries the sentinel: the summary is conversation content and must never reach
+-- the parsed output.
 CREATE TABLE session (id text PRIMARY KEY, parent_id text, directory text, title text, time_created integer NOT NULL, time_updated integer NOT NULL);
 CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
 CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
@@ -17,3 +24,4 @@ INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES ('msg_
 INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES ('msg_c3','ses_conf_sub',1742400030000,1742400030000,'{"role":"assistant","agent":"explore","path":{"cwd":"/Users/dev/confproj","root":"/Users/dev/confproj"},"cost":0.004,"tokens":{"total":450,"input":300,"output":40,"reasoning":10,"cache":{"write":0,"read":100}},"modelID":"gpt-5","providerID":"openai","time":{"created":1742400030000,"completed":1742400030500}}');
 INSERT INTO session_message (id,session_id,type,seq,time_created,time_updated,data) VALUES ('msg_c4','ses_conf_main','assistant',1,1742400040000,1742400040000,'{"role":"assistant","agent":"build","path":{"cwd":"/Users/dev/confproj","root":"/Users/dev/confproj"},"cost":0.002,"tokens":{"total":580,"input":500,"output":80,"reasoning":0,"cache":{"write":50,"read":0}},"modelID":"kimi-k2","providerID":"moonshot","time":{"created":1742400040000}}');
 INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES ('msg_c0','ses_conf_main',1742400045000,1742400045000,'{"role":"assistant","agent":"build","cost":0,"tokens":{"total":0,"input":0,"output":0,"reasoning":0,"cache":{"write":0,"read":0}},"modelID":"claude-sonnet-4-5","providerID":"anthropic","time":{"created":1742400045000}}');
+INSERT INTO session_message (id,session_id,type,seq,time_created,time_updated,data) VALUES ('msg_c_comp','ses_conf_main','compaction',4,1742400050000,1742400050000,'{"type":"compaction","path":{"cwd":"/Users/dev/confproj","root":"/Users/dev/confproj"},"cost":0.006,"tokens":{"total":640,"input":500,"output":100,"reasoning":20,"cache":{"write":20,"read":0}},"modelID":"kimi-k2","providerID":"moonshot","time":{"created":1742400050000,"completed":1742400050500},"text":"SENTINEL_PRIVATE_TEXT"}');

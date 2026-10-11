@@ -22,6 +22,13 @@
 //	         model TEXT, provider TEXT, is_summary_message INTEGER,
 //	         created_at INTEGER, updated_at INTEGER, finished_at INTEGER)
 //
+// Compaction. messages.is_summary_message marks the summaries Crush writes when
+// it compacts a conversation, but the usage this parser reports comes from the
+// session's cumulative counters, which carry no per-message timestamp, so there
+// is no request to attach model.BoundaryCompact to: crush usage events leave
+// Boundary empty. Reporting compaction here would need a per-message usage
+// source, not just the flag.
+//
 // Token accounting. Crush does not store per-message usage: only the session row
 // carries cumulative prompt_tokens/completion_tokens and cost. Usage events are
 // therefore emitted as monotone deltas of those cumulative counters, keyed

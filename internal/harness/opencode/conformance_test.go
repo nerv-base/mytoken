@@ -36,6 +36,11 @@ const conformanceFixture = "testdata/conformance/opencode"
 //   - both message generations the parser reads: `message` (v1) and
 //     `session_message` (v2)
 //   - three models across two providers, cache read and cache write, reasoning
+//   - a v2 `type='compaction'` row (msg_c_comp): the compaction request's own
+//     usage is counted like any other request, and the row marks a context
+//     replacement point, so the first request after it carries
+//     model.BoundaryCompact. That request (msg_c5) is written by growth step 1,
+//     which makes the boundary mark a cursor-persistence test as well.
 //   - no-usage rows that must never emit an event: missing `tokens`,
 //     all-zero tokens with zero cost, and the v2 control rows
 //     (agent-switched / model-switched) the schema stores next to usage
@@ -55,9 +60,10 @@ const conformanceFixture = "testdata/conformance/opencode"
 // the fixture and not derived from the sqlite file's location, so no
 // Case.Rewrite is needed.
 //
-// SENTINEL_PRIVATE_TEXT sits in the assistant message text of two rows: it
-// proves the fixture is the privacy check's target without ever reaching the
-// parsed snapshot (the parser keeps only numbers and identifiers, never text).
+// SENTINEL_PRIVATE_TEXT sits in the assistant message text of two rows and in
+// the compaction summary of msg_c_comp: it proves the fixture is the privacy
+// check's target without ever reaching the parsed snapshot (the parser keeps
+// only numbers and identifiers, never text).
 func TestConformance(t *testing.T) {
 	harnesstest.Run(t, conformanceCase())
 }

@@ -13,6 +13,41 @@
   "events": [
     {
       "harness": "pi",
+      "dedupKey": "c5",
+      "sessionId": "01b00000-0000-7000-8000-000000000002",
+      "parentId": "01a00000-0000-7000-8000-000000000001",
+      "projectPath": "/home/user/fixture-alpha",
+      "timestamp": "2026-01-02T03:05:03Z",
+      "model": "deepseek-flash",
+      "provider": "deepseek-official",
+      "tokens": {
+        "input": 460,
+        "output": 70,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "costUsd": 0.0008
+    },
+    {
+      "harness": "pi",
+      "dedupKey": "p6",
+      "sessionId": "01a00000-0000-7000-8000-000000000001",
+      "projectPath": "/home/user/fixture-alpha",
+      "timestamp": "2026-01-02T03:04:07.5Z",
+      "model": "gemini-3.1-pro-preview",
+      "provider": "gemini",
+      "tokens": {
+        "input": 2120,
+        "output": 140,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "costUsd": 0.0031
+    },
+    {
+      "harness": "pi",
       "dedupKey": "resp_fixture_0001",
       "sessionId": "01a00000-0000-7000-8000-000000000001",
       "projectPath": "/home/user/fixture-alpha",
@@ -81,6 +116,24 @@
         "reasoning": 0
       },
       "requestId": "resp_fixture_0004"
+    },
+    {
+      "harness": "pi",
+      "dedupKey": "resp_fixture_0005",
+      "sessionId": "01a00000-0000-7000-8000-000000000001",
+      "projectPath": "/home/user/fixture-alpha",
+      "timestamp": "2026-01-02T03:04:08Z",
+      "model": "deepseek-flash",
+      "provider": "deepseek-official",
+      "tokens": {
+        "input": 60,
+        "output": 20,
+        "cacheRead": 150,
+        "cacheWrite": 0,
+        "reasoning": 5
+      },
+      "requestId": "resp_fixture_0005",
+      "boundary": "compact"
     }
   ],
   "sessions": [

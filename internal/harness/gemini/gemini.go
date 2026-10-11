@@ -632,6 +632,9 @@ func (a *accumulator) sessions(p *Parser) []model.SessionMeta {
 	if updated.Before(started) {
 		updated = started
 	}
+	// rec.Summary is session-level metadata (Gemini uses it as the session
+	// recap/title), not a per-request context marker, so it never becomes a
+	// model.Boundary value; it is only reused as the session title below.
 	title := a.state.Title
 	if title == "" {
 		title = harness.Title(a.state.Summary)

@@ -74,7 +74,8 @@
         "cacheWrite": 0,
         "reasoning": 30
       },
-      "costUsd": 0.008
+      "costUsd": 0.008,
+      "boundary": "compact"
     },
     {
       "harness": "opencode",
@@ -111,6 +112,23 @@
         "reasoning": 15
       },
       "costUsd": 0.003
+    },
+    {
+      "harness": "opencode",
+      "dedupKey": "opencode:msg_c_comp",
+      "sessionId": "ses_conf_main",
+      "projectPath": "/Users/dev/confproj",
+      "timestamp": "2025-03-19T16:00:50Z",
+      "model": "kimi-k2",
+      "provider": "moonshot",
+      "tokens": {
+        "input": 500,
+        "output": 100,
+        "cacheRead": 0,
+        "cacheWrite": 20,
+        "reasoning": 20
+      },
+      "costUsd": 0.006
     }
   ],
   "sessions": [

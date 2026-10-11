@@ -51,7 +51,12 @@
 //	message.provider, message.model (or message.responseModel),
 //	message.responseId ("resp_<hex>"), message.api, message.timestamp (ms epoch)
 //
-// compaction records hold a summary but no usage, so they are skipped.
+// A compaction record marks the point where the conversation was replaced by a
+// summary, so the next usage-bearing message in the same session is the first
+// request whose prompt is the compacted context and is marked
+// model.BoundaryCompact. In the wild such a record also carries the compaction
+// call's own top-level usage (with "cost" as an object); the record names no
+// model, so that usage is not accounted, only the boundary is taken.
 //
 // # Token accounting
 //
@@ -349,15 +354,18 @@ func readCompleteLines(r io.Reader, fn func(line []byte) error) (int64, error) {
 
 // session accumulates the events and metadata of a single session log.
 type session struct {
-	id        string
-	parentID  string
-	project   string
-	provider  string // async transcripts: read from the run's meta file
-	userTitle string
-	startedAt time.Time
-	updatedAt time.Time
-	events    []model.UsageEvent
-	boundary  harness.BoundaryState
+	id           string
+	parentID     string
+	project      string
+	provider     string // async transcripts: read from the run's meta file
+	userTitle    string
+	startedAt    time.Time
+	updatedAt    time.Time
+	events       []model.UsageEvent
+	boundary     harness.BoundaryState
+	lastModel    string // last counted request's model; compaction records name none
+	lastProvider string // ... and none either, so both are inherited
+	modelInherit []int  // compaction events still waiting for a model from a later request
 }
 
 func newSession(root, path string) *session {
@@ -397,6 +405,17 @@ func (s *session) consume(line []byte) error {
 	}
 	var r piRecord
 	if err := json.Unmarshal(line, &r); err != nil {
+		// A record we cannot fully model must not hide a marker we need: if the
+		// envelope says it is a compaction, still record the boundary and skip the
+		// rest. (A compaction record's own usage decodes normally since
+		// piAsyncUsage accepts both cost shapes; this is a safety net for a shape
+		// we have not seen.)
+		var env struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(line, &env) == nil && env.Type == "compaction" {
+			s.boundary.Pending = model.BoundaryCompact
+		}
 		return nil // partial or foreign record: skip
 	}
 	if t := parseTS(r.Timestamp); !t.IsZero() && t.After(s.updatedAt) {
@@ -410,7 +429,7 @@ func (s *session) consume(line []byte) error {
 	}
 	switch r.Type {
 	case "compaction":
-		s.boundary.Pending = model.BoundaryCompact
+		s.consumeCompaction(r)
 	case "session":
 		if r.ID != "" {
 			s.id = r.ID
@@ -452,6 +471,12 @@ func (s *session) consume(line []byte) error {
 			if mdl == "" {
 				mdl = m.ResponseModel
 			}
+			if mdl != "" {
+				s.lastModel = mdl
+			}
+			if m.Provider != "" {
+				s.lastProvider = m.Provider
+			}
 			s.events = append(s.events, model.UsageEvent{
 				Harness:     model.Pi,
 				DedupKey:    firstNonEmpty(m.ResponseID, r.ID, s.id+"#"+string(r.Timestamp)),
@@ -473,6 +498,41 @@ func (s *session) consume(line []byte) error {
 		}
 	}
 	return nil
+}
+
+// consumeCompaction folds one "compaction" record into the session. The record
+// is the compaction request itself and carries the same top-level usage object
+// as an async transcript (including a real cost), so it is counted as a request
+// like any other. It names neither a model nor a provider: both are inherited
+// from the nearest request in the session, the one before it when there is one
+// (see the assistant branch) and otherwise the next one (filled in by batch).
+// The marker it carries belongs to the first request after it, so the event
+// itself is boundary-free.
+func (s *session) consumeCompaction(r piRecord) {
+	s.boundary.Pending = model.BoundaryCompact
+	u := r.AsyncUsage
+	if u == nil || u.IsZero() {
+		return
+	}
+	ts := parseTS(r.Timestamp)
+	if ts.IsZero() {
+		ts = s.updatedAt
+	}
+	s.events = append(s.events, model.UsageEvent{
+		Harness:     model.Pi,
+		DedupKey:    firstNonEmpty(r.ID, s.id+"#"+string(r.Timestamp)),
+		SessionID:   s.id,
+		ParentID:    s.parentID,
+		ProjectPath: s.project,
+		Timestamp:   ts,
+		Model:       s.lastModel,
+		Provider:    s.lastProvider,
+		Tokens:      u.tokens(),
+		CostUSD:     u.costUSD(),
+	})
+	if s.lastModel == "" || s.lastProvider == "" {
+		s.modelInherit = append(s.modelInherit, len(s.events)-1)
+	}
 }
 
 // consumeAsync folds one record of an async subagent transcript into the
@@ -509,6 +569,9 @@ func (s *session) consumeAsync(r piRecord) {
 		if ts.IsZero() {
 			ts = s.startedAt
 		}
+		if r.Model != "" {
+			s.lastModel = r.Model
+		}
 		s.events = append(s.events, model.UsageEvent{
 			Harness:     model.Pi,
 			DedupKey:    s.id + "#" + strings.Trim(string(bytes.TrimSpace(r.Timestamp)), `"`),
@@ -537,6 +600,25 @@ func (s *session) batch() harness.Batch {
 		}
 		if s.events[i].ProjectPath == "" {
 			s.events[i].ProjectPath = s.project
+		}
+	}
+	// A compaction record names no model or provider. The requests before it were
+	// already used when the event was emitted, so what is left is the next request
+	// in the log; a session that holds no other request keeps "unknown".
+	for _, i := range s.modelInherit {
+		for j := i + 1; j < len(s.events); j++ {
+			if s.events[i].Model == "" && s.events[j].Model != "" {
+				s.events[i].Model = s.events[j].Model
+			}
+			if s.events[i].Provider == "" && s.events[j].Provider != "" {
+				s.events[i].Provider = s.events[j].Provider
+			}
+			if s.events[i].Model != "" && s.events[i].Provider != "" {
+				break
+			}
+		}
+		if s.events[i].Model == "" {
+			s.events[i].Model = "unknown"
 		}
 	}
 	updated := s.updatedAt
@@ -761,6 +843,42 @@ type piAsyncUsage struct {
 	CacheWrite num  `json:"cacheWrite"`
 	Reasoning  num  `json:"reasoning"`
 	Cost       fnum `json:"cost"`
+}
+
+// UnmarshalJSON accepts both shapes of "cost" that appear in a top-level usage
+// object: the plain number an async transcript writes, and the object a
+// compaction record writes (the same shape as message.usage.cost). Without this
+// a compaction record fails to decode as a whole and its tokens never reach the
+// ledger.
+func (u *piAsyncUsage) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Input      num             `json:"input"`
+		Output     num             `json:"output"`
+		CacheRead  num             `json:"cacheRead"`
+		CacheWrite num             `json:"cacheWrite"`
+		Reasoning  num             `json:"reasoning"`
+		Cost       json.RawMessage `json:"cost"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	u.Input, u.Output = raw.Input, raw.Output
+	u.CacheRead, u.CacheWrite = raw.CacheRead, raw.CacheWrite
+	u.Reasoning, u.Cost = raw.Reasoning, 0
+	if len(raw.Cost) == 0 || string(raw.Cost) == "null" {
+		return nil
+	}
+	var plain fnum
+	if err := json.Unmarshal(raw.Cost, &plain); err == nil {
+		u.Cost = plain
+		return nil
+	}
+	var obj piCost
+	if err := json.Unmarshal(raw.Cost, &obj); err != nil {
+		return err
+	}
+	u.Cost = obj.Total
+	return nil
 }
 
 // IsZero reports whether the record accounts for no tokens at all.

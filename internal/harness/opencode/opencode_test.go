@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -382,6 +383,84 @@ func TestParseV2(t *testing.T) {
 	}
 	if !names["opencode-stable.db"] {
 		t.Errorf("channel db not discovered: %v", names)
+	}
+}
+
+// TestCompactionRowMarksNextRequest covers the v2 `type='compaction'` rows. A
+// compaction row is a request of its own: its usage is counted like any other.
+// It is also a context replacement point, so the next request must carry
+// model.BoundaryCompact - and the row itself must not, or every report would
+// date the replacement to the compaction call.
+//
+// The compaction and the request after it are inserted by different growth
+// steps on purpose: OpenCode writes them in separate transactions, so the mark
+// has to survive in the cursor between two scans. The final assertion replays
+// the third parse from the second cursor, which is the only way that path is
+// reached.
+func TestCompactionRowMarksNextRequest(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "opencode.db")
+	execSQL(t, db,
+		"CREATE TABLE session (id text PRIMARY KEY, parent_id text, directory text, title text, time_created integer NOT NULL, time_updated integer NOT NULL)",
+		"CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)",
+		"CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)",
+		"INSERT INTO session (id,parent_id,directory,title,time_created,time_updated) VALUES ('ses_comp',NULL,'/Users/dev/comp','Compact the context',1743000000000,1743000100000)",
+	)
+	// assistant builds a usage payload; the text is never parsed and only proves
+	// the reader keeps identifiers rather than conversation content.
+	assistant := func(ms int64, in, out int, cost float64) string {
+		return fmt.Sprintf(`{"role":"assistant","path":{"root":"/Users/dev/comp"},"cost":%v,"tokens":{"total":%d,"input":%d,"output":%d,"reasoning":0,"cache":{"write":0,"read":0}},"modelID":"gpt-5","providerID":"openai","time":{"created":%d},"text":"SENTINEL_PRIVATE_TEXT"}`, cost, in+out, in, out, ms)
+	}
+	insertV1 := func(id string, ms int64, payload string) string {
+		return fmt.Sprintf("INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES ('%s','ses_comp',%d,%d,%s)", id, ms, ms, sqlQuote(payload))
+	}
+	insertV2 := func(id, kind string, seq, ms int64, payload string) string {
+		return fmt.Sprintf("INSERT INTO session_message (id,session_id,type,seq,time_created,time_updated,data) VALUES ('%s','ses_comp','%s',%d,%d,%d,%s)", id, kind, seq, ms, ms, sqlQuote(payload))
+	}
+	execSQL(t, db, insertV1("m1", 1743000010000, assistant(1743000010000, 100, 20, 0.001)))
+
+	p := NewWithRoots(dir)
+	cold := parseAll(t, p)
+	if len(cold.Events) != 1 {
+		t.Fatalf("cold parse: got %d events, want 1: %v", len(cold.Events), keysOf(cold.Events))
+	}
+	if cold.Events[0].Boundary != "" {
+		t.Errorf("cold parse: Boundary = %q, want empty", cold.Events[0].Boundary)
+	}
+
+	// Growth step 1: the compaction request itself, plus a still-running
+	// compaction row with no usage payload, which must not emit anything.
+	compaction := `{"type":"compaction","path":{"root":"/Users/dev/comp"},"cost":0.002,"tokens":{"total":30,"input":25,"output":5,"reasoning":0,"cache":{"write":0,"read":0}},"modelID":"gpt-5","providerID":"openai","time":{"created":1743000050000},"text":"SENTINEL_PRIVATE_TEXT"}`
+	execSQL(t, db,
+		insertV2("c0", "compaction", 0, 1743000040000, `{"type":"compaction","time":{"created":1743000040000}}`),
+		insertV2("c1", "compaction", 1, 1743000050000, compaction),
+	)
+	afterCompaction := parseFrom(t, p, cold.Cursors)
+	if len(afterCompaction.Events) != 1 {
+		t.Fatalf("after compaction: got %d events, want 1: %v", len(afterCompaction.Events), keysOf(afterCompaction.Events))
+	}
+	comp := eventByKey(t, afterCompaction.Events, "opencode:c1")
+	if comp.Boundary != "" {
+		t.Errorf("compaction row Boundary = %q, want empty", comp.Boundary)
+	}
+	if comp.CostUSD == nil || *comp.CostUSD != 0.002 {
+		t.Errorf("compaction CostUSD = %v, want 0.002", comp.CostUSD)
+	}
+	wantTokens(t, "compaction usage", comp.Tokens, model.Tokens{Input: 25, Output: 5})
+
+	// Growth step 2: the first request after the compaction. Its boundary comes
+	// from the cursor state written by the previous parse, not from this batch.
+	execSQL(t, db, insertV1("m2", 1743000060000, assistant(1743000060000, 200, 40, 0.003)))
+	afterResume := parseFrom(t, p, afterCompaction.Cursors)
+	if len(afterResume.Events) != 1 {
+		t.Fatalf("after resume: got %d events, want 1: %v", len(afterResume.Events), keysOf(afterResume.Events))
+	}
+	resumed := afterResume.Events[0]
+	if resumed.DedupKey != "opencode:m2" {
+		t.Fatalf("resumed event = %q", resumed.DedupKey)
+	}
+	if resumed.Boundary != model.BoundaryCompact {
+		t.Errorf("first request after compaction Boundary = %q, want %q", resumed.Boundary, model.BoundaryCompact)
 	}
 }
 
