@@ -103,6 +103,28 @@ func (s *Store) Cursor(ctx context.Context, h model.Harness, path string) (harne
 	err = json.Unmarshal([]byte(raw), &c)
 	return c, err
 }
+
+// Cursors returns the cursors of a harness's sources by path.
+func (s *Store) Cursors(ctx context.Context, h model.Harness) (map[string]harness.Cursor, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT path, cursor FROM cursors WHERE harness=?", h)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]harness.Cursor{}
+	for rows.Next() {
+		var path, raw string
+		if err := rows.Scan(&path, &raw); err != nil {
+			return nil, err
+		}
+		var c harness.Cursor
+		if err := json.Unmarshal([]byte(raw), &c); err != nil {
+			return nil, fmt.Errorf("cursor %s %s: %w", h, path, err)
+		}
+		out[path] = c
+	}
+	return out, rows.Err()
+}
 func stamp(t time.Time) int64 {
 	if t.IsZero() {
 		return 0

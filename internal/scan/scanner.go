@@ -41,6 +41,29 @@ type Scanner struct {
 	dirs map[string]bool
 	// watching counts the directories Run watches, for tests.
 	watching int
+	// seen holds each file source's stat as of its last parse that found
+	// nothing new. A
+	// scan for watched changes skips a file whose stat has not moved,
+	// without a cursor read or an open; the periodic scan parses all.
+	seen map[string]fileStamp
+	// parses counts Parse calls, for tests.
+	parses int
+}
+
+// fileStamp is a source file's size and modification time, with those of
+// a SQLite write-ahead log beside it, which takes writes the file doesn't
+// show until a checkpoint.
+type fileStamp struct {
+	size, walSize int64
+	mod, walMod   time.Time
+}
+
+func stampOf(path string, info os.FileInfo) fileStamp {
+	st := fileStamp{size: info.Size(), mod: info.ModTime()}
+	if wal, e := os.Stat(path + "-wal"); e == nil {
+		st.walSize, st.walMod = wal.Size(), wal.ModTime()
+	}
+	return st
 }
 
 // maxWatchDirs bounds the directories Run watches. On macOS each watched
@@ -78,9 +101,16 @@ type source struct {
 	src    harness.Source
 	cur    harness.Cursor
 	size   int64
+	key    string     // harness and path, for Scanner.seen
+	stamp  *fileStamp // nil for a directory or a missing file
 }
 
-func (s *Scanner) Scan(ctx context.Context) (err error) {
+// Scan parses every source.
+func (s *Scanner) Scan(ctx context.Context) error { return s.scan(ctx, false) }
+
+// scan parses every source, or with quick only the files whose stat moved
+// since their last clean parse, and the directories.
+func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 	s.scanMu.Lock()
 	defer s.scanMu.Unlock()
 	defer func() {
@@ -101,31 +131,51 @@ func (s *Scanner) Scan(ctx context.Context) (err error) {
 	var work []source
 	var errs []error
 	dirs := map[string]bool{}
+	s.mu.Lock()
+	if !quick || s.seen == nil {
+		s.seen = map[string]fileStamp{}
+	}
+	seen := s.seen
+	s.mu.Unlock()
 	for _, p := range s.parsers {
 		srcs, e := p.Discover(ctx)
 		if e != nil {
 			errs = append(errs, fmt.Errorf("discover %s: %w", p.Harness(), e))
 			continue
 		}
+		var cursors map[string]harness.Cursor
 		for _, src := range srcs {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			cur, err := s.st.Cursor(ctx, p.Harness(), src.Path)
-			if err != nil {
-				errs = append(errs, err)
-				continue
-			}
 			var size int64
+			var stamp *fileStamp
 			if info, err := os.Stat(src.Path); err == nil {
 				size = info.Size()
 				if info.IsDir() {
 					dirs[src.Path] = true
 				} else {
 					dirs[filepath.Dir(src.Path)] = true
+					st := stampOf(src.Path, info)
+					stamp = &st
 				}
 			}
-			work = append(work, source{p, src, cur, size})
+			key := string(p.Harness()) + "\x00" + src.Path
+			if quick && stamp != nil {
+				s.mu.Lock()
+				old, ok := seen[key]
+				s.mu.Unlock()
+				if ok && old == *stamp {
+					continue
+				}
+			}
+			if cursors == nil {
+				if cursors, err = s.st.Cursors(ctx, p.Harness()); err != nil {
+					errs = append(errs, err)
+					break
+				}
+			}
+			work = append(work, source{p, src, cursors[src.Path], size, key, stamp})
 		}
 	}
 	// Start large logs first to avoid a long single-worker tail.
@@ -161,6 +211,12 @@ func (s *Scanner) Scan(ctx context.Context) (err error) {
 				results <- result{write, err}
 				s.mu.Lock()
 				s.done++
+				s.parses++
+				// Remember only a parse that found nothing new: one that did
+				// may have stopped short, and the next parse tells.
+				if err == nil && write == nil && item.stamp != nil {
+					seen[item.key] = *item.stamp
+				}
 				s.mu.Unlock()
 			}
 		}()
@@ -180,10 +236,12 @@ func (s *Scanner) Scan(ctx context.Context) (err error) {
 	}()
 	var pending []store.Write
 	eventCount := 0
+	wrote := false
 	flush := func() {
 		if len(pending) == 0 {
 			return
 		}
+		wrote = true
 		if err := s.st.CommitMany(ctx, pending); err != nil {
 			errs = append(errs, err)
 		}
@@ -203,8 +261,11 @@ func (s *Scanner) Scan(ctx context.Context) (err error) {
 		}
 	}
 	flush()
-	if e := s.st.NormalizeProjects(ctx); e != nil {
-		errs = append(errs, e)
+	// Only new writes can bring a project path to normalize.
+	if wrote || !quick {
+		if e := s.st.NormalizeProjects(ctx); e != nil {
+			errs = append(errs, e)
+		}
 	}
 	if s.pricer != nil {
 		if e := s.st.EnsurePrices(ctx, s.pricer.Fingerprint(), s.pricer.Evaluate); e != nil {
@@ -375,7 +436,7 @@ func (s *Scanner) Run(ctx context.Context) error {
 			}
 			debounced = nil
 			timer = nil
-			_ = s.Scan(ctx)
+			_ = s.scan(ctx, true)
 			last = time.Now()
 		case <-ticker.C:
 			_ = s.Scan(ctx)

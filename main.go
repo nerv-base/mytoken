@@ -20,6 +20,7 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/updater"
@@ -49,13 +50,21 @@ func main() {
 
 	// One instance at a time: a second launch hands its command line over to
 	// this process and exits, so the database is only ever opened once.
+	// The main window exists only while it is open: closing it destroys it,
+	// which gives back its GPU surfaces and glyph atlases (~90 MB), and
+	// opening it builds a new one. The tray panel lives all along.
 	var main, panel *mygo.Window
+	var newMain func(hidden bool) *mygo.Window
+	ready := false
 	openMain := func() {
-		if main == nil {
+		if !ready {
 			return // another instance arrived before the windows exist
 		}
 		if panel != nil {
 			panel.Hide()
+		}
+		if main == nil {
+			main = newMain(false)
 		}
 		main.Show()
 		main.Focus()
@@ -83,9 +92,14 @@ func main() {
 	}
 	// The tray app lives all day while scans churn short-lived buffers; a
 	// soft heap limit makes the collector hand that memory back instead of
-	// letting the heap float at twice its live size. GOMEMLIMIT overrides.
+	// letting the heap float at twice its live size, and collecting at half
+	// again the live heap keeps ~8 MB off the tray's footprint for a sliver
+	// of CPU while agents write. GOMEMLIMIT and GOGC override.
 	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(memoryLimit)
+	}
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(50)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -102,15 +116,23 @@ func main() {
 	dataDir, _ := paths.DataDir()
 	var state *gui.State
 
-	// Both windows show the same state; a change redraws both.
+	// Both windows show the same state; a change redraws both. Updates
+	// go through the panel, which outlives the main window.
 	post := func(fn func()) {
-		if main == nil {
+		w := panel
+		if w == nil {
+			w = main
+		}
+		if w == nil {
 			return
 		}
-		main.Update(fn)
-		if panel != nil {
-			panel.Update(func() {})
-		}
+		w.Update(func() {
+			fn()
+			// On the main thread, where main is opened and closed.
+			if main != nil && main != w {
+				main.Update(func() {})
+			}
+		})
 	}
 	hooks := gui.Hooks{
 		Progress: a.Scanner.Progress,
@@ -124,7 +146,7 @@ func main() {
 		DataDir:        dataDir,
 		Settings:       a.Settings,
 		Relays:         a.Relays,
-		OpenMain:       func() { main.Update(openMain) },
+		OpenMain:       func() { mygo.RunOnMain(openMain) },
 		Quit:           func() { mygo.App.Quit() },
 		Version:        cli.Version,
 		CanUpdate:      mygo.Updater.Enabled,
@@ -149,31 +171,45 @@ func main() {
 		// not hidden builds and draws its content synchronously inside
 		// NewWindow, so a nil state panics on that first frame.
 		state = gui.NewState(a.Query, hooks, post)
-		main = mygo.NewWindow(mygo.WindowOptions{
-			Title:         "MyToken!!!!!",
-			Width:         1280,
-			Height:        860,
-			MinWidth:      980,
-			MinHeight:     640,
-			Hidden:        hidden,
-			TitleBarStyle: mygo.TitleBarHidden,
-			// The traffic lights sit inside the sidebar card, not on its edge.
-			TrafficLightPosition: &mygo.Point{X: gui.TrafficLightX, Y: gui.TrafficLightY},
-			StateKey:             "main",
-			Content:              ui.View(func(c *ui.Context) { state.MainView(c) }),
-		})
-		// Closing the main window keeps the app in the tray. A quit (the tray
-		// menu, Cmd+Q, SIGTERM, logging out) closes every window first, so
-		// the window must let that close through, or nothing could quit.
+		// A quit (the tray menu, Cmd+Q, SIGTERM, logging out) closes every
+		// window; only a close by the user leaves the app in the tray.
 		quitting := false
 		mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { quitting = true })
-		main.OnClose(func(e *mygo.CloseEvent) {
-			if quitting {
-				return
-			}
-			e.PreventDefault()
-			main.Hide()
-		})
+		var trayless bool
+		newMain = func(hidden bool) *mygo.Window {
+			w := mygo.NewWindow(mygo.WindowOptions{
+				Title:         "MyToken!!!!!",
+				Width:         1280,
+				Height:        860,
+				MinWidth:      980,
+				MinHeight:     640,
+				Hidden:        hidden,
+				TitleBarStyle: mygo.TitleBarHidden,
+				// The traffic lights sit inside the sidebar card, not on its edge.
+				TrafficLightPosition: &mygo.Point{X: gui.TrafficLightX, Y: gui.TrafficLightY},
+				StateKey:             "main",
+				Content:              ui.View(func(c *ui.Context) { state.MainView(c) }),
+			})
+			w.OnShow(state.Shown)
+			w.OnClosed(func() {
+				if main == w {
+					main = nil
+				}
+				switch {
+				case quitting:
+				case trayless:
+					// Without a tray the window is the app.
+					mygo.App.Quit()
+				default:
+					// Hand the window's memory back now, not at the next GC.
+					time.AfterFunc(2*time.Second, debug.FreeOSMemory)
+				}
+			})
+			return w
+		}
+		if !hidden {
+			main = newMain(false)
+		}
 
 		panel = mygo.NewWindow(mygo.WindowOptions{
 			Title:           "MyToken!!!!!",
@@ -192,8 +228,8 @@ func main() {
 		})
 		panel.OnBlur(func() { panel.Hide() })
 		// Hidden windows leave changes unloaded: catch up when one shows.
-		main.OnShow(state.Shown)
 		panel.OnShow(state.Shown)
+		ready = true
 
 		state.Start()
 
@@ -201,7 +237,8 @@ func main() {
 		if err != nil {
 			// No tray (e.g. Linux without appindicator): the window is the app.
 			log.Printf("mytoken: tray: %v", err)
-			main.Show()
+			trayless = true
+			openMain()
 			return
 		}
 		mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)

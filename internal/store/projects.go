@@ -93,7 +93,11 @@ func (s *Store) NormalizeProjects(ctx context.Context) error {
 	return s.normalizeProjects(ctx)
 }
 func (s *Store) normalizeProjects(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, "SELECT raw_project,project FROM events GROUP BY raw_project,project UNION SELECT raw_project,project FROM sessions GROUP BY raw_project,project")
+	// The dimension dictionary holds every (raw_project, project) pair of the
+	// events in a few hundred rows; grouping the events view costs a scan of
+	// every event, and this runs after each scan that wrote anything. A
+	// pair no event uses any more is left out: it would never update.
+	rows, err := s.db.QueryContext(ctx, "SELECT raw_project,project FROM event_dimensions d WHERE EXISTS (SELECT 1 FROM event_data e WHERE e.dimension_id=d.id) GROUP BY raw_project,project UNION SELECT raw_project,project FROM sessions GROUP BY raw_project,project")
 	if err != nil {
 		return err
 	}
