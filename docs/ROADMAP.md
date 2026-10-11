@@ -98,7 +98,13 @@ CI 在三个平台上跑 200K 事件的查询基准（`internal/query/bench_test
 
 ### 0.2 —— 对账 v1
 
-> 状态：主体已完成，接口契约见 [RELAY.md](RELAY.md)。尚未在真实中转站上端到端验证（需要用户自己开启）；「手填倍率」沿用定价设置里的供应商倍率。
+> 状态：0.2.0 发布，接口契约见 [RELAY.md](RELAY.md)。已在真实 new-api（kamiapi、rinnebeat）、sub2api（kksk、xlabapi）和 DeepSeek 官方余额上端到端验证；「手填倍率」沿用定价设置里的供应商倍率。
+>
+> 0.2.x 遗留：
+> - 倍率变化点按最新账单 / 同步时间定日期，不是真实变化时刻（应遍历账单找变化点）。
+> - sub2api 的高峰时段倍率（`peak_start` / `peak_end` / `peak_rate_multiplier`）已解析，但没用到本地计价。
+> - new-api 按时段变化的计费表达式算不出公式价，显示为「无法计算」。
+> - Windows 上的标题栏让位、托盘、自动更新还没在真机上看过。
 
 - ✅ 自动识别站点类型：先试 `/v1/sub2api/billing`，再试 `/api/status`，都不是则手填倍率。
 - ✅ **new-api**（逐条对账）：
