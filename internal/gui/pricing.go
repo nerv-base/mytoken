@@ -50,14 +50,55 @@ func (s *State) loadPricing() {
 		return func() {
 			p := &s.pr
 			p.rules, p.aliases, p.unpriced, p.providers, p.err, p.loaded = rules, aliases, unpriced, providers, err, true
-			p.mult = map[string]string{}
-			for _, r := range rules {
-				if r.Provider != "" && r.Model == "" && r.Multiplier != 0 && r.Multiplier != 1 {
-					p.mult[r.Provider] = trimNum(r.Multiplier, 3)
-				}
-			}
+			p.mult = providerMultipliers(rules, providers)
 		}
 	})
+}
+
+// providerMultiplier returns the multiplier the pricing card shows for a
+// provider: the user's own undated provider-wide rule, else the one imported
+// from cc-switch, else 1.
+//
+// Rules synced from a relay ("relay:*") are deliberately ignored. They are the
+// list-price ratios a scan found on the site, not something typed in this box:
+// showing one would make an untouched field look edited, and submitting it
+// would freeze a synced ratio into a user rule that no longer tracks the site.
+// A dated rule is history and a per-model rule is a narrower scope, so neither
+// is the provider's multiplier either. The pricer keeps the same authority
+// order for the multiplier it applies (user over relay over cc-switch, see
+// sourceRank in internal/pricing/rules.go).
+func providerMultiplier(rules []query.PriceRule, provider string) float64 {
+	var user, imported float64
+	for _, r := range rules {
+		if r.Provider != provider || r.Model != "" || r.Multiplier <= 0 || !r.From.IsZero() {
+			continue
+		}
+		switch r.Source {
+		case "user", "":
+			user = r.Multiplier // the newest user rule wins, as in the pricer's ruleAt
+		case "cc-switch":
+			imported = r.Multiplier
+		}
+	}
+	if user > 0 {
+		return user
+	}
+	if imported > 0 {
+		return imported
+	}
+	return 1
+}
+
+// providerMultipliers renders providerMultiplier for every provider, leaving
+// out the 1× default so the card's input keeps its "1" placeholder.
+func providerMultipliers(rules []query.PriceRule, providers []string) map[string]string {
+	out := make(map[string]string, len(providers))
+	for _, prov := range providers {
+		if m := providerMultiplier(rules, prov); m != 1 {
+			out[prov] = trimNum(m, 3)
+		}
+	}
+	return out
 }
 
 // mutate runs a settings change off the UI thread, then reloads everything
