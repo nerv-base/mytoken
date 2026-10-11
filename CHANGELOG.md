@@ -3,7 +3,7 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
-## Unreleased
+## 0.2.3
 
 - **Lighter in the tray.** Closing the main window now frees its graphics
   memory instead of keeping it hidden: MyToken drops from about 210 MB to
