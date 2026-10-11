@@ -11,6 +11,10 @@
 // ai-title/file-history-snapshot, providerData.rawUsage, credit bills) is the
 // one documented in package workbuddy.
 //
+// CodeBuddy is Tencent's terminal coding agent (npm @tencent-ai/codebuddy-code,
+// <https://cnb.cool/codebuddy/codebuddy-code>), and its home is $CODEBUDDY_HOME
+// or ~/.codebuddy.
+//
 // CAVEAT: no CodeBuddy session log has been observed on this machine — the
 // ~/.codebuddy home only holds diagnostics/, logs/memwatch/ and skills/ — so the
 // layout above is inferred from WorkBuddy and is UNVERIFIED against real

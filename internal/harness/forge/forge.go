@@ -1,9 +1,11 @@
-// Package forge parses the Forge (Factory) conversation database.
+// Package forge parses the conversation database of Forge (ForgeCode,
+// github.com/antinomyhq/forge, installed from forgecode.dev).
 //
 // Forge keeps every conversation in one SQLite database at
 // ~/.forge/.forge.db on every platform (%USERPROFILE%\.forge\.forge.db on
-// Windows, $HOME/.forge/.forge.db elsewhere); Forge itself has no XDG or
-// %APPDATA% location. MYTOKEN_FORGE_DIRS overrides the search path with a list
+// Windows, $HOME/.forge/.forge.db elsewhere); releases before that used
+// ~/forge, which Forge still reads when it exists, so both are searched.
+// Forge itself has no XDG or %APPDATA% location. MYTOKEN_FORGE_DIRS overrides the search path with a list
 // of directories or database files separated by the platform's list
 // separator.
 //
@@ -68,6 +70,8 @@ const (
 	legacyDBName = "forge.db"
 	// defaultDirName is the directory Forge uses below the home directory.
 	defaultDirName = ".forge"
+	// legacyDirName is where Forge kept its data before ~/.forge.
+	legacyDirName = "forge"
 	// kindSQLite marks a source that lives inside a SQLite database.
 	kindSQLite = "sqlite"
 	// rootsEnv overrides the search path with a list separated by the
@@ -124,7 +128,7 @@ func defaultRoots() []string {
 	if dirs := strings.TrimSpace(os.Getenv(rootsEnv)); dirs != "" {
 		return filepath.SplitList(dirs)
 	}
-	return []string{filepath.Join(harness.Home(), defaultDirName)}
+	return []string{filepath.Join(harness.Home(), defaultDirName), filepath.Join(harness.Home(), legacyDirName)}
 }
 
 // Discover finds every conversation that has a context blob. Each conversation

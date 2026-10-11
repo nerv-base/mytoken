@@ -65,8 +65,11 @@ func harnessColor(h model.Harness) ui.Color {
 		return ui.Hex("#E0577A")
 	case model.Kilo:
 		return ui.Hex("#D99A2B")
-	case model.ClaudeDesktop, model.OpenClaude:
+	case model.ClaudeDesktop:
 		return ui.Hex("#D97757")
+	case model.OpenClaude:
+		// The mark's own green (the "CLAUDE" half of the wordmark).
+		return ui.Hex("#4EBA65")
 	case model.Qwen:
 		return ui.Hex("#615CED")
 	case model.Kimi:
@@ -91,10 +94,11 @@ func harnessColor(h model.Harness) ui.Color {
 	return Anon
 }
 
-// Harness marks are the tools' own logos (from the MIT-licensed
-// @lobehub/icons set, see brand/README.md). Colored logos are shown in their
-// colors; one-color ones take the harness color. Crush has no square mark,
-// so it gets a drawn heart in the app's line style.
+// Harness marks are the tools' own logos (the MIT-licensed @lobehub/icons set,
+// plus Droid's and OpenClaude's own brand assets; brand/README.md lists every
+// source). Colored logos are shown in their colors; one-color ones take the
+// harness color. Crush has no square mark, so it gets a drawn heart, and Forge
+// has no mark we can attribute, so it stays drawn too.
 //
 //go:embed brand/*.svg
 var brandFS embed.FS
@@ -133,10 +137,9 @@ var harnessIcons = func() map[model.Harness]brandMark {
 		model.OpenClaw:      {load("openclaw-color"), true, false},
 		model.Goose:         {load("goose"), false, false},
 		model.WorkBuddy:     {load("workbuddy-color"), true, true},
-		// No published marks for these: drawn in the app's line style.
-		model.Droid:      {icon(`<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4.5M9.5 13h.01M14.5 13h.01M9.5 16.5h5"/>`), false, false},
-		model.Forge:      {icon(`<path d="M4 9h12l4-3v4l-4 2H8M8 12v3M14 12v3M6.5 19h11M9 15h6l1 4H8z"/>`), false, false},
-		model.OpenClaude: {icon(`<path d="M8 5 3.5 12 8 19M16 5l4.5 7-4.5 7M12 8v8M8.5 10l7 4M15.5 10l-7 4"/>`), false, false},
+		model.Droid:         {load("droid-color"), true, true},
+		model.OpenClaude:    {load("openclaude-color"), true, false},
+		model.Forge:         {load("forge"), false, false},
 	}
 }()
 

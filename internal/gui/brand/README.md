@@ -25,6 +25,17 @@ to identify each tool.
 | openclaw-color.svg | OpenClaw |
 | goose.svg | Goose |
 
-`workbuddy-color.svg` is WorkBuddy's own logo from its app bundle
-(`renderer/assets/logo-workbuddy-*.svg`), not in @lobehub/icons: MyGo draws
-no SVG filters, so its blurred glow is a radial gradient here.
+## Not from @lobehub/icons
+
+These are the tools' own published brand assets, fetched 2026-10-10.
+They stay the trademarks of their owners and identify the tool only.
+
+| File | Harness | Source | Terms | Change made here |
+|------|---------|--------|-------|------------------|
+| workbuddy-color.svg | WorkBuddy | its app bundle, `renderer/assets/logo-workbuddy-*.svg` | bundled app asset | the blurred glow became a radial gradient, because MyGo draws no SVG filters |
+| droid-color.svg | Droid | <https://factory.ai/favicon.svg>, identical at <https://docs.factory.ai/favicon.svg> | © Factory AI, no license granted with the file; used nominatively | the favicon's outer `<svg>` wrapper, its trailing `<style>` media queries and the `<g clip-path>` wrapper (whose `clipPath` lived in the removed wrapper) were dropped; geometry unchanged |
+| forge.svg | Forge | <https://forgecode.dev/shared/brand/favicon-dark.svg> | © Antinomy, used nominatively | fill `white` became `currentColor`, so the app tints it |
+| openclaude-color.svg | OpenClaude | `docs/assets/openclaude-wordmark.svg` in [Gitlawb/openclaude](https://github.com/Gitlawb/openclaude) | MIT | the wordmark's first CLAUDE letter, translated to the origin; the project publishes no square icon. Its badge tint in `internal/gui/theme.go` is the same green (`#4EBA65`) |
+
+Forge's mark is ForgeCode's (antinomyhq/forge, installed from forgecode.dev,
+which keeps its data under `~/.forge`, and under `~/forge` in older releases).
