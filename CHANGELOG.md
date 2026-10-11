@@ -3,7 +3,7 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
-## Unreleased
+## 0.3.0
 
 - **Cache ledger.** A new Cache page shows, for every request that should
   have hit the prompt cache, whether it did — and when it didn't, why: the
