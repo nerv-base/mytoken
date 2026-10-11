@@ -24,9 +24,9 @@
 
 一切都在你自己的机器上完成。没有账号、没有遥测、没有上传：默认只发两类请求：价格表，和每天一次到 github.com 检查更新（设置里可关）；中转站对账需逐站开启，只用你已交给该站点的 Key 访问该站点本身。
 
-- **一个窗口里看二十二个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
+- **一个窗口里看二十八个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
   Cline、Roo Code、Kilo Code、Claude Desktop、WorkBuddy、CodeBuddy、Hermes、Qwen Code、Kimi、
-  OpenClaude、Grok、OpenClaw、Droid、Goose、Forge。
+  OpenClaude、Grok、OpenClaw、Droid、Goose、Forge、Amp、Kiro、Zed、Antigravity、Codebuff、Mux。
 - **会话 × 供应商 × 模型** —— 五类 token 分开统计（input、output、cache read、cache write、
   reasoning），同时给出缓存命中率、按项目 / 按天的拆分，以及子代理树。
 - **可审计的归因** —— 每个供应商都标注了它是怎么确定的：`log`、`cc-switch`、`config-timeline`、
@@ -81,6 +81,14 @@ MyToken!!!!! 读取每个 harness 本来就保留的日志，只读、不回写�
 | Droid | `droid` | `$FACTORY_DIR`（默认 `~/.factory`） |
 | Goose | `goose` | `$GOOSE_PATH_ROOT/…`，否则 `~/.local/share/goose/sessions`（Windows：`%APPDATA%\Block\goose\sessions`），SQLite |
 | Forge | `forge` | 默认 `~/.forge`，SQLite |
+| Amp | `amp` | `$AMP_DATA_DIR`（逗号分隔），否则 `~/.local/share/amp` |
+| Kiro | `kiro` | `$KIRO_HOME`（默认 `~/.kiro`），加上本平台 Kiro 的 `globalStorage` agent 目录 |
+| Zed | `zed` | `…/Zed/threads/threads.db`（macOS：`~/Library/Application Support`，Windows：`%LOCALAPPDATA%`，Linux：`~/.local/share/zed`），SQLite |
+| Antigravity | `antigravity` | `$GEMINI_CLI_HOME/antigravity{,-cli,-ide}/conversations` 及对应的 `implicit` 目录（默认 `~/.gemini`），只读 `*.db` |
+| Codebuff | `codebuff` | `$CODEBUFF_DATA_DIR`，否则 `~/.config/manicode`、`~/.config/manicode-dev`、`~/.config/manicode-staging` |
+| Mux | `mux` | `$CODEBURN_MUX_DIR` 或 `$MUX_ROOT`，否则 `~/.mux`、`~/.mux-dev`、`~/.cmux` |
+
+Amp、Kiro、Zed、Antigravity、Codebuff、Mux 这 6 个已接线并有一致性测试覆盖，但尚未在真实数据上验证。
 
 VS Code 系扩展的 `…/globalStorage` 会按平台和编辑器解析 —— 编辑器：VS Code、VS Code Insiders、
 Cursor、Windsurf、VSCodium、Trae；平台：macOS 是 `~/Library/Application Support/<编辑器>/User/globalStorage`，
@@ -115,6 +123,12 @@ Linux 是 `~/.config/<编辑器>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…
 | `FACTORY_DIR`、`MYTOKEN_DROID_DIRS` | Droid 主目录，或直接指定目录（路径列表） |
 | `GOOSE_PATH_ROOT`、`MYTOKEN_GOOSE_DIRS` | Goose 数据根目录，或直接指定目录（路径列表） |
 | `MYTOKEN_FORGE_DIRS` | 直接指定 Forge 目录（路径列表） |
+| `AMP_DATA_DIR`、`MYTOKEN_AMP_DIRS` | Amp 数据目录（逗号分隔），或直接指定目录（路径列表） |
+| `KIRO_HOME`、`MYTOKEN_KIRO_DIRS` | Kiro 主目录，或直接指定目录（路径列表） |
+| `MYTOKEN_ZED_DIRS` | 直接指定 Zed threads 目录（路径列表） |
+| `MYTOKEN_ANTIGRAVITY_DIRS` | 直接指定 Antigravity 会话目录（路径列表） |
+| `CODEBUFF_DATA_DIR`、`MYTOKEN_CODEBUFF_DIRS` | Codebuff 数据目录，或直接指定目录（路径列表） |
+| `CODEBURN_MUX_DIR`、`MUX_ROOT`、`MYTOKEN_MUX_DIRS` | Mux 数据目录，或直接指定目录（路径列表） |
 
 ## 供应商归因
 
@@ -216,6 +230,9 @@ mytoken stats --since 2026-10-01 --until 2026-11-01 --by provider
 mytoken stats --by model --no-cost             # 不显示费用
 mytoken stats --since 90d --format csv > usage.csv   # 导出 CSV（也支持 --json）
 mytoken sessions --last 7d --limit 20          # 会话列表，按最近更新排序
+mytoken cache --last 30d                       # 缓存没命中多花了多少钱，按原因
+mytoken cache --by provider                    # 各中转站的缓存健康度
+mytoken cache <session-id> --harness codex     # 单个会话的缓存时间轴
 mytoken stats --since 30d --offline            # 完全不联网
 mytoken scan                                   # 立刻重新索引
 mytoken doctor                                 # 检查数据源、路径与版本
@@ -225,10 +242,12 @@ mytoken prices import-ccswitch                 # 导入 cc-switch 的价格
 mytoken version
 ```
 
-`--by` 支持 `session`、`provider`、`model`、`project`、`day`、`harness`。`stats` 与 `sessions`
-共用时间范围参数 `--since`/`--until`（时长如 `7d`，或日期）和 `--last`（`today`、`week`、
+`--by` 支持 `session`、`provider`、`model`、`project`、`day`、`harness`。`stats`、`sessions` 与
+`cache` 共用时间范围参数 `--since`/`--until`（时长如 `7d`，或日期）和 `--last`（`today`、`week`、
 `month`，或 `30d`），以及 `--timezone`、`--offline`、`--no-cost`、`--format table|json|csv`
-（`--json` 是 `--format json` 的简写）；`--since` 与 `--last` 不能同时使用。`mytoken help`
+（`--json` 是 `--format json` 的简写）；`--since` 与 `--last` 不能同时使用。`cache` 默认按未命中
+原因分组（也可 `--by provider|model|harness|project|session|day`），`mytoken cache <会话 ID>` 打印
+该会话逐条请求的缓存时间轴；它只读本地数据，完全不联网。`mytoken help`
 会列出所有命令，每个参数的含义见 [docs/CLI.md](docs/CLI.md)。
 
 ## 从源码构建

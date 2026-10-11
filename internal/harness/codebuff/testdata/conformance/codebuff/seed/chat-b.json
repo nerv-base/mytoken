@@ -1,0 +1,42 @@
+{
+  "channel": "manicode",
+  "project": "store-migration",
+  "chatId": "2026-04-14T11-00-00.000Z",
+  "messages": [
+    {
+      "id": "msg-user-1",
+      "variant": "user",
+      "content": "Summarise the store migration",
+      "timestamp": "2026-04-14T11:00:05.000Z"
+    },
+    {
+      "id": "msg-ai-1",
+      "variant": "ai",
+      "content": "",
+      "timestamp": "2026-04-14T11:00:40.000Z",
+      "credits": 3,
+      "blocks": [
+        { "type": "text", "content": "SENTINEL_PRIVATE_TEXT credit-only reply" }
+      ],
+      "metadata": {
+        "runState": {
+          "sessionState": { "mainAgentState": { "agentType": "file-picker" } }
+        }
+      }
+    },
+    {
+      "id": "msg-ai-2",
+      "variant": "ai",
+      "content": "",
+      "timestamp": "2026-04-14T11:01:00.000Z",
+      "metadata": {
+        "model": "google/gemini-2.5-pro",
+        "usage": {
+          "promptTokens": 800,
+          "completionTokens": 200,
+          "promptTokensDetails": { "cachedTokens": 100 }
+        }
+      }
+    }
+  ]
+}

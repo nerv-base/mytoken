@@ -1,0 +1,144 @@
+{
+  "id": "01a00000-0000-7000-8000-000000000001",
+  "title": "fixture: amp ledger thread alpha",
+  "createdAt": "2026-01-02T03:04:05.000Z",
+  "messages": [
+    {
+      "messageId": 101,
+      "role": "user",
+      "timestamp": "2026-01-02T03:04:05.000Z",
+      "content": "fixture: recompute the amp ledger totals for thread alpha"
+    },
+    {
+      "messageId": 102,
+      "role": "assistant",
+      "timestamp": "2026-01-02T03:04:06.000Z",
+      "model": "deepseek-v4.1-flash",
+      "content": [
+        {
+          "type": "text",
+          "text": "Reading the thread ledger and joining the cache columns. SENTINEL_PRIVATE_TEXT"
+        },
+        {
+          "type": "toolCall",
+          "text": "SENTINEL_PRIVATE_TEXT: opened usageLedger.events"
+        }
+      ],
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 40,
+        "cacheCreationInputTokens": 120,
+        "cacheReadInputTokens": 800,
+        "totalTokens": 1080,
+        "timestamp": "2026-01-02T03:04:06.000Z",
+        "model": "deepseek-v4.1-flash"
+      }
+    },
+    {
+      "messageId": 103,
+      "role": "user",
+      "timestamp": "2026-01-02T03:04:07.000Z",
+      "content": "please double check the cache columns too"
+    },
+    {
+      "messageId": 104,
+      "role": "assistant",
+      "timestamp": "2026-01-02T03:04:07.500Z",
+      "model": "claude-opus-5-5",
+      "content": [
+        {
+          "type": "text",
+          "text": "The cache columns are disjoint from input and output."
+        }
+      ],
+      "usage": {
+        "inputTokens": 300,
+        "outputTokens": 90,
+        "cacheCreationInputTokens": 10,
+        "cacheReadInputTokens": 100,
+        "totalTokens": 500,
+        "timestamp": "2026-01-02T03:04:07.500Z",
+        "model": "claude-opus-5-5"
+      }
+    },
+    {
+      "messageId": 105,
+      "role": "user",
+      "timestamp": "2026-01-02T03:04:08.000Z",
+      "content": "and the billing credits"
+    },
+    {
+      "messageId": 106,
+      "role": "assistant",
+      "timestamp": "2026-01-02T03:04:09.000Z",
+      "model": "deepseek-v4.1-flash",
+      "content": [
+        {
+          "type": "text",
+          "text": "Credits are recorded per ledger event."
+        }
+      ],
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "cacheReadInputTokens": 0,
+        "totalTokens": 0,
+        "timestamp": "2026-01-02T03:04:09.000Z",
+        "model": "deepseek-v4.1-flash"
+      }
+    }
+  ],
+  "usageLedger": {
+    "events": [
+      {
+        "id": "evt-fixture-0001",
+        "timestamp": "2026-01-02T03:04:06.000Z",
+        "model": "deepseek-v4.1-flash",
+        "tokens": {
+          "input": 1000,
+          "output": 200,
+          "total": 2120
+        },
+        "toMessageId": 102,
+        "credits": 0.75
+      },
+      {
+        "id": "evt-fixture-0002",
+        "timestamp": "2026-01-02T03:04:07.500Z",
+        "model": "claude-opus-5-5",
+        "tokens": {
+          "input": 300,
+          "output": 90,
+          "total": 600
+        },
+        "toMessageId": 104,
+        "credits": 0.25
+      },
+      {
+        "id": "evt-fixture-0003",
+        "timestamp": "2026-01-02T03:04:08.500Z",
+        "model": "deepseek-v4.1-flash",
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "total": 0
+        },
+        "toMessageId": 106,
+        "credits": 0
+      },
+      {
+        "id": "evt-fixture-0004",
+        "timestamp": "2026-01-02T03:04:09.000Z",
+        "model": "gemini-3.1-pro-preview",
+        "tokens": {
+          "input": 150,
+          "output": 60,
+          "total": 210
+        },
+        "toMessageId": 999,
+        "credits": 0.1
+      }
+    ]
+  }
+}

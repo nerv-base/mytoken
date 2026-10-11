@@ -30,6 +30,12 @@ const (
 	WorkBuddy     Harness = "workbuddy"
 	CodeBuddy     Harness = "codebuddy"
 	Hermes        Harness = "hermes"
+	Amp           Harness = "amp"
+	Kiro          Harness = "kiro"
+	Codebuff      Harness = "codebuff"
+	Mux           Harness = "mux"
+	Zed           Harness = "zed"
+	Antigravity   Harness = "antigravity"
 )
 
 // DisplayName is the human label of a harness.
@@ -71,6 +77,10 @@ func (h Harness) DisplayName() string {
 		return "CodeBuddy"
 	case Hermes:
 		return "Hermes"
+	case Amp:
+		return "Amp"
+	case Kiro:
+		return "Kiro"
 	case ClaudeDesktop:
 		return "Claude Desktop"
 	case Qwen:
@@ -79,6 +89,14 @@ func (h Harness) DisplayName() string {
 		return "Kimi CLI"
 	case OpenClaude:
 		return "OpenClaude"
+	case Codebuff:
+		return "Codebuff"
+	case Mux:
+		return "Mux"
+	case Zed:
+		return "Zed"
+	case Antigravity:
+		return "Antigravity"
 	}
 	return string(h)
 }

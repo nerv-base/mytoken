@@ -1,0 +1,84 @@
+{
+  "id": "01b00000-0000-7000-8000-000000000002",
+  "title": "fixture: amp beta thread without a ledger",
+  "createdAt": "2026-01-02T03:05:00.000Z",
+  "messages": [
+    {
+      "messageId": 201,
+      "role": "user",
+      "timestamp": "2026-01-02T03:05:00.000Z",
+      "content": "fixture: summarize the amp beta thread"
+    },
+    {
+      "messageId": 202,
+      "role": "assistant",
+      "timestamp": "2026-01-02T03:05:01.000Z",
+      "model": "deepseek-v4.1-flash",
+      "content": [
+        {
+          "type": "text",
+          "text": "This thread has no usage ledger, so the message usage blocks are all we have. SENTINEL_PRIVATE_TEXT"
+        }
+      ],
+      "usage": {
+        "inputTokens": 400,
+        "outputTokens": 80,
+        "cacheCreationInputTokens": 50,
+        "cacheReadInputTokens": 200,
+        "totalTokens": 730,
+        "timestamp": "2026-01-02T03:05:01.000Z",
+        "model": "deepseek-v4.1-flash"
+      }
+    },
+    {
+      "messageId": 203,
+      "role": "user",
+      "timestamp": "2026-01-02T03:05:02.000Z",
+      "content": "second question"
+    },
+    {
+      "messageId": 204,
+      "role": "assistant",
+      "timestamp": "2026-01-02T03:05:03.000Z",
+      "model": "gemini-3.1-pro-preview",
+      "content": [
+        {
+          "type": "text",
+          "text": "Only a total token count on this one."
+        }
+      ],
+      "usage": {
+        "totalTokens": 120,
+        "timestamp": "2026-01-02T03:05:03.000Z",
+        "model": "gemini-3.1-pro-preview"
+      }
+    },
+    {
+      "messageId": 205,
+      "role": "user",
+      "timestamp": "2026-01-02T03:05:04.000Z",
+      "content": "third question"
+    },
+    {
+      "messageId": 206,
+      "role": "assistant",
+      "timestamp": "2026-01-02T03:05:05.000Z",
+      "model": "deepseek-v4.1-flash",
+      "content": [
+        {
+          "type": "text",
+          "text": "An assistant message with no usage at all."
+        }
+      ],
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "cacheReadInputTokens": 0,
+        "totalTokens": 0,
+        "timestamp": "2026-01-02T03:05:05.000Z",
+        "model": "deepseek-v4.1-flash"
+      }
+    }
+  ]
+}

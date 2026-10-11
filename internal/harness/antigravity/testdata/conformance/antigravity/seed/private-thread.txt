@@ -1,0 +1,3 @@
+workspace file:///Users/demo/proj
+assistant: the cascade committed one generation per step (SENTINEL_PRIVATE_TEXT)
+tool output: SENTINEL_PRIVATE_TEXT belongs to the conversation body, never to the ledger

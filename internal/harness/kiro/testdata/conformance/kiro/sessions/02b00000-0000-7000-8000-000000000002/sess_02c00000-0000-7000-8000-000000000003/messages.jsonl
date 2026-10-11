@@ -1,0 +1,10 @@
+{"timestamp":"2026-01-02T03:04:10.100Z","payload":{"type":"user","content":"fixture: recompute the kiro ide totals for session beta"}}
+{"timestamp":"2026-01-02T03:04:10.200Z","payload":{"type":"turn_start","executionId":"ide-exec-fixture-0001"}}
+{"timestamp":"2026-01-02T03:04:10.300Z","payload":{"type":"tool_call","toolName":"read_file"}}
+{"timestamp":"2026-01-02T03:04:10.400Z","payload":{"type":"tool_result","content":"SENTINEL_PRIVATE_TEXT tool output for the kiro ide fixture"}}
+{"timestamp":"2026-01-02T03:04:20.100Z","payload":{"type":"user","content":[{"type":"text","text":"fixture: weigh the kiro ide reasoning tokens"}]}}
+{"timestamp":"2026-01-02T03:04:20.200Z","payload":{"type":"turn_start","executionId":"ide-exec-fixture-0002"}}
+{"timestamp":"2026-01-02T03:04:20.300Z","payload":{"type":"assistant","operationType":"Reasoning","content":"weighing the SENTINEL_PRIVATE_TEXT reasoning fixture options"}}
+{"timestamp":"2026-01-02T03:04:30.100Z","payload":{"type":"user","content":"fixture: verify the kiro ide output totals"}}
+{"timestamp":"2026-01-02T03:04:30.200Z","payload":{"type":"turn_start","executionId":"ide-exec-fixture-0003"}}
+{"timestamp":"2026-01-02T03:04:30.300Z","payload":{"type":"assistant","content":[{"type":"text","text":"Verified the kiro ide SENTINEL_PRIVATE_TEXT output totals."}]}}

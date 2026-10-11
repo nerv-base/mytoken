@@ -28,9 +28,9 @@ makes two kinds of request — the price table download, and a daily update chec
 (Settings turns it off). Relay-site reconciliation is opt-in per site, and a site is only ever
 contacted with the key you already gave that site.
 
-- **Twenty-two harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
+- **Twenty-eight harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
   Crush, Cline, Roo Code, Kilo Code, Claude Desktop, WorkBuddy, CodeBuddy, Hermes, Qwen Code, Kimi,
-  OpenClaude, Grok, OpenClaw, Droid, Goose and Forge.
+  OpenClaude, Grok, OpenClaw, Droid, Goose, Forge, Amp, Kiro, Zed, Antigravity, Codebuff and Mux.
 - **Session × provider × model** — token classes kept apart (input, output, cache read, cache write,
   reasoning), with cache-hit rate, per-project and per-day breakdowns, and sub-agent trees.
 - **Attribution you can audit** — every provider is labelled with how it was determined: `log`,
@@ -88,6 +88,15 @@ first user message).
 | Droid | `droid` | `$FACTORY_DIR` (`~/.factory` by default) |
 | Goose | `goose` | `$GOOSE_PATH_ROOT/…`, else `~/.local/share/goose/sessions` (Windows: `%APPDATA%\Block\goose\sessions`), SQLite |
 | Forge | `forge` | `~/.forge` by default, SQLite |
+| Amp | `amp` | `$AMP_DATA_DIR` (comma-separated), else `~/.local/share/amp` |
+| Kiro | `kiro` | `$KIRO_HOME` (`~/.kiro` by default), plus the platform Kiro `globalStorage` agent directory |
+| Zed | `zed` | `…/Zed/threads/threads.db` (macOS: `~/Library/Application Support`, Windows: `%LOCALAPPDATA%`, Linux: `~/.local/share/zed`), SQLite |
+| Antigravity | `antigravity` | `$GEMINI_CLI_HOME/antigravity{,-cli,-ide}/conversations` and the matching `implicit` dirs (`~/.gemini` by default), only `*.db` |
+| Codebuff | `codebuff` | `$CODEBUFF_DATA_DIR`, else `~/.config/manicode`, `~/.config/manicode-dev` and `~/.config/manicode-staging` |
+| Mux | `mux` | `$CODEBURN_MUX_DIR` or `$MUX_ROOT`, else `~/.mux`, `~/.mux-dev` and `~/.cmux` |
+
+Amp, Kiro, Zed, Antigravity, Codebuff and Mux are wired and covered by the conformance suite, but
+have not been verified against real-world logs yet.
 
 For the VS Code family extensions, `…/globalStorage` is resolved per platform and per editor —
 editors: VS Code, VS Code Insiders, Cursor, Windsurf, VSCodium, Trae; platforms:
@@ -124,6 +133,12 @@ archived logs:
 | `FACTORY_DIR`, `MYTOKEN_DROID_DIRS` | Droid home dir, or explicit dirs (path list) |
 | `GOOSE_PATH_ROOT`, `MYTOKEN_GOOSE_DIRS` | Goose data root, or explicit dirs (path list) |
 | `MYTOKEN_FORGE_DIRS` | Explicit Forge dirs (path list) |
+| `AMP_DATA_DIR`, `MYTOKEN_AMP_DIRS` | Amp data dirs (comma-separated), or explicit dirs (path list) |
+| `KIRO_HOME`, `MYTOKEN_KIRO_DIRS` | Kiro home dir, or explicit dirs (path list) |
+| `MYTOKEN_ZED_DIRS` | Explicit Zed threads dirs (path list) |
+| `MYTOKEN_ANTIGRAVITY_DIRS` | Explicit Antigravity conversation dirs (path list) |
+| `CODEBUFF_DATA_DIR`, `MYTOKEN_CODEBUFF_DIRS` | Codebuff data dir, or explicit dirs (path list) |
+| `CODEBURN_MUX_DIR`, `MUX_ROOT`, `MYTOKEN_MUX_DIRS` | Mux data dir, or explicit dirs (path list) |
 
 ## Provider attribution
 
@@ -241,6 +256,9 @@ mytoken stats --since 2026-10-01 --until 2026-11-01 --by provider
 mytoken stats --by model --no-cost             # leave costs out
 mytoken stats --since 90d --format csv > usage.csv   # CSV export (--json also works)
 mytoken sessions --last 7d --limit 20          # session list, most recent first
+mytoken cache --last 30d                       # what cache misses cost, by cause
+mytoken cache --by provider                    # cache health per relay site
+mytoken cache <session-id> --harness codex     # one session's cache timeline
 mytoken stats --since 30d --offline            # never touch the network
 mytoken scan                                   # re-index now
 mytoken doctor                                 # check sources, paths and versions
@@ -250,11 +268,13 @@ mytoken prices import-ccswitch                 # import cc-switch pricing
 mytoken version
 ```
 
-`--by` accepts `session`, `provider`, `model`, `project`, `day` or `harness`. `stats` and `sessions`
-share the range flags `--since`/`--until` (a duration like `7d`, or a date) and `--last` (`today`,
-`week`, `month`, or `30d`), plus `--timezone`, `--offline`, `--no-cost` and
+`--by` accepts `session`, `provider`, `model`, `project`, `day` or `harness`. `stats`, `sessions`
+and `cache` share the range flags `--since`/`--until` (a duration like `7d`, or a date) and `--last`
+(`today`, `week`, `month`, or `30d`), plus `--timezone`, `--offline`, `--no-cost` and
 `--format table|json|csv` (`--json` is short for `--format json`); `--since` and `--last` cannot be
-combined. `mytoken help` lists every command, and each flag is documented in
+combined. `cache` groups the cache ledger by miss cause (or `--by provider|model|harness|project|session|day`),
+and `mytoken cache <session-id>` prints one session's per-request cache timeline; it reads local data
+only and never uses the network. `mytoken help` lists every command, and each flag is documented in
 [docs/CLI.md](docs/CLI.md).
 
 ## Building from source

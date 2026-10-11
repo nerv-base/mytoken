@@ -37,10 +37,13 @@
 
 | harness | 子代理 | 备注 |
 | --- | --- | --- |
+| `amp` | 否 | 整文件重写的 thread JSON；credits 记为 `Bill`；未在真实数据上验证 |
+| `antigravity` | 否 | 手写 protobuf 解码的 cascade `*.db`（`.pb` 不支持）；未在真实数据上验证 |
 | `claude-code` | 是 | 追加式 JSONL；`isSidechain` / `agentId` / `subagents/` 目录 |
 | `claude-desktop` | 是 | usage ledger + transcript；与 claude-code 的根目录不相交 |
 | `cline` | 是 | 原地重写的任务 JSON（经 `internal/harness/clinetask`） |
 | `codebuddy` | 是 | 追加式 JSONL |
+| `codebuff` | 否 | chat JSON；credits 记为 `Bill`；未在真实数据上验证 |
 | `codex` | 是 | `thread_spawn.parent_thread_id` / `parent_thread_id` / `forked_from_id` |
 | `crush` | 是 | sqlite；会话可互相引用 |
 | `droid` | 否 | 工具无子代理概念 |
@@ -52,6 +55,8 @@
 | `hermes` | 是 | sqlite |
 | `kilo` | 是 | 原地重写的任务 JSON（经 `clinetask`） |
 | `kimi` | 是 | 追加式 JSONL |
+| `kiro` | 否 | 五种布局；token 按字符/4 估算，无缓存信号；CLI `Clear` → `BoundaryClear`；未在真实数据上验证 |
+| `mux` | 是 | 追加式 JSONL；子代理 transcript 的父会话是所在 workspace；未在真实数据上验证 |
 | `openclaude` | 是 | 追加式 JSONL |
 | `openclaw` | 否 | 解析器不产出 `ParentID`（`internal/harness/openclaw/openclaw.go:45`） |
 | `opencode` | 是 | sqlite；`parentID` 指向父会话 |
@@ -59,8 +64,9 @@
 | `qwen` | 否 | 工具无子代理概念 |
 | `roo` | 是 | 原地重写的任务 JSON（经 `clinetask`） |
 | `workbuddy` | 是 | 追加式 JSONL |
+| `zed` | 是 | sqlite `threads.db`；`parent_id`；累计用量与逐请求之差补一条余量事件；未在真实数据上验证 |
 
-上面 22 个 harness 都已注册进 `internal/app/app.go` 的空导入，`mytoken doctor`
+上面 28 个 harness 都已注册进 `internal/app/app.go` 的空导入，`mytoken doctor`
 会列出它们。接入一个新 harness 的最后一步就是那次空导入：漏了它
 `harness.All()` 里就没有这个 harness，`doctor`、`scan`、`stats` 都看不见它，
 而单包测试仍然是绿的——最容易漏的一步。
@@ -116,6 +122,30 @@
   `updated_at` 取最大值（`internal/store/store.go:113`）。
 - 有金额字段就用它（opencode 这类日志会写 provider 报的费用），否则置空由价格表估算；
   0 表示「未知」而不是「免费」（`internal/harness/opencode/opencode.go:895-897`）。
+
+### 4.1 压缩/清空边界（`model.Boundary`）
+
+`model.Boundary`（`internal/model/model.go:131`）只在该 harness 的日志**明确记录**了上下文
+替换时设置：`BoundaryCompact` 打在压缩后**第一条**请求上，`BoundaryClear`/`BoundaryResume`
+同理。没有标记就留空——不要靠 token 骤降之类启发式猜测（判定优先序见 `docs/CACHE.md` §3）。
+
+- 已上报边界：claude、codex、dsh、claudedesktop、grok、pi、openclaude、workbuddy。
+- **pi**：`type=="compaction"` 的记录**既是压缩请求本身（其 usage 与日志成本照常计数），
+  又是边界标记**：压缩行自己不带 `Boundary`，其后第一条带 usage 的记录打 `BoundaryCompact`。
+  压缩记录不带 model/provider（日志里没有），所以沿用同一会话里**相邻请求**的值——优先前一条，
+  前面没有请求时取后一条，都没有才用 `"unknown"`；`usage.cost` 是对象而 async 转录的 cost 是
+  数字，`piAsyncUsage.UnmarshalJSON` 两种形状都接受（`pi.go` 里解码失败后的信封回退分支仍保留，
+  作为没见过形状的安全网：至少把边界读出来，而不是整行丢弃）。
+- **opencode**：v2 `session_message.type='compaction'` 的行**既是压缩请求本身（其 usage 照常
+  计数），又是边界标记**。压缩行自己不带 `Boundary`（否则边界会落在压缩调用上），紧随其后
+  第一条 timestamp ≥ 压缩行的请求打 `BoundaryCompact`。标记会随游标持久化
+  （`dbState.Compact`），因为压缩行和它之后的请求常常落在两个增量批次里。
+- 已核查但**没有可用标记**的 harness：crush（`messages.is_summary_message` 有标志，但用量
+  来自 session 的累计计数器、没有每消息时间戳，挂不上去）、gemini（`summary` 是会话级
+  元数据，仅用作标题）、openclaw/hermes（源码注释已说明不记录父会话与请求 id）、
+  kimi/cline/roo/kilo/qwen/goose/droid/forge/codebuddy（日志格式与 codeburn 的对应
+  provider 实现里都没有压缩标记）。这些包的事件 `Boundary` 保持为空是**正确结果**，
+  不是遗漏；将来若上游加了标记，按本节的形状补 fixture。
 
 ## 5. 隐私边界
 

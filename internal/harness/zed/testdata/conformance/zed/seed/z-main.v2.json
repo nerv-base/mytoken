@@ -1,0 +1,40 @@
+{
+  "model": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5"
+  },
+  "request_token_usage": {
+    "msg-1": {
+      "input_tokens": 1000,
+      "output_tokens": 200,
+      "cache_creation_input_tokens": 100,
+      "cache_read_input_tokens": 400
+    },
+    "msg-2": {
+      "input_tokens": 500,
+      "output_tokens": 80,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 200
+    }
+  },
+  "cumulative_token_usage": {
+    "input_tokens": 1500,
+    "output_tokens": 280,
+    "cache_creation_input_tokens": 100,
+    "cache_read_input_tokens": 600
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Refactor the token accounting"
+    },
+    {
+      "role": "assistant",
+      "content": "SENTINEL_PRIVATE_TEXT appears in the assistant reply"
+    },
+    {
+      "role": "assistant",
+      "content": "SENTINEL_PRIVATE_TEXT appears in a later assistant reply"
+    }
+  ]
+}

@@ -1,0 +1,125 @@
+{
+  "harness": "amp",
+  "sources": [
+    {
+      "path": "threads/thread-fixture-01a00000-0000-7000-8000-000000000001.json",
+      "kind": "json"
+    },
+    {
+      "path": "threads/thread-fixture-01b00000-0000-7000-8000-000000000002.json",
+      "kind": "json"
+    }
+  ],
+  "events": [
+    {
+      "harness": "amp",
+      "dedupKey": "amp:01a00000-0000-7000-8000-000000000001:evt-fixture-0001",
+      "sessionId": "01a00000-0000-7000-8000-000000000001",
+      "projectPath": "Amp",
+      "timestamp": "2026-01-02T03:04:06Z",
+      "model": "deepseek-v4.1-flash",
+      "provider": "amp",
+      "tokens": {
+        "input": 1000,
+        "output": 200,
+        "cacheRead": 800,
+        "cacheWrite": 120,
+        "reasoning": 0
+      },
+      "bill": {
+        "amount": 0.75,
+        "unit": "credit"
+      }
+    },
+    {
+      "harness": "amp",
+      "dedupKey": "amp:01a00000-0000-7000-8000-000000000001:evt-fixture-0002",
+      "sessionId": "01a00000-0000-7000-8000-000000000001",
+      "projectPath": "Amp",
+      "timestamp": "2026-01-02T03:04:07.5Z",
+      "model": "claude-opus-5-5",
+      "provider": "amp",
+      "tokens": {
+        "input": 300,
+        "output": 190,
+        "cacheRead": 100,
+        "cacheWrite": 10,
+        "reasoning": 0
+      },
+      "bill": {
+        "amount": 0.25,
+        "unit": "credit"
+      }
+    },
+    {
+      "harness": "amp",
+      "dedupKey": "amp:01a00000-0000-7000-8000-000000000001:evt-fixture-0004",
+      "sessionId": "01a00000-0000-7000-8000-000000000001",
+      "projectPath": "Amp",
+      "timestamp": "2026-01-02T03:04:09Z",
+      "model": "gemini-3.1-pro-preview",
+      "provider": "amp",
+      "tokens": {
+        "input": 150,
+        "output": 60,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "bill": {
+        "amount": 0.1,
+        "unit": "credit"
+      }
+    },
+    {
+      "harness": "amp",
+      "dedupKey": "amp:01b00000-0000-7000-8000-000000000002:2026-01-02T03:05:01.000Z:deepseek-v4.1-flash:400x80",
+      "sessionId": "01b00000-0000-7000-8000-000000000002",
+      "projectPath": "Amp",
+      "timestamp": "2026-01-02T03:05:01Z",
+      "model": "deepseek-v4.1-flash",
+      "provider": "amp",
+      "tokens": {
+        "input": 400,
+        "output": 80,
+        "cacheRead": 200,
+        "cacheWrite": 50,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "amp",
+      "dedupKey": "amp:01b00000-0000-7000-8000-000000000002:2026-01-02T03:05:03.000Z:gemini-3.1-pro-preview:0x120",
+      "sessionId": "01b00000-0000-7000-8000-000000000002",
+      "projectPath": "Amp",
+      "timestamp": "2026-01-02T03:05:03Z",
+      "model": "gemini-3.1-pro-preview",
+      "provider": "amp",
+      "tokens": {
+        "input": 0,
+        "output": 120,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "harness": "amp",
+      "sessionId": "01a00000-0000-7000-8000-000000000001",
+      "title": "fixture: recompute the amp ledger totals for thread alpha",
+      "project": "Amp",
+      "startedAt": "2026-01-02T03:04:06Z",
+      "updatedAt": "2026-01-02T03:04:09Z"
+    },
+    {
+      "harness": "amp",
+      "sessionId": "01b00000-0000-7000-8000-000000000002",
+      "title": "fixture: summarize the amp beta thread",
+      "project": "Amp",
+      "startedAt": "2026-01-02T03:05:01Z",
+      "updatedAt": "2026-01-02T03:05:03Z"
+    }
+  ]
+}

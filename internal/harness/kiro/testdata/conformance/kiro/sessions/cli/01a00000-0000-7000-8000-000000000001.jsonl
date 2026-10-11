@@ -1,0 +1,10 @@
+{"version":1,"kind":"Prompt","data":{"content":[{"kind":"text","data":"fixture: recompute the kiro cli totals after the clear"}],"meta":{"timestamp":1767323045000}}}
+{"version":1,"kind":"AssistantMessage","data":{"content":[{"kind":"text","data":"Recomputed the kiro cli totals from the local SENTINEL_PRIVATE_TEXT sample; input and output look consistent."}]}}
+{"version":1,"kind":"ToolResults","data":{"content":[{"kind":"text","data":"SENTINEL_PRIVATE_TEXT tool output for the kiro cli fixture"}]}}
+{"version":1,"kind":"Prompt","data":{"content":[{"kind":"text","data":"fixture: now show the per-turn kiro cli credits"}],"meta":{"timestamp":1767323055000}}}
+{"version":1,"kind":"AssistantMessage","data":{"content":[{"kind":"text","data":"The per-turn kiro cli credits come from the companion SENTINEL_PRIVATE_TEXT metadata."}]}}
+{"version":1,"kind":"Clear","data":{}}
+{"version":1,"kind":"Prompt","data":{"content":[{"kind":"text","data":"fixture: confirm the totals after the context clear"}],"meta":{"timestamp":1767323065000}}}
+{"version":1,"kind":"AssistantMessage","data":{"content":[{"kind":"text","data":"Confirmed the totals after the clear using only the SENTINEL_PRIVATE_TEXT fixture data."}]}}
+{"version":1,"kind":"Prompt","data":{"content":[{"kind":"text","data":"fixture: a turn with no assistant reply at all"}],"meta":{"timestamp":1767323075000}}}
+{"version":1,"kind":"Prompt","data":{"content":[{"kind":"text","data":"fixture: another prompt after the empty turn"}],"meta":{"timestamp":1767323085000}}}

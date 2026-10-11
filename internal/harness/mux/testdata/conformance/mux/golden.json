@@ -1,0 +1,115 @@
+{
+  "harness": "mux",
+  "sources": [
+    {
+      "path": "sessions/ws-alpha/chat.jsonl",
+      "kind": "jsonl"
+    },
+    {
+      "path": "sessions/ws-alpha/subagent-transcripts/task-child-1/chat.jsonl",
+      "kind": "jsonl"
+    }
+  ],
+  "events": [
+    {
+      "harness": "mux",
+      "dedupKey": "mux:task-child-1:sub-asst-1",
+      "sessionId": "task-child-1",
+      "parentId": "ws-alpha",
+      "projectPath": "/Users/demo/mux-alpha",
+      "timestamp": "2026-04-14T10:03:30Z",
+      "model": "gpt-5",
+      "provider": "openai",
+      "tokens": {
+        "input": 500,
+        "output": 100,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 20
+      }
+    },
+    {
+      "harness": "mux",
+      "dedupKey": "mux:ws-alpha:hd863c62632429c10",
+      "sessionId": "ws-alpha",
+      "projectPath": "/Users/demo/mux-alpha",
+      "timestamp": "2026-04-14T10:02:30Z",
+      "model": "claude-haiku-4-5",
+      "provider": "anthropic",
+      "tokens": {
+        "input": 300,
+        "output": 30,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 10
+      }
+    },
+    {
+      "harness": "mux",
+      "dedupKey": "mux:ws-alpha:msg-asst-1",
+      "sessionId": "ws-alpha",
+      "projectPath": "/Users/demo/mux-alpha",
+      "timestamp": "2026-04-14T10:00:30Z",
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "tokens": {
+        "input": 680,
+        "output": 220,
+        "cacheRead": 400,
+        "cacheWrite": 120,
+        "reasoning": 80
+      }
+    },
+    {
+      "harness": "mux",
+      "dedupKey": "mux:ws-alpha:msg-asst-3",
+      "sessionId": "ws-alpha",
+      "projectPath": "/Users/demo/mux-alpha",
+      "timestamp": "2026-04-14T10:02:00Z",
+      "model": "gpt-5",
+      "provider": "openai",
+      "tokens": {
+        "input": 900,
+        "output": 150,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "mux",
+      "dedupKey": "mux:ws-alpha:msg-asst-7",
+      "sessionId": "ws-alpha",
+      "projectPath": "/Users/demo/mux-alpha",
+      "timestamp": "2026-04-14T10:03:00Z",
+      "model": "gemini-3-pro-preview",
+      "provider": "google",
+      "tokens": {
+        "input": 500,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 20
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "harness": "mux",
+      "sessionId": "task-child-1",
+      "parentId": "ws-alpha",
+      "title": "Inspect the cache layer",
+      "project": "mux-alpha",
+      "startedAt": "2026-04-14T10:03:00Z",
+      "updatedAt": "2026-04-14T10:03:30Z"
+    },
+    {
+      "harness": "mux",
+      "sessionId": "ws-alpha",
+      "title": "Refactor the widget cache layer",
+      "project": "mux-alpha",
+      "startedAt": "2026-04-14T10:00:05Z",
+      "updatedAt": "2026-04-14T10:03:30Z"
+    }
+  ]
+}

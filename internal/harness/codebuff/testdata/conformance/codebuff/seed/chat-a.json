@@ -1,0 +1,113 @@
+{
+  "channel": "manicode",
+  "project": "widget-cache",
+  "chatId": "2026-04-14T10-00-00.000Z",
+  "runState": {
+    "sessionState": {
+      "projectContext": { "cwd": "/Users/demo/widget-cache" },
+      "mainAgentState": { "agentType": "base2" }
+    }
+  },
+  "messages": [
+    {
+      "id": "msg-user-1",
+      "variant": "user",
+      "content": "Refactor   the widget cache\nlayer",
+      "timestamp": "2026-04-14T10:00:05.000Z"
+    },
+    {
+      "id": "msg-ai-1",
+      "variant": "ai",
+      "content": "",
+      "timestamp": "2026-04-14T10:00:30.000Z",
+      "credits": 42,
+      "blocks": [
+        { "type": "tool", "toolName": "read_files", "input": { "paths": ["cache.go"] } },
+        { "type": "tool", "toolName": "str_replace", "input": { "path": "cache.go" } },
+        { "type": "text", "content": "SENTINEL_PRIVATE_TEXT in the assistant reply" },
+        {
+          "type": "agent",
+          "blocks": [
+            { "type": "text", "content": "nested SENTINEL_PRIVATE_TEXT from a sub agent" }
+          ]
+        }
+      ],
+      "metadata": {
+        "model": "anthropic/claude-sonnet-4-5",
+        "usage": {
+          "inputTokens": 5000,
+          "outputTokens": 2000,
+          "cacheCreationInputTokens": 1000,
+          "cacheReadInputTokens": 500
+        }
+      }
+    },
+    {
+      "id": "msg-user-2",
+      "variant": "user",
+      "content": "also add a test",
+      "timestamp": "2026-04-14T10:01:00.000Z"
+    },
+    {
+      "id": "msg-ai-2",
+      "variant": "ai",
+      "content": "",
+      "timestamp": "2026-04-14T10:01:30.000Z",
+      "metadata": {
+        "runState": {
+          "sessionState": {
+            "mainAgentState": {
+              "agentType": "base2",
+              "messageHistory": [
+                { "role": "user" },
+                {
+                  "role": "assistant",
+                  "providerOptions": {
+                    "codebuff": {
+                      "model": "openai/gpt-4o",
+                      "usage": {
+                        "prompt_tokens": 2000,
+                        "completion_tokens": 800,
+                        "prompt_tokens_details": { "cached_tokens": 400 }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "msg-ai-3",
+      "variant": "ai",
+      "content": "",
+      "timestamp": "2026-04-14T10:02:00.000Z",
+      "blocks": [
+        { "type": "text", "content": "SENTINEL_PRIVATE_TEXT mode divider" }
+      ],
+      "metadata": {
+        "runState": {
+          "sessionState": { "mainAgentState": { "agentType": "base2" } }
+        }
+      }
+    },
+    {
+      "id": "msg-ai-4",
+      "variant": "ai",
+      "content": "",
+      "timestamp": "2026-04-14T10:02:30.000Z",
+      "credits": 7,
+      "metadata": {
+        "model": "anthropic/claude-haiku-4-5",
+        "usage": {
+          "input_tokens": 900,
+          "output_tokens": 120,
+          "cache_read_input_tokens": 150,
+          "cache_creation_input_tokens": 30
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"executionId":"exec-fixture-0002","sessionId":"01e00000-0000-7000-8000-000000000005","modelId":"claude-sonnet-4.5","startTime":1767323100000,"prompt":"fixture: verify the kiro execution document totals","response":"Verified the SENTINEL_PRIVATE_TEXT execution document totals for the kiro fixture.","usageSummary":[{"usage":2.5,"usedTools":["read_file"]}]}

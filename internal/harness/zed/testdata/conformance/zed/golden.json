@@ -1,0 +1,107 @@
+{
+  "harness": "zed",
+  "sources": [
+    {
+      "path": "threads.db",
+      "kind": "sqlite"
+    }
+  ],
+  "events": [
+    {
+      "harness": "zed",
+      "dedupKey": "zed:z-late:65e9bf7e634f1c7d",
+      "sessionId": "z-late",
+      "timestamp": "2025-03-19T16:04:00Z",
+      "model": "gpt-5",
+      "provider": "openai",
+      "tokens": {
+        "input": 150,
+        "output": 20,
+        "cacheRead": 0,
+        "cacheWrite": 25,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "zed",
+      "dedupKey": "zed:z-main:04b21047e1112dbf",
+      "sessionId": "z-main",
+      "projectPath": "/Users/demo/proj",
+      "timestamp": "2025-03-19T16:00:00Z",
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "tokens": {
+        "input": 1000,
+        "output": 200,
+        "cacheRead": 400,
+        "cacheWrite": 100,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "zed",
+      "dedupKey": "zed:z-main:dd2e98102508e178",
+      "sessionId": "z-main",
+      "projectPath": "/Users/demo/proj",
+      "timestamp": "2025-03-19T16:00:00Z",
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "tokens": {
+        "input": 500,
+        "output": 80,
+        "cacheRead": 200,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "zed",
+      "dedupKey": "zed:z-sub:c696c0dfcef1304f",
+      "sessionId": "z-sub",
+      "parentId": "z-main",
+      "timestamp": "2025-03-19T16:00:30Z",
+      "model": "gpt-5",
+      "provider": "openai",
+      "tokens": {
+        "input": 300,
+        "output": 40,
+        "cacheRead": 50,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "harness": "zed",
+      "sessionId": "z-empty",
+      "title": "Thread with no usage yet",
+      "project": "proj",
+      "startedAt": "2025-03-19T16:03:00Z",
+      "updatedAt": "2025-03-19T16:03:00Z"
+    },
+    {
+      "harness": "zed",
+      "sessionId": "z-late",
+      "title": "Summarize the migration plan",
+      "startedAt": "2025-03-19T16:04:00Z",
+      "updatedAt": "2025-03-19T16:04:10Z"
+    },
+    {
+      "harness": "zed",
+      "sessionId": "z-main",
+      "title": "Refactor the token accounting",
+      "project": "proj",
+      "startedAt": "2025-03-19T16:00:00Z",
+      "updatedAt": "2025-03-19T16:02:00Z"
+    },
+    {
+      "harness": "zed",
+      "sessionId": "z-sub",
+      "parentId": "z-main",
+      "title": "Explore the cache accounting",
+      "startedAt": "2025-03-19T16:00:30Z",
+      "updatedAt": "2025-03-19T16:00:45Z"
+    }
+  ]
+}

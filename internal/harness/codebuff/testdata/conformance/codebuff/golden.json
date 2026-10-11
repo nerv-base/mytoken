@@ -1,0 +1,118 @@
+{
+  "harness": "codebuff",
+  "sources": [
+    {
+      "path": "manicode/projects/store-migration/chats/2026-04-14T11-00-00.000Z/chat-messages.json",
+      "kind": "json"
+    },
+    {
+      "path": "manicode/projects/widget-cache/chats/2026-04-14T10-00-00.000Z/chat-messages.json",
+      "kind": "json"
+    }
+  ],
+  "events": [
+    {
+      "harness": "codebuff",
+      "dedupKey": "codebuff:manicode/2026-04-14T10-00-00.000Z:msg-ai-1",
+      "sessionId": "manicode/2026-04-14T10-00-00.000Z",
+      "projectPath": "/Users/demo/widget-cache",
+      "timestamp": "2026-04-14T10:00:30Z",
+      "model": "anthropic/claude-sonnet-4-5",
+      "tokens": {
+        "input": 3500,
+        "output": 2000,
+        "cacheRead": 500,
+        "cacheWrite": 1000,
+        "reasoning": 0
+      },
+      "bill": {
+        "amount": 42,
+        "unit": "credits"
+      }
+    },
+    {
+      "harness": "codebuff",
+      "dedupKey": "codebuff:manicode/2026-04-14T10-00-00.000Z:msg-ai-2",
+      "sessionId": "manicode/2026-04-14T10-00-00.000Z",
+      "projectPath": "/Users/demo/widget-cache",
+      "timestamp": "2026-04-14T10:01:30Z",
+      "model": "openai/gpt-4o",
+      "tokens": {
+        "input": 1600,
+        "output": 800,
+        "cacheRead": 400,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "codebuff",
+      "dedupKey": "codebuff:manicode/2026-04-14T10-00-00.000Z:msg-ai-4",
+      "sessionId": "manicode/2026-04-14T10-00-00.000Z",
+      "projectPath": "/Users/demo/widget-cache",
+      "timestamp": "2026-04-14T10:02:30Z",
+      "model": "anthropic/claude-haiku-4-5",
+      "tokens": {
+        "input": 900,
+        "output": 120,
+        "cacheRead": 150,
+        "cacheWrite": 30,
+        "reasoning": 0
+      },
+      "bill": {
+        "amount": 7,
+        "unit": "credits"
+      }
+    },
+    {
+      "harness": "codebuff",
+      "dedupKey": "codebuff:manicode/2026-04-14T11-00-00.000Z:msg-ai-1",
+      "sessionId": "manicode/2026-04-14T11-00-00.000Z",
+      "timestamp": "2026-04-14T11:00:40Z",
+      "model": "codebuff-file-picker",
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "bill": {
+        "amount": 3,
+        "unit": "credits"
+      }
+    },
+    {
+      "harness": "codebuff",
+      "dedupKey": "codebuff:manicode/2026-04-14T11-00-00.000Z:msg-ai-2",
+      "sessionId": "manicode/2026-04-14T11-00-00.000Z",
+      "timestamp": "2026-04-14T11:01:00Z",
+      "model": "google/gemini-2.5-pro",
+      "tokens": {
+        "input": 700,
+        "output": 200,
+        "cacheRead": 100,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "harness": "codebuff",
+      "sessionId": "manicode/2026-04-14T10-00-00.000Z",
+      "title": "Refactor the widget cache layer",
+      "project": "widget-cache",
+      "startedAt": "2026-04-14T10:00:05Z",
+      "updatedAt": "2026-04-14T10:02:30Z"
+    },
+    {
+      "harness": "codebuff",
+      "sessionId": "manicode/2026-04-14T11-00-00.000Z",
+      "title": "Summarise the store migration",
+      "project": "store-migration",
+      "startedAt": "2026-04-14T11:00:05Z",
+      "updatedAt": "2026-04-14T11:01:00Z"
+    }
+  ]
+}

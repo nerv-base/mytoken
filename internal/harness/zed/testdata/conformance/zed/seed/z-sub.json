@@ -1,0 +1,24 @@
+{
+  "model": {
+    "provider": "openai",
+    "model": "gpt-5"
+  },
+  "request_token_usage": {
+    "msg-s1": {
+      "input_tokens": 300,
+      "output_tokens": 40,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 50
+    }
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Explore the cache accounting"
+    },
+    {
+      "role": "assistant",
+      "content": "SENTINEL_PRIVATE_TEXT appears in the subagent reply"
+    }
+  ]
+}

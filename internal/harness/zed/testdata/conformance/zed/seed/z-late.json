@@ -1,0 +1,24 @@
+{
+  "model": {
+    "provider": "openai",
+    "model": "gpt-5"
+  },
+  "request_token_usage": {
+    "msg-l1": {
+      "input_tokens": 150,
+      "output_tokens": 20,
+      "cache_creation_input_tokens": 25,
+      "cache_read_input_tokens": 0
+    }
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarize the migration plan"
+    },
+    {
+      "role": "assistant",
+      "content": "SENTINEL_PRIVATE_TEXT appears in the late thread reply"
+    }
+  ]
+}

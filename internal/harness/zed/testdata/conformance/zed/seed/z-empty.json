@@ -1,0 +1,24 @@
+{
+  "model": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5"
+  },
+  "request_token_usage": {
+    "msg-e1": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    }
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Thread that has not spent any tokens yet"
+    },
+    {
+      "role": "tool",
+      "content": "SENTINEL_PRIVATE_TEXT appears in the tool output"
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "harness": "antigravity",
+  "sources": [
+    {
+      "path": "cascade-a.db",
+      "kind": "sqlite"
+    },
+    {
+      "path": "cascade-b.db",
+      "kind": "sqlite"
+    }
+  ],
+  "events": [
+    {
+      "harness": "antigravity",
+      "dedupKey": "antigravity:cascade-a:4",
+      "sessionId": "cascade-a",
+      "projectPath": "/Users/demo/proj",
+      "timestamp": "2025-03-19T16:02:00Z",
+      "model": "gemini-3.5-flash-high",
+      "tokens": {
+        "input": 500,
+        "output": 80,
+        "cacheRead": 200,
+        "cacheWrite": 25,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "antigravity",
+      "dedupKey": "antigravity:cascade-a:gen-a-1",
+      "sessionId": "cascade-a",
+      "projectPath": "/Users/demo/proj",
+      "timestamp": "2025-03-19T16:00:00Z",
+      "model": "gemini-3.1-pro-high",
+      "tokens": {
+        "input": 1000,
+        "output": 150,
+        "cacheRead": 400,
+        "cacheWrite": 100,
+        "reasoning": 50
+      },
+      "requestId": "gen-a-1"
+    },
+    {
+      "harness": "antigravity",
+      "dedupKey": "antigravity:cascade-a:gen-a-2",
+      "sessionId": "cascade-a",
+      "projectPath": "/Users/demo/proj",
+      "timestamp": "2025-03-19T16:01:00Z",
+      "model": "claude-sonnet-4-6",
+      "tokens": {
+        "input": 300,
+        "output": 40,
+        "cacheRead": 50,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "requestId": "gen-a-2"
+    },
+    {
+      "harness": "antigravity",
+      "dedupKey": "antigravity:cascade-b:gen-b-1",
+      "sessionId": "cascade-b",
+      "projectPath": "/Users/demo/other",
+      "timestamp": "2025-03-19T17:00:00Z",
+      "model": "gemini-3-pro",
+      "tokens": {
+        "input": 700,
+        "output": 110,
+        "cacheRead": 150,
+        "cacheWrite": 30,
+        "reasoning": 10
+      },
+      "requestId": "gen-b-1"
+    }
+  ],
+  "sessions": [
+    {
+      "harness": "antigravity",
+      "sessionId": "cascade-a",
+      "project": "proj",
+      "startedAt": "2025-03-19T16:00:00Z",
+      "updatedAt": "2025-03-19T16:02:00Z"
+    },
+    {
+      "harness": "antigravity",
+      "sessionId": "cascade-b",
+      "project": "other",
+      "startedAt": "2025-03-19T17:00:00Z",
+      "updatedAt": "2025-03-19T17:00:00Z"
+    }
+  ]
+}

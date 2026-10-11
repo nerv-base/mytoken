@@ -35,9 +35,26 @@ codeburn — MIT
               internal/harness/goose (src/providers/goose.ts: sessions.db
               reader and accumulated-token accounting),
               internal/harness/forge (src/providers/forge.ts: conversations
-              reader and per-message usage extraction)
+              reader and per-message usage extraction),
+              internal/harness/codebuff (src/providers/codebuff.ts: channel and
+              chat discovery, normalizeUsage, cwd extraction),
+              internal/harness/mux (src/providers/mux.ts: chat.jsonl reader,
+              subagent transcripts and usage normalization),
+              internal/harness/zed (src/providers/zed.ts: threads.db reader,
+              zstd/json thread documents and cumulative-token accounting),
+              internal/harness/antigravity (src/providers/antigravity.ts:
+              cascade database reader, ModelUsageStats decoding and model
+              resolution),
+              internal/harness/amp (src/providers/amp.ts: thread discovery, the
+              usage-ledger reader and the assistant-usage fallback),
+              internal/harness/kiro (src/providers/kiro.ts: CLI, v2 IDE and v1
+              execution/chat readers, model normalization, char-based token
+              estimation and credit accounting)
   Ported by:  flash-h2, 2026-10-09 (qwen, kimi, openclaude, claudedesktop)
               flash-h3, 2026-10-09 (grok, openclaw, droid, goose, forge)
+              flash-h3, 2026-10-09 (codebuff, mux)
+              flash-h2, 2026-10-09 (zed, antigravity)
+              flash-h1, 2026-10-09 (amp, kiro)
 
   Copyright (c) 2026 AgentSeal
 

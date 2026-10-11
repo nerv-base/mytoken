@@ -90,6 +90,18 @@ func harnessColor(h model.Harness) ui.Color {
 		return ui.Hex("#6C5CE7")
 	case model.Hermes:
 		return ui.Hex("#C9A227")
+	case model.Amp:
+		return ui.Hex("#F34E3F")
+	case model.Kiro:
+		return ui.Hex("#9046FF")
+	case model.Zed:
+		return ui.Hex("#1F6FEB")
+	case model.Antigravity:
+		return ui.Hex("#4285F4")
+	case model.Codebuff:
+		return ui.Hex("#10B981")
+	case model.Mux:
+		return ui.Hex("#64748B")
 	}
 	return Anon
 }
@@ -97,8 +109,8 @@ func harnessColor(h model.Harness) ui.Color {
 // Harness marks are the tools' own logos (the MIT-licensed @lobehub/icons set,
 // plus Droid's and OpenClaude's own brand assets; brand/README.md lists every
 // source). Colored logos are shown in their colors; one-color ones take the
-// harness color. Crush has no square mark, so it gets a drawn heart, and Forge
-// has no mark we can attribute, so it stays drawn too.
+// harness color. Crush has no square mark, so it gets a drawn heart; Codebuff
+// publishes no vector mark, so it shows a dot in its color.
 //
 //go:embed brand/*.svg
 var brandFS embed.FS
@@ -140,6 +152,11 @@ var harnessIcons = func() map[model.Harness]brandMark {
 		model.Droid:         {load("droid-color"), true, true},
 		model.OpenClaude:    {load("openclaude-color"), true, false},
 		model.Forge:         {load("forge"), false, false},
+		model.Amp:           {load("amp-color"), true, false},
+		model.Kiro:          {load("kiro-color"), true, true},
+		model.Antigravity:   {load("antigravity-color"), true, false},
+		model.Zed:           {load("zed"), false, false},
+		model.Mux:           {load("mux"), false, false},
 	}
 }()
 
