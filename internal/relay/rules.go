@@ -46,7 +46,14 @@ var one = 1.0
 //     (from the key's bills); without it the snapshot is used only when every
 //     group costs the same. Per-call models, and expression-billed models
 //     whose price depends on the time of day, get no rule.
-func RulesFromSnapshot(site Site, snap Snapshot, group string) []pricing.Rule {
+//
+// filter narrows the per-model rules to the models that matter: a gateway lists
+// every model it can serve — hundreds on a busy site — while a user calls a
+// handful, so filter keeps only the models each of the site's providers really
+// served locally plus the ones the key's own bills charged (see ModelFilter).
+// A nil filter allows all of them. The provider-wide multiplier is not a
+// per-model rule and is always emitted.
+func RulesFromSnapshot(site Site, snap Snapshot, group string, filter *ModelFilter) []pricing.Rule {
 	if len(site.Providers) == 0 {
 		return nil
 	}
@@ -78,6 +85,9 @@ func RulesFromSnapshot(site Site, snap Snapshot, group string) []pricing.Rule {
 		if model == "" {
 			continue
 		}
+		if !filter.AllowsAny(site.Providers, model) {
+			continue
+		}
 		if r.Group == 0 {
 			r.Group = g
 		}
@@ -85,7 +95,7 @@ func RulesFromSnapshot(site Site, snap Snapshot, group string) []pricing.Rule {
 		if !ok {
 			continue
 		}
-		out = append(out, priceRules(site, model, at, p)...)
+		out = append(out, priceRules(site, model, at, p, filter)...)
 	}
 	return dedupe(out)
 }
@@ -153,14 +163,19 @@ func RulesFromBills(site Site, bills []Bill) []pricing.Rule {
 		if !ok {
 			continue
 		}
-		out = append(out, priceRules(site, b.Model, b.At, p)...)
+		out = append(out, priceRules(site, b.Model, b.At, p, nil)...)
 	}
 	return dedupe(out)
 }
 
-func priceRules(site Site, model string, at time.Time, p prices) []pricing.Rule {
+func priceRules(site Site, model string, at time.Time, p prices, filter *ModelFilter) []pricing.Rule {
 	out := make([]pricing.Rule, 0, len(site.Providers))
 	for _, provider := range site.Providers {
+		if !filter.Allows(provider, model) {
+			// This provider never served the model locally; a rule for it
+			// would sit in the settings table pricing nothing.
+			continue
+		}
 		in, o, cr, cw := p.input, p.output, p.cacheRead, p.cacheWrite
 		out = append(out, pricing.Rule{
 			Provider:   provider,
@@ -339,15 +354,26 @@ func exprPrices(expr string) (prices, bool) {
 // The fresh rules of a source say which providers that key prices: stored
 // rules of the same source for any other provider are dropped (the key no
 // longer serves it), and so are rules stored under the source tag used before
-// rules were tracked per key ("relay:<origin>" without "#keyID").
+// rules were tracked per key ("relay:<origin>" without "#keyID"). For a
+// provider the fresh rules still cover, the models they name say which of its
+// models that key prices: a stored rule for a model the fresh pass no longer
+// mentions is dropped too, so a site that stops serving a model — or one whose
+// snapshot was filtered down to the models actually used — does not keep dead
+// rules around. A source with no fresh rules at all is left untouched: the pass
+// that produced the fresh set said nothing about it.
 func MergeRelayRules(old, fresh []pricing.Rule) []pricing.Rule {
 	providers := map[string]map[string]bool{}
+	selectors := map[string]map[[2]string]bool{}
 	legacy := map[string]bool{}
 	for _, f := range fresh {
 		if providers[f.Source] == nil {
 			providers[f.Source] = map[string]bool{}
 		}
 		providers[f.Source][f.Provider] = true
+		if selectors[f.Source] == nil {
+			selectors[f.Source] = map[[2]string]bool{}
+		}
+		selectors[f.Source][[2]string{f.Provider, pricing.Normalize(f.Model)}] = true
 		if origin, _, ok := strings.Cut(strings.TrimPrefix(f.Source, RuleSourcePrefix), "#"); ok && strings.HasPrefix(f.Source, RuleSourcePrefix) {
 			legacy[RuleSourcePrefix+origin] = true
 		}
@@ -357,7 +383,11 @@ func MergeRelayRules(old, fresh []pricing.Rule) []pricing.Rule {
 		if legacy[r.Source] {
 			continue
 		}
-		if ps, ok := providers[r.Source]; ok && !ps[r.Provider] {
+		ps, covered := providers[r.Source]
+		if covered && !ps[r.Provider] {
+			continue
+		}
+		if covered && !selectors[r.Source][[2]string{r.Provider, pricing.Normalize(r.Model)}] {
 			continue
 		}
 		out = append(out, r)

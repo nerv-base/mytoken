@@ -21,6 +21,7 @@ import (
 
 type fakeClient struct {
 	bills                               []relay.Bill
+	snap                                relay.Snapshot
 	err                                 error
 	ratioErr, balanceErr                error
 	after                               []int64
@@ -40,7 +41,7 @@ func (f *fakeClient) Snapshot(context.Context) (relay.Snapshot, error) {
 	if f.ratioErr != nil {
 		return relay.Snapshot{}, f.ratioErr
 	}
-	return relay.Snapshot{}, f.err
+	return f.snap, f.err
 }
 func (f *fakeClient) Bills(_ context.Context, after int64) ([]relay.Bill, error) {
 	f.billCalls++

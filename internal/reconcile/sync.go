@@ -245,7 +245,20 @@ func (s *Syncer) sync(ctx context.Context, origin, keyID string) error {
 		}
 		if snap != nil {
 			// The key's group decides which of the site's group ratios applies.
-			rules = append(rules, relay.RulesFromSnapshot(priced, *snap, relay.KeyGroup(recent))...)
+			// Its price list covers every model the site can serve, so only the
+			// models those providers really served locally, or that the key's own
+			// bills charged, are turned into rules.
+			filter, ferr := usedModels(ctx, s.st, origin, keyID, s.now().AddDate(0, 0, -modelWindowDays))
+			if ferr != nil {
+				return fail("price-rule update")
+			}
+			rules = append(rules, relay.RulesFromSnapshot(priced, *snap, relay.KeyGroup(recent), filter)...)
+		} else {
+			// The price list did not load, so this pass says nothing about which
+			// models the site serves. Feeding back the rules already stored for
+			// this key keeps them: the merge then sees each as unchanged instead
+			// of as a model that was dropped.
+			rules = append(rules, keepRelayRules(ctx, s.st, relay.RuleSource(origin, keyID))...)
 		}
 		// What the site actually charged beats its price list.
 		rules = append(rules, relay.RulesFromBills(priced, recent)...)

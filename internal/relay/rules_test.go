@@ -76,7 +76,7 @@ func TestRulesFromSnapshot(t *testing.T) {
 		"gpt-image":         {FixedPrice: 0.04},
 		"":                  {Model: 9},
 	}, Groups: map[string]float64{"default": 1, "cheap": 0.5}}
-	rules := RulesFromSnapshot(site, snap, "cheap")
+	rules := RulesFromSnapshot(site, snap, "cheap", nil)
 	if len(rules) != 2 {
 		t.Fatalf("rules=%+v", rules)
 	}
@@ -92,21 +92,21 @@ func TestRulesFromSnapshot(t *testing.T) {
 		}
 	}
 	// Groups that differ and no known key group: no guess.
-	if got := RulesFromSnapshot(site, snap, ""); len(got) != 0 {
+	if got := RulesFromSnapshot(site, snap, "", nil); len(got) != 0 {
 		t.Fatalf("rules=%+v, want none", got)
 	}
 	// Groups that all cost the same need no key group.
 	snap.Groups = map[string]float64{"default": 1, "vip": 1}
-	if got := RulesFromSnapshot(site, snap, ""); len(got) != 2 {
+	if got := RulesFromSnapshot(site, snap, "", nil); len(got) != 2 {
 		t.Fatalf("rules=%+v", got)
 	}
 	// No providers means nothing to price.
-	if got := RulesFromSnapshot(Site{}, snap, ""); got != nil {
+	if got := RulesFromSnapshot(Site{}, snap, "", nil); got != nil {
 		t.Fatalf("rules=%+v, want none", got)
 	}
 	// sub2api: the key's multiplier as a provider-wide rule.
 	m := 0.25
-	got := RulesFromSnapshot(site, Snapshot{At: at, Multiplier: &m}, "")
+	got := RulesFromSnapshot(site, Snapshot{At: at, Multiplier: &m}, "", nil)
 	if len(got) != 2 || got[0].Model != "" || got[0].Multiplier != 0.25 || got[0].Input != nil {
 		t.Fatalf("multiplier rules=%+v", got)
 	}
@@ -158,7 +158,7 @@ func TestMergeRelayRules(t *testing.T) {
 	snap := func(at time.Time, ratio float64) []pricing.Rule {
 		return RulesFromSnapshot(site, Snapshot{At: at, Ratios: map[string]Ratios{
 			"claude-sonnet-4-5": {Model: ratio, Completion: 5},
-		}}, "")
+		}}, "", nil)
 	}
 	merged := MergeRelayRules([]pricing.Rule{user}, snap(t0, 2))
 	if len(merged) != 2 || !merged[1].From.IsZero() || *merged[1].Input != 4 {
@@ -178,8 +178,8 @@ func TestMergeRelayRules(t *testing.T) {
 	}
 	// A multiplier change is a change.
 	m1, m2 := 0.25, 0.3
-	a := MergeRelayRules(nil, RulesFromSnapshot(site, Snapshot{At: t0, Multiplier: &m1}, ""))
-	b := MergeRelayRules(a, RulesFromSnapshot(site, Snapshot{At: t1, Multiplier: &m2}, ""))
+	a := MergeRelayRules(nil, RulesFromSnapshot(site, Snapshot{At: t0, Multiplier: &m1}, "", nil))
+	b := MergeRelayRules(a, RulesFromSnapshot(site, Snapshot{At: t1, Multiplier: &m2}, "", nil))
 	if len(b) != 2 || b[1].Multiplier != 0.3 || !b[1].From.Equal(t1) {
 		t.Fatalf("multiplier=%+v", b)
 	}
