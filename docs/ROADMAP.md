@@ -64,7 +64,7 @@ CI 在三个平台上跑 200K 事件的查询基准（`internal/query/bench_test
 | 概览切换周期 | — | 2.7–8.2 s | 全套 66–95 ms；切换只重查周期相关部分，约 20 ms |
 | 无新数据的增量扫描 | < 300 ms | 482 ms（墙钟 2.1 s）/ 115 MB | 204–209 ms |
 | 全量重扫 | 只跟踪 | 8.8 s / RSS 225 MB | 9.8 s / RSS 154 MB（保留历史 + 维护汇总表） |
-| 托盘常驻空闲 | < 60 MB，CPU ≈ 0（待修订，见下） | agent 写日志时 CPU ≈ 93%、footprint 342 MB | 没有数据时 footprint 71 MB；真实数据 + agent 持续写日志时 CPU 8–14%、footprint 118–126 MB |
+| 托盘常驻空闲 | < 60 MB，CPU ≈ 0（待修订，见下） | agent 写日志时 CPU ≈ 93%、footprint 342 MB | 没有数据时 footprint 71 MB；真实数据 + agent 持续写日志时 CPU 8–14%、footprint 118–126 MB。0.2.3：主窗口关闭即销毁（打开时 ~210 MB，关掉后回到 ~100 MB），只重读有变化的文件，agent 持续写日志时 CPU ~7%、footprint 85–95 MB（214K 条） |
 | 数据库体积 | < 300 B / 条，另建按天预聚合表 | ≈ 590 B / 条（121 MB + 12 MB WAL） | 284 B / 条（含汇总表与请求 ID 等信号；旧库首次升级约 3 s） |
 | 二进制体积 | 只跟踪不卡 | 27 MB | 29.5 MB |
 

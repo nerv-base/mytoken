@@ -3,6 +3,24 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## Unreleased
+
+- **Lighter in the tray.** Closing the main window now frees its graphics
+  memory instead of keeping it hidden: MyToken drops from about 210 MB to
+  about 90–100 MB while it sits in the menu bar. Opening the window again
+  builds it anew in a few milliseconds.
+- **Less CPU while your agents work.** A change to one log no longer reopens
+  every log: unchanged files are skipped, and project paths are tidied from
+  a small table instead of every request. Background CPU while agents write
+  went from about 19% to about 7% on a 200K-request history.
+- The pricing page shows your own multiplier for each provider. Before, it
+  could show one synced from a relay or a past dated rule, and saving the
+  page then turned that into a rule of yours.
+- Relays add prices only for the models you use with them, not for every
+  model in their price list (one site added 210 rules for 3 models).
+- Droid and Forge show their own logos, and OpenClaude its green mark. Forge
+  data in the older `~/forge` folder is read too.
+
 ## 0.2.2
 
 - **Fixed: no data and failing update checks on a fresh install.** MyToken
