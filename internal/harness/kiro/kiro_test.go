@@ -260,7 +260,8 @@ func TestHarnessAndRoots(t *testing.T) {
 		t.Errorf("Harness = %q", got)
 	}
 	roots := parser.Roots()
-	if len(roots) != 2 || roots[0] != "/tmp/kiro-a" || roots[1] != "/tmp/kiro-b" {
+	// Roots are cleaned, so on Windows the slashes turn into backslashes.
+	if len(roots) != 2 || roots[0] != filepath.Clean("/tmp/kiro-a") || roots[1] != filepath.Clean("/tmp/kiro-b") {
 		t.Errorf("Roots = %v", roots)
 	}
 }
