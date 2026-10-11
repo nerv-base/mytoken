@@ -3,6 +3,23 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## Unreleased
+
+- **Cache ledger.** A new Cache page shows, for every request that should
+  have hit the prompt cache, whether it did — and when it didn't, why: the
+  conversation was compacted, the cache expired, the model changed, or no
+  visible reason (often a relay that doesn't pass caching through). It adds
+  up the tokens sent again and what they cost, by day, by provider (with a
+  cache health figure) and by session. Each session gets a cache timeline.
+  Works for every tool from token counts alone; `mytoken cache` does the
+  same in the terminal.
+- **Six more tools:** Amp, Kiro, Zed, Antigravity, Codebuff and Mux. None of
+  them has been checked against real logs yet — tell us if numbers look off.
+- Compaction markers are now read from Pi and OpenCode logs too, and Pi's
+  compaction requests are counted.
+- The first launch after updating rebuilds the cache ledger once (a few
+  seconds on a large history).
+
 ## 0.2.3
 
 - **Lighter in the tray.** Closing the main window now frees its graphics

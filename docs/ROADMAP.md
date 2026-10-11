@@ -121,15 +121,18 @@ CI 在三个平台上跑 200K 事件的查询基准（`internal/query/bench_test
 
 ### 0.3 —— 缓存账本
 
-- 只用 token 数，所有 harness 通用：本轮应命中前缀 ≈ 上一轮 `input + cache_read + cache_write`；未命中 = 应命中 − `cache_read`。
-- 未命中归因四类：
-  1. **TTL 过期** —— 两轮间隔超过 5 min / 1 h
-  2. **压缩后重付** —— 输入骤降或日志里的 compact 标记（Claude Code、Codex）
+> 状态：实现完成，契约见 [CACHE.md](CACHE.md)，判定规则的真实数据校准见 [CALIBRATION.md](../internal/ledger/CALIBRATION.md)。真实库（21.6 万请求）：全量重建约 3 s（旧库首次打开含迁移约 9 s），增量 ≤ 42 ms/会话，查询 9–22 ms，库增长约 5 B/请求。
+
+- ✅ 只用 token 数，所有 harness 通用：按会话链判定，应命中前缀取历史上同一分支的提示长度（不是机械地取上一轮——旁路短请求、分支切换不算未命中）；未命中 = 应命中 − `cache_read`；多花 = 实际费用 − 「全部命中」的反事实费用。
+- ✅ 未命中归因四类：
+  1. **过期** —— 两轮间隔超过各家缓存时长（Anthropic 5 min / 1 h，OpenAI 约 10 min，DeepSeek 1 h）
+  2. **压缩后重付** —— 日志里的 compact 标记（Codex、Claude Code、DSH、Pi、OpenCode、WorkBuddy）
   3. **换模型**
-  4. **原因不明** —— 多为中转站缓存透传或粘性路由问题 → 计入**中转站缓存健康度**
-- 输出「因缓存未命中多花了 ¥xx」，按会话 / 中转站汇总。
-- 需要 parser 提供 compact 边界信号，`events` 表增加 1–2 列。
-- harness 第 2 批。
+  4. **说不清** —— 前缀没变、也没过期却没命中，多为中转站缓存透传或粘性路由问题 → 计入**供应商缓存健康度**（说不清的未命中 / 应命中）
+- ✅ 整条链都没有缓存字段的会话记为「不可缓存」，不进分母。
+- ✅ GUI 缓存页（命中率、重发 token、多花的钱、按天、按原因、按供应商健康度、最贵的会话）、会话详情的缓存时间轴；CLI `mytoken cache [--by cause|provider|model|harness|project|session]` 与 `mytoken cache <会话>`。
+- ✅ harness 第 2 批：Amp、Kiro、Zed、Antigravity、Codebuff、Mux（本机都没有真实数据，尚未在真实日志上验证）。
+- 已知：真实库里「说不清」占未命中 token 的 84%，但只占应命中的 1.8%；它是排查线索，不能直接当成中转站故障。
 
 ### 0.4 —— 日常使用
 

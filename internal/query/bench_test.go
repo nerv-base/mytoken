@@ -84,6 +84,13 @@ func benchmarkCases(q Service, start time.Time) []queryCase {
 		{"Sessions6", func() error { _, _, e := q.Sessions(ctx, f, "", 6, 0); return e }},
 		{"SessionsAll", func() error { _, _, e := q.Sessions(ctx, f, "", 0, 0); return e }},
 		{"Session", func() error { _, _, _, e := q.Session(ctx, model.Codex, "session-000"); return e }},
+		{"CacheTotals", func() error { _, e := q.CacheTotals(ctx, f); return e }},
+		{"CacheDaily", func() error { _, e := q.CacheDaily(ctx, f); return e }},
+		{"CacheByProvider", func() error { _, e := q.CacheBy(ctx, f, CacheByProvider); return e }},
+		{"CacheByModel", func() error { _, e := q.CacheBy(ctx, f, CacheByModel); return e }},
+		{"CacheByHarness", func() error { _, e := q.CacheBy(ctx, f, CacheByHarness); return e }},
+		{"CacheByProject", func() error { _, e := q.CacheBy(ctx, f, CacheByProject); return e }},
+		{"SessionCache", func() error { _, e := q.SessionCache(ctx, model.Codex, "session-000"); return e }},
 	}
 }
 

@@ -31,7 +31,7 @@ func TestSnapshots(t *testing.T) {
 				Progress: func() (int, int) { return 10, 10 }}, nil)
 			s.Start()
 			rows := s.sessions.Rows
-			for _, page := range []string{"overview", "sessions", "ranking", "projects", "relays", "settings"} {
+			for _, page := range []string{"overview", "sessions", "ranking", "projects", "cache", "relays", "settings"} {
 				s.page = page
 				if page == "sessions" && len(rows) > 0 {
 					for _, r := range rows {
@@ -73,6 +73,7 @@ func TestSnapshots(t *testing.T) {
 			{"empty-ranking", func() { empty.page = "ranking" }, empty.MainView, 1280, 860},
 			{"empty-sessions", func() { empty.page = "sessions" }, empty.MainView, 1280, 860},
 			{"empty-relays", func() { empty.page = "relays" }, empty.MainView, 1280, 860},
+			{"empty-cache", func() { empty.page = "cache" }, empty.MainView, 1280, 860},
 			{"empty-search", func() { empty.page = "sessions"; empty.search = "春日影" }, empty.MainView, 1280, 860},
 			{"empty-tray", func() {}, empty.TrayView, TrayWidth, TrayHeight},
 		}

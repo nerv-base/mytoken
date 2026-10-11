@@ -16,8 +16,8 @@ Set `MYTOKEN_HOME` to use another directory.
 
 Exit status: `0` success, `1` operational error, `2` invalid arguments.
 
-`stats` and `sessions` share the range, timezone, offline and output flags —
-including CSV export — described in [Range, time and output
+`stats`, `sessions` and `cache` share the range, timezone, offline and output
+flags — including CSV export — described in [Range, time and output
 options](#range-time-and-output-options). `relay list` and `reconcile` accept the
 output flags too, and `reconcile` accepts the range flags as well.
 
@@ -106,7 +106,8 @@ hours and caches the result in `prices.json` next to the database. That request
 is the only network access these commands make; if the cache is younger than 24
 hours they stay offline anyway. `--offline` skips the worker entirely, so no
 connection is ever opened — useful in CI, in a sandbox, or when you want a
-reproducible run.
+reproducible run. `cache` never opens a connection at all — it reads the stored
+ledger — so `--offline` is accepted but redundant there.
 
 ```sh
 mytoken stats --since 30d --offline
@@ -117,10 +118,13 @@ mytoken sessions --last 7d --offline --format csv
 
 Drops the cost column from tables and every `costUsd` field from JSON (totals,
 rows and a session's provider breakdown). Counts such as `unpriced` stay.
+`cache` renders money as `usd` instead, and `--no-cost` drops that field too —
+in the tables, in JSON and in the `cost_usd` CSV column.
 
 ```sh
 mytoken stats --by model --no-cost
 mytoken sessions --limit 10 --no-cost
+mytoken cache --by provider --no-cost
 ```
 
 ### CSV
@@ -135,9 +139,18 @@ rows the table shows.
 | `stats --by provider\|model\|project\|harness` | `key,label,requests,sessions,tokens,input,output,cache_read,cache_write,reasoning,cost_usd,unpriced` |
 | `stats --by session`, `sessions` | `harness,session_id,updated_at,requests,tokens,input,output,cache_read,cache_write,reasoning,cost_usd,unpriced,title` |
 | `stats --by day` | `day,tokens,input,output,cache_read,cache_write,reasoning,cost_usd` |
+| `cache --by cause` | `cause,requests,miss,cost_usd` |
+| `cache --by provider\|model\|harness\|project\|session` | `key,requests,cacheable,expected,read,miss,cost_usd` (plus `health` for `provider`) |
+| `cache --by day` | `day,requests,cacheable,expected,read,miss,cost_usd` |
+| `cache <session-id>` | `at,model,prompt,read,write,expected,miss,cause,cost_usd,boundary` |
 
 `--no-cost` removes the `cost_usd` column instead of blanking it. The sessions
-CSV lists sessions only; the per-provider breakdown is in `--json`.
+CSV lists sessions only; the per-provider breakdown is in `--json`. In the
+cache CSV, `cost_usd` is the miss cost (the extra money that miss caused) and an
+`expected` of `-1` marks a request the ledger considers not cacheable at all (it
+counts towards neither `expected` nor `health`); the provider
+`health` column is a percentage without the `%` sign, empty when no tokens were
+expected.
 
 ```sh
 mytoken stats --last 30d --format csv > usage.csv
@@ -186,6 +199,81 @@ harness, session id, last update, request count, total tokens, cost and title;
 mytoken sessions --limit 20 --last 7d
 mytoken sessions --last 30d --no-cost --format csv
 mytoken sessions --since 2026-10-01 --timezone UTC --json
+```
+
+## cache
+
+```
+mytoken cache [--by cause|provider|model|harness|project|session|day] [options]
+mytoken cache <session-id> [--harness NAME] [options]
+```
+
+Answers "what did a cache miss cost me, and whose fault was it". For every
+request the cache ledger estimates the prompt prefix that should have been
+served from the provider's cache, compares it with the `cache_read` tokens the
+log recorded, and attributes the shortfall to a cause: `compact` (the context
+was compacted or cleared), `ttl` (the prompt sat untouched longer than the
+provider's cache lifetime), `model` (the request switched model), or
+`unexplained` — the one that usually means a relay is not passing cache reads
+through. It works from token counts only and never reads conversation text.
+
+`--by` defaults to `cause`, which prints the totals line and the miss breakdown:
+
+```
+Requests: 4213  Cacheable: 3900  Expected: 18422104  Read: 16980771  Miss: 1441333  Hit: 92.2%  Miss cost: $12.9304
+CAUSE         REQUESTS    MISS      MISS USD
+compact            38   902114      7.2041
+ttl                61   401220      4.1180
+model              12    98765      1.4021
+unexplained         7    39234      0.2062
+```
+
+The other values group the same totals by that dimension. `--by provider` adds
+a `HEALTH` column — that provider's `unexplained` misses over the tokens it
+should have cached, which is how a relay that strips cache reads stands out
+from your own usage:
+
+```
+KEY                        REQUESTS  CACHEABLE  EXPECTED  READ      MISS     MISS USD  HEALTH
+https://relay.example.com      1840       1702   9012000   8100334   911666    8.2210      4.4%
+```
+
+`--by day` prints one line per local day, bucketed with the same `--timezone`
+the `stats --by day` view uses.
+
+A session id switches to that session's timeline: one row per request with the
+fresh prompt tokens, cache read, cache write, expected read, miss, cause, miss
+cost and any compaction boundary the log recorded (`PROMPT` is the input that
+was resent rather than served from cache, so the whole prompt is
+`PROMPT + READ + WRITE`):
+
+```
+Session: codex/01a00000-...  Steps: 12  Expected: 184000  Read: 171000  Miss: 13000  Hit: 92.9%  Miss cost: $0.1840
+AT                    MODEL         PROMPT   READ   WRITE  EXPECTED  MISS   CAUSE        MISS USD  BOUNDARY
+2026-01-02T03:04:05Z  gpt-5-codex    42000  41000       0     41000     0  -            0.0000  -
+2026-01-02T03:11:22Z  gpt-5-codex    61000      0       0     61000  61000  compact      0.1420  compact
+```
+
+A timeline covers the whole session: the range flags are accepted but ignored,
+and `--by` is rejected. Session ids are only unique inside a harness, so if the
+id turns up under several harnesses the command refuses to guess and lists them
+with `--harness NAME`; `--harness` is only valid together with a session id.
+
+The ledger is computed from the local index only, so `cache` never opens a
+network connection, with or without `--offline` (which is accepted but
+redundant). A request the ledger marks uncacheable — the first request of a
+session, a model with no cache fields — keeps its raw `expected` of `-1` and
+gets no cause: the timeline prints `-` for it, and it counts towards neither
+`EXPECTED` nor `health`. `--format json` returns the ledger's own shapes
+(`totals`/`rows`/`steps`, with the provider health left for the caller to compute from
+`byCause`), so a script sees the same numbers the GUI does.
+
+```sh
+mytoken cache --last 30d
+mytoken cache --by provider --since 2026-01-01 --until 2026-02-01
+mytoken cache --by day --timezone Asia/Shanghai --format csv
+mytoken cache 01a00000-0000-7000-8000-000000000001 --harness codex
+mytoken cache 01a00000-0000-7000-8000-000000000001 --no-cost
 ```
 
 ## doctor

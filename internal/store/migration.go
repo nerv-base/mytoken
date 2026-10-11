@@ -64,6 +64,9 @@ func (s *Store) migrate() error {
 	if err = migrateSignals(tx); err != nil {
 		return err
 	}
+	if err = migrateCache(tx); err != nil {
+		return err
+	}
 	if err = migrateEventIndexes(tx); err != nil {
 		return err
 	}

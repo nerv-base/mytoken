@@ -45,6 +45,8 @@ func run(args []string, out, errout io.Writer) int {
 		return runPrices(ctx, args[1:], out, errout)
 	case "stats":
 		return runStats(ctx, args[1:], out, errout)
+	case "cache":
+		return runCache(ctx, args[1:], out, errout)
 	case "relay":
 		return runRelay(ctx, args[1:], out, errout)
 	case "reconcile":

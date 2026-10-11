@@ -85,6 +85,7 @@ type State struct {
 	rankTab int
 	pr      pricingState
 	rl      relayState
+	ch      cacheState
 	src     sourceState
 
 	// stale is set by data changes not reloaded yet; lastReload and
@@ -208,7 +209,8 @@ func (s *State) Reload() {
 	// The relay page loads when drawn; the report shown stays until replaced.
 	s.rl.loaded, s.rl.want = false, ""
 	s.src.loaded = false
-	s.src.loaded = false
+	// The cache page reloads when drawn; what it shows stays until replaced.
+	s.ch.want = ""
 }
 
 // run runs load off the UI thread (or inline) and applies its result. Loads

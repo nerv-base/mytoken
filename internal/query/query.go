@@ -128,4 +128,13 @@ type Service interface {
 	Session(ctx context.Context, h model.Harness, id string) (SessionRow, []SessionRow, []AttributedEvent, error)
 	// Subscribe notifies (throttled to ≤1/s) whenever new data is committed.
 	Subscribe() (<-chan struct{}, func())
+
+	// 0.3 缓存账本 (docs/CACHE.md §6). CacheTotals aggregates Expected/Read/Miss/MissUSD
+	// and a per-cause breakdown over a filter. CacheDaily emits one point per local day.
+	// CacheBy buckets by a CacheDim; CacheBySession keys are harness+"/"+session_id.
+	// SessionCache returns the per-request cache verdicts of one session, time-ordered.
+	CacheTotals(ctx context.Context, f Filter) (CacheTotals, error)
+	CacheDaily(ctx context.Context, f Filter) ([]CachePoint, error)
+	CacheBy(ctx context.Context, f Filter, dim CacheDim) ([]CacheBucket, error)
+	SessionCache(ctx context.Context, h model.Harness, session string) ([]CacheStep, error)
 }

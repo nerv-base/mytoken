@@ -71,6 +71,15 @@ func migrateSignals(tx *sql.Tx) error {
 	if _, err = tx.Exec(`DROP VIEW events; CREATE VIEW events AS SELECT e.rowid AS rowid,e.harness,e.dedup_key,d.session_id,d.parent_id,d.project,e.timestamp,d.model,d.provider,d.base_url,e.input,e.output,e.cache_read,e.cache_write,e.reasoning,e.log_cost,d.resolved_provider,d.attrib,e.cost,e.priced,d.raw_project,e.request_id,e.boundary,e.bill_amount,e.bill_unit FROM event_data e JOIN event_dimensions d ON d.id=e.dimension_id;`); err != nil {
 		return err
 	}
+	return createEventsTriggers(tx)
+}
+
+// createEventsTriggers (re)creates the events INSTEAD OF triggers that decode the
+// compatibility view into event_data. Shared by migrateSignals and migrateCache
+// so the write surface stays identical when the view gains columns. Driven by
+// factColumns; cache columns are never written through the view (they are derived
+// and maintained internally), so they are intentionally absent here.
+func createEventsTriggers(tx *sql.Tx) error {
 	var dims []string
 	for _, c := range strings.Split(dimensionColumns, ",") {
 		dims = append(dims, "NEW."+c)
@@ -89,7 +98,7 @@ func migrateSignals(tx *sql.Tx) error {
 		updates = append(updates, c+"="+v)
 	}
 	insert := `INSERT INTO event_data(` + factColumns + `) VALUES(` + strings.Join(vals, ",") + `) ON CONFLICT(harness,dedup_key) DO UPDATE SET dimension_id=excluded.dimension_id,timestamp=excluded.timestamp,input=excluded.input,output=excluded.output,cache_read=excluded.cache_read,cache_write=excluded.cache_write,reasoning=excluded.reasoning,log_cost=excluded.log_cost,cost=excluded.cost,priced=excluded.priced,request_id=coalesce(nullif(excluded.request_id,''),event_data.request_id),boundary=coalesce(nullif(excluded.boundary,''),event_data.boundary),bill_amount=coalesce(excluded.bill_amount,event_data.bill_amount),bill_unit=CASE WHEN excluded.bill_amount IS NOT NULL THEN excluded.bill_unit ELSE event_data.bill_unit END WHERE (SELECT session_id=NEW.session_id OR (parent_id!='' AND NEW.parent_id='') FROM event_dimensions WHERE id=event_data.dimension_id);`
-	_, err = tx.Exec(`CREATE TRIGGER events_insert INSTEAD OF INSERT ON events BEGIN ` + dimInsert + insert + ` END;
+	_, err := tx.Exec(`CREATE TRIGGER events_insert INSTEAD OF INSERT ON events BEGIN ` + dimInsert + insert + ` END;
  CREATE TRIGGER events_update INSTEAD OF UPDATE ON events BEGIN ` + dimInsert + `UPDATE event_data SET ` + strings.Join(updates, ",") + ` WHERE rowid=OLD.rowid; END;
  CREATE TRIGGER events_delete INSTEAD OF DELETE ON events BEGIN DELETE FROM event_data WHERE rowid=OLD.rowid; END;`)
 	return err

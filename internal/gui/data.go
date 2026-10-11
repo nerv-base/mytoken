@@ -154,6 +154,7 @@ type SessionDetail struct {
 	Row      query.SessionRow
 	Children []query.SessionRow
 	Events   []query.AttributedEvent
+	Cache    []query.CacheStep // the session's cache ledger, in time order
 }
 
 func loadSessions(ctx context.Context, q query.Service, sortKey string) (SessionPage, error) {
@@ -163,7 +164,11 @@ func loadSessions(ctx context.Context, q query.Service, sortKey string) (Session
 
 func loadSession(ctx context.Context, q query.Service, h model.Harness, id string) (SessionDetail, error) {
 	row, kids, evs, err := q.Session(ctx, h, id)
-	return SessionDetail{Row: row, Children: kids, Events: evs}, err
+	if err != nil {
+		return SessionDetail{}, err
+	}
+	steps, err := q.SessionCache(ctx, h, id)
+	return SessionDetail{Row: row, Children: kids, Events: evs, Cache: steps}, err
 }
 
 // filterRows keeps the rows matching every word of needle.

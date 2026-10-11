@@ -275,3 +275,12 @@ type Service interface {
 - 补齐后全部表/索引 **59,043,840B / 283.92B 每事件**，空闲页 0，仍低于 300B；不截断、不哈希 ID。任意长 ID/单位仍会按实际长度增加体积，300B 是该实际副本的测量目标，不是无限输入下的硬上限。
 - 新 200K fixture 的 RequestID 全非空，含稀疏 compact/native Bill：Totals/Daily/By* **2.2–3.0ms**，Hourly **13.7–13.8ms**，Sessions **3.1–3.3ms**，Session **4.4ms**，单次分配 **0.72–3.30MB**。独立进程（含两次造数）峰值 RSS **47,824,896B**，系统 footprint **37,192,328B**，严格 <100ms / <50MiB 单查询门槛通过。
 - 首次信号补齐重扫 **12.78s**，随后空闲增量 **175.5ms**，Go 堆峰值 **85.94MiB**。重扫会为旧事件新增信号，不能与全量无变化重放的写入耗时等同；扫描仍不属于查询内存预算。
+
+### 10.3 0.3 缓存账本测量（同机，真实库副本 216,036 events / 2,191 sessions）
+
+- 迁移：`event_data` 增 4 缓存列（`cache_expected/cache_miss/miss_cause/miss_cost`），新建汇总表 `cache_daily`（按 天×harness×会话×resolved_provider×模型×项目×原因，只收 `cache_expected>=0` 的可缓存事件），`event_data` 上挂 cache_insert/update/delete 触发器随缓存列增量维护；`events` 解码视图重建纳入缓存列。`uncacheable` 用 `cache_expected=-1`。
+- 全量重建（含 ledger 的 O(n log n) Analyze）：仅重建 **3.14s**；旧库首次打开（迁移+重建）**~9.2s**；页热强制重建 **~5s**。性能关键：会话链查询必须走 `event_dimensions ⋈ event_data` 覆盖索引，按 harness 全表扫会把重建放大到 **21m37s**（已修）。
+- 增量：`CommitMany` 后 `recomputeSessions` 只重算被写会话整链，中位会话 **0.24ms**、最大单会话（8,307 events）**31–42ms**（<50ms）。
+- 查询：cache 查询 **9–22ms**（<50ms）；200K fixture 的 strict-perf gate（<100ms/<50MiB）全过；热运行 `cache --by cause` **0.18–0.40s**。cache 基准已并入 `internal/query/bench_test.go`。
+- 库增长：**1.7 B/事件**（刚迁移）/**~5 B/事件**（重建物化后），远低于 20 B/事件预算。
+- 真实库原因分布（去标识）：可缓存请求 215,635，miss 554M tokens，其中 **unexplained 占 84.5%**（中转站未透传缓存/粘性路由失败——正是本工具要暴露并量化的信号）；compact 981 请求、ttl 669、model 11；uncacheable 401 请求（harness/model 无缓存字段，整会话不可缓存，不计入分母）。真实用户库 7d 窗口复核 hit **98.8%**、miss cost $150.65（ttl $53.59 / unexplained $80.15 / compact $16.91 / model $0.00）。

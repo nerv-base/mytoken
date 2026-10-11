@@ -34,6 +34,11 @@ type Store struct {
 	projects      *projectResolver
 	closed        bool
 	aggregateZone string
+	// costFn is the local estimate price function, captured from the most recent
+	// EnsurePrices/ReplacePricing call (always under the writer lock). It powers
+	// MissUSD recomputation on commit and rebuild; nil until prices are first
+	// ensured, in which case miss_cost stays 0 until the next price pass.
+	costFn func(model.UsageEvent) (float64, bool)
 }
 
 func Open(path string) (*Store, error) {
@@ -179,15 +184,42 @@ func (s *Store) CommitMany(ctx context.Context, writes []Write) error {
 		}
 		return stmt, err
 	}
+	touched := map[string][2]string{}
 	for _, w := range writes {
 		if len(w.Batch.Events) > 0 && len(w.Resolutions) == 0 {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM settings WHERE key='pricing_fingerprint'"); err != nil {
 				return err
 			}
 		}
+		for _, e := range w.Batch.Events {
+			h := e.Harness
+			if h == "" {
+				h = w.Harness
+			}
+			if e.SessionID != "" {
+				touched[string(h)+"\x00"+e.SessionID] = [2]string{string(h), e.SessionID}
+			}
+			if e.ParentID != "" {
+				touched[string(h)+"\x00"+e.ParentID] = [2]string{string(h), e.ParentID}
+			}
+		}
+		for _, m := range w.Batch.Sessions {
+			h := m.Harness
+			if h == "" {
+				h = w.Harness
+			}
+			if m.SessionID != "" {
+				touched[string(h)+"\x00"+m.SessionID] = [2]string{string(h), m.SessionID}
+			}
+		}
 		if err := s.commit(ctx, w.Harness, w.Path, w.Batch, w.Resolutions, prepare); err != nil {
 			return err
 		}
+	}
+	// Re-Analyze only the touched sessions' whole chains, patching just the events
+	// whose verdict changed, before the commit becomes visible.
+	if err := s.recomputeSessions(ctx, tx, touched); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err

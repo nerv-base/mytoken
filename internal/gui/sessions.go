@@ -197,6 +197,12 @@ func (s *State) detailView(c *ui.Context, pal palette) {
 					timeline(c.Key("tl"+s.sel), pal, d.Events, models, 170)
 				})
 			}
+			// Cache ledger.
+			if cacheJudged(d.Cache) > 1 {
+				card(c, pal, tr("cacheTimeline"), func() { cacheSummary(c, pal, d.Cache) }, func() {
+					cacheTimeline(c.Key("ctl"+s.sel), pal, d.Cache, 150)
+				})
+			}
 			// Subagents.
 			if len(d.Children) > 0 {
 				card(c, pal, tr("subagents"), func() {

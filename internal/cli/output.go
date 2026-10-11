@@ -37,7 +37,12 @@ var (
 // stripCost removes every costUsd field from a JSON payload, at any depth
 // (totals, rows and a session's provider breakdown). --no-cost only drops cost;
 // counts such as unpriced are kept.
-func stripCost(v any) (any, error) {
+func stripCost(v any) (any, error) { return stripCostFields(v, "costUsd") }
+
+// stripCostFields removes the named JSON fields from a payload, at any depth.
+// stats and sessions carry money in costUsd, while the cache ledger uses usd,
+// so both keys are dropped for cache views.
+func stripCostFields(v any, keys ...string) (any, error) {
 	raw, e := json.Marshal(v)
 	if e != nil {
 		return nil, e
@@ -46,20 +51,22 @@ func stripCost(v any) (any, error) {
 	if e = json.Unmarshal(raw, &out); e != nil {
 		return nil, e
 	}
-	removeCost(out)
+	dropKeys(out, keys)
 	return out, nil
 }
 
-func removeCost(v any) {
+func dropKeys(v any, keys []string) {
 	switch t := v.(type) {
 	case map[string]any:
-		delete(t, "costUsd")
+		for _, k := range keys {
+			delete(t, k)
+		}
 		for _, x := range t {
-			removeCost(x)
+			dropKeys(x, keys)
 		}
 	case []any:
 		for _, x := range t {
-			removeCost(x)
+			dropKeys(x, keys)
 		}
 	}
 }

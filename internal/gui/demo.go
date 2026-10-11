@@ -351,6 +351,8 @@ func (d *demo) Session(_ context.Context, h model.Harness, id string) (query.Ses
 	return row, kids, d.events[string(h)+"/"+id], nil
 }
 
+// The cache-ledger reads live in demo_cache.go.
+
 func (d *demo) Subscribe() (<-chan struct{}, func()) {
 	return make(chan struct{}), func() {}
 }

@@ -25,6 +25,8 @@ var Version = "dev"
 const usage = `Usage: mytoken <command> [options]
   scan
   stats [options] [--by session|provider|model|project|day|harness]
+  cache [options] [--by cause|provider|model|harness|project|session|day]
+  cache <session-id> [--harness NAME] [options]
   sessions [--limit N] [options]
   doctor [--json]
   version
@@ -38,8 +40,8 @@ const usage = `Usage: mytoken <command> [options]
   relay sync [<origin|provider>] [--key-id ID]
   reconcile [<origin|provider>] [--by category|model|day] [options]
 
-options for stats and sessions:
-  --since DATE|DUR    range start (stats default 7d; sessions default all time)
+options for stats, sessions and cache:
+  --since DATE|DUR    range start (stats and cache default 7d; sessions default all time)
   --until DATE|DUR    range end, not included
   --last WINDOW       today|week|month or 7d/2w/3m/12h/30s (ends now);
                       exclusive with --since/--until
@@ -52,11 +54,29 @@ options for stats and sessions:
 DATE is YYYY-MM-DD, YYYYMMDD or RFC3339. DUR is Ns, Nh, Nd, Nw or Nm
 (Nm is a calendar month; minutes are written 90s).
 stats defaults: --since 7d --by session
+cache defaults: --since 7d --by cause; a session id prints that session's
+cache timeline instead (whole session; no --by).
 sessions defaults: --limit 50 (0 means all); most recently updated first.
-relay list and reconcile never use the network; relay enable and relay sync do,
-and refuse --offline. A relay site stays off until you enable it, and its key is
-never stored or printed - only its key ID (a truncated hash) appears.
+relay list, reconcile and cache never use the network; relay enable and relay
+sync do, and refuse --offline. A relay site stays off until you enable it, and
+its key is never stored or printed - only its key ID (a truncated hash) appears.
 Exit status: 0 success, 1 operational error, 2 invalid arguments.
+`
+
+// cacheUsage is the cache-specific help, shown on a usage error.
+const cacheUsage = `Usage: mytoken cache [--by cause|provider|model|harness|project|session|day] [options]
+       mytoken cache <session-id> [--harness NAME] [options]
+
+--by defaults to cause (the miss breakdown); day groups by local day, and the
+other values group the ledger by that dimension. --by provider adds a HEALTH
+column: the site's unexplained misses over the tokens it should have cached.
+A session id switches to that session's cache timeline (time, model, prompt,
+read, write, expected, miss, cause, miss cost, boundary). The timeline ignores
+the range flags and covers the whole session, and it has no --by; --harness
+picks the owner when the same session id exists under several harnesses.
+The ledger comes from local data only: cache never uses the network, with or
+without --offline.
+See "mytoken help" for --since/--until/--last/--timezone/--no-cost/--format.
 `
 
 func runSessions(ctx context.Context, args []string, out, errout io.Writer) int {

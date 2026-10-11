@@ -33,6 +33,8 @@ func (s *State) MainView(c *ui.Context) {
 						s.rankingPage(c, pal)
 					case "projects":
 						s.projectsPage(c, pal)
+					case "cache":
+						s.cachePage(c, pal)
 					case "relays":
 						s.relaysPage(c, pal)
 					case "settings":
@@ -52,7 +54,7 @@ var navItems = []struct {
 	id  string
 	ic  *ui.SVG
 	col ui.Color
-}{{"overview", icOverview, Tomori}, {"sessions", icSessions, Anon}, {"ranking", icRanking, Rana}, {"projects", icProjects, Soyo}, {"relays", icScale, relayColor}, {"settings", icSettings, Taki}}
+}{{"overview", icOverview, Tomori}, {"sessions", icSessions, Anon}, {"ranking", icRanking, Rana}, {"projects", icProjects, Soyo}, {"cache", icCache, cacheColor}, {"relays", icScale, relayColor}, {"settings", icSettings, Taki}}
 
 // SidebarInset is the window padding around the sidebar card. The main
 // window puts the close button TrafficLightX, TrafficLightY from its corner:

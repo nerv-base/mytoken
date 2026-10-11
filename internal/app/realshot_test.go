@@ -29,7 +29,7 @@ func TestRealShots(t *testing.T) {
 	gui.SetLang("zh")
 	s := gui.NewState(a.Query, gui.Hooks{Progress: a.Scanner.Progress, Settings: a.Settings}, nil)
 	s.Start()
-	for _, page := range []string{"overview", "sessions", "ranking", "projects", "settings"} {
+	for _, page := range []string{"overview", "sessions", "ranking", "projects", "cache", "relays", "settings"} {
 		s.SetPage(page)
 		shot(t, filepath.Join(dir, page+".png"), s.MainView, 1280, 860, true)
 	}

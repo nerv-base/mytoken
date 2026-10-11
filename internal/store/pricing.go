@@ -41,13 +41,22 @@ func (s *Store) EnsurePrices(ctx context.Context, fingerprint string, cost func(
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
-	if previous == fingerprint {
-		return nil
+	if previous != fingerprint {
+		if err = s.replacePricing(ctx, map[string]string{"pricing_fingerprint": fingerprint}, cost); err != nil {
+			return err
+		}
+	} else {
+		// Prices are unchanged, but the cost function is still needed for MissUSD
+		// recomputation on later commits and for any pending ledger rebuild.
+		s.costFn = cost
 	}
-	return s.replacePricing(ctx, map[string]string{"pricing_fingerprint": fingerprint}, cost)
+	// Heal the derived cache ledger whenever the compiled algorithm version moved
+	// (first 0.3 open, or a future bump), independent of the price fingerprint.
+	return s.ensureLedgerVersion(ctx)
 }
 
 func (s *Store) replacePricing(ctx context.Context, settings map[string]string, cost func(model.UsageEvent) (float64, bool)) error {
+	s.costFn = cost
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -102,6 +111,12 @@ func (s *Store) replacePricing(ctx context.Context, settings map[string]string, 
 		if count < 512 {
 			break
 		}
+	}
+	// MissUSD uses the local estimate for both the real and the counterfactual
+	// event, so it must be recomputed for every cache_miss>0 event on any price
+	// change — including log-priced events the loop above skips.
+	if err = s.recomputeMissCost(ctx, tx, cost); err != nil {
+		return err
 	}
 	if err = tx.Commit(); err != nil {
 		return err
