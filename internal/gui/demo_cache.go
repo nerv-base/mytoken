@@ -89,13 +89,16 @@ func demoInputPrice(name string) float64 {
 // eachStep walks the demo requests in f with their verdicts.
 func (d *demo) eachStep(f query.Filter, fn func(s *query.SessionRow, e *query.AttributedEvent, st query.CacheStep)) {
 	c := d.cache()
+	if !demoWantsInstance(f) {
+		return
+	}
 	for i := range d.sessions {
 		s := &d.sessions[i]
 		k := string(s.Harness) + "/" + s.SessionID
 		steps := c.steps[k]
 		for j := range d.events[k] {
 			e := &d.events[k][j]
-			if inRange(f.Range, e.Timestamp) && j < len(steps) {
+			if inRange(f.Range, e.Timestamp) && j < len(steps) && demoWantsProvider(f.ProviderIDs, e) {
 				fn(s, e, steps[j])
 			}
 		}

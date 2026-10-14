@@ -64,14 +64,24 @@ const (
 )
 
 // Parser reads Goose session databases.
-type Parser struct{ roots []string }
+type Parser struct {
+	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
+}
 
 var _ harness.Parser = (*Parser)(nil)
 
 func init() { harness.Register(New()) }
 
 // New returns a parser for the default Goose locations.
-func New() *Parser { return NewWithRoots(defaultRoots()...) }
+func New() *Parser {
+	p := NewWithRoots(defaultRoots()...)
+	p.prov = rootProvenance
+	return p
+}
 
 // NewWithRoot returns a parser for one root.
 func NewWithRoot(root string) *Parser { return NewWithRoots(root) }
@@ -99,30 +109,76 @@ func NewWithRoots(roots ...string) *Parser {
 // Harness reports the harness these events belong to.
 func (p *Parser) Harness() model.Harness { return model.Goose }
 
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
+
 // Roots returns the configured search roots.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }
 
-// defaultRoots resolves the platform locations Goose writes to.
-func defaultRoots() []string {
-	if dirs := strings.TrimSpace(os.Getenv(rootsEnv)); dirs != "" {
-		return filepath.SplitList(dirs)
+// rootProvenance reports Goose's default roots and where each came from.
+// MYTOKEN_GOOSE_DIRS replaces the whole set, GOOSE_PATH_ROOT is an explicit
+// harness-specific override, and the platform data directory is a default.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv(rootsEnv); ok {
+		dirs, err := harness.SplitEnvList(rootsEnv, v)
+		if err != nil {
+			return nil, err
+		}
+		return harness.EnvRoots(rootsEnv, dirs...), nil
 	}
-	var out []string
-	if root := strings.TrimSpace(os.Getenv(gooseRootEnv)); root != "" {
-		out = append(out, filepath.Join(root, "data", "sessions"))
+	var out []harness.Root
+	if root, ok := harness.Getenv(gooseRootEnv); ok {
+		out = append(out, harness.Root{
+			Path:   filepath.Join(root, "data", "sessions"),
+			Origin: harness.OriginEnv,
+			Env:    gooseRootEnv,
+		})
 	}
 	if runtime.GOOS == "windows" {
 		base := strings.TrimSpace(os.Getenv("APPDATA"))
 		if base == "" {
 			base = filepath.Join(harness.Home(), "AppData", "Roaming")
 		}
-		return append(out, filepath.Join(base, "Block", "goose", "sessions"))
+		return append(out, harness.Root{
+			Path:   filepath.Join(base, "Block", "goose", "sessions"),
+			Origin: harness.OriginBuiltin,
+		}), nil
 	}
 	base := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
 	if base == "" {
 		base = filepath.Join(harness.Home(), ".local", "share")
 	}
-	return append(out, filepath.Join(base, "goose", "sessions"))
+	return append(out, harness.Root{
+		Path:   filepath.Join(base, "goose", "sessions"),
+		Origin: harness.OriginBuiltin,
+	}), nil
+}
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // Discover finds every session in the databases under the roots. Each session

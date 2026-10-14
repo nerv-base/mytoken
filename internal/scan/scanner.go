@@ -8,6 +8,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/zzstar101/mytoken/internal/attrib"
 	"github.com/zzstar101/mytoken/internal/harness"
+	"github.com/zzstar101/mytoken/internal/ingestrate"
 	"github.com/zzstar101/mytoken/internal/model"
 	"github.com/zzstar101/mytoken/internal/pricing"
 	"github.com/zzstar101/mytoken/internal/store"
@@ -21,10 +22,13 @@ import (
 )
 
 type Scanner struct {
-	st          *store.Store
-	resolver    *attrib.Resolver
-	pricer      *pricing.Pricer
-	parsers     []harness.Parser
+	st       *store.Store
+	resolver *attrib.Resolver
+	pricer   *pricing.Pricer
+	// instances are the (instance id, parser) pairs this scanner indexes.
+	// Every piece of per-source state is keyed by harness, instance id and
+	// path, so the same harness may be scanned several times over.
+	instances   []Instance
 	mu          sync.Mutex
 	scanMu      sync.Mutex
 	done, total int
@@ -48,6 +52,24 @@ type Scanner struct {
 	seen map[string]fileStamp
 	// parses counts Parse calls, for tests.
 	parses int
+	// ingest tracks committed live output tokens over a trailing window. It is
+	// fed only by writes a watched change produced, never by startup, periodic,
+	// manual or backfill scans.
+	ingest *ingestrate.Tracker
+	// ingestMu serializes every observation and snapshot, and ingestAt is the
+	// latest instant handed to the tracker: both directions clamp to it so the
+	// scanner's own clock can never look out of order to the tracker.
+	ingestMu sync.Mutex
+	ingestAt time.Time
+	// clock is the scanner's wall clock, replaced in tests.
+	clock func() time.Time
+	// diag accumulates this scan's collection evidence, one entry per harness
+	// instance, and diagMu guards it: worker goroutines record parse results
+	// while the scanning goroutine records discovery and commits. It is reset at
+	// the start of every scan and persisted once per instance when the scan
+	// completes, and it never holds file contents or parser errors.
+	diagMu sync.Mutex
+	diag   map[string]*diagInstance
 }
 
 // fileStamp is a source file's size and modification time, with those of
@@ -76,17 +98,28 @@ const maxWatchDirs = 2048
 // watched one, such as a new session folder, before the next scan.
 const newDirBudget = 32
 
+// New returns a Scanner over the given parsers, each recorded under the
+// store's default instance. With no parsers it scans every registered
+// harness; use NewWithInstances to scan named instances.
 func New(st *store.Store, resolver *attrib.Resolver, pricer *pricing.Pricer, parsers ...harness.Parser) *Scanner {
 	if len(parsers) == 0 {
 		parsers = harness.All()
 	}
+	s := newScanner(st, resolver, pricer)
+	for _, p := range parsers {
+		s.instances = append(s.instances, Instance{ID: store.DefaultInstanceID, Parser: p})
+	}
+	return s
+}
+
+func newScanner(st *store.Store, resolver *attrib.Resolver, pricer *pricing.Pricer) *Scanner {
 	workers := runtime.NumCPU()
 	// Parsing many large JSONL files concurrently multiplies decoder buffers. A
 	// bounded pool keeps peak RSS predictable while retaining parallel IO.
 	if workers > 4 {
 		workers = 4
 	}
-	return &Scanner{st: st, resolver: resolver, pricer: pricer, parsers: parsers, workers: workers, interval: 2 * time.Minute, debounce: 250 * time.Millisecond, minGap: 2 * time.Second}
+	return &Scanner{st: st, resolver: resolver, pricer: pricer, workers: workers, interval: 2 * time.Minute, debounce: 250 * time.Millisecond, minGap: 2 * time.Second, clock: time.Now, ingest: newIngestTracker()}
 }
 func (s *Scanner) Progress() (done, total int) {
 	s.mu.Lock()
@@ -97,12 +130,17 @@ func (s *Scanner) LastError() error                     { s.mu.Lock(); defer s.m
 func (s *Scanner) Subscribe() (<-chan struct{}, func()) { return s.st.Subscribe() }
 
 type source struct {
-	parser harness.Parser
-	src    harness.Source
-	cur    harness.Cursor
-	size   int64
-	key    string     // harness and path, for Scanner.seen
-	stamp  *fileStamp // nil for a directory or a missing file
+	parser   harness.Parser
+	instance string
+	src      harness.Source
+	cur      harness.Cursor
+	size     int64
+	key      string     // harness, instance and path, for Scanner.seen
+	stamp    *fileStamp // nil for a directory or a missing file
+	// live is set for a watched-change scan of a source that was read before:
+	// that is the only path where appended output is genuinely new ingestion
+	// rather than the first pass over history.
+	live bool
 }
 
 // Scan parses every source.
@@ -113,6 +151,7 @@ func (s *Scanner) Scan(ctx context.Context) error { return s.scan(ctx, false) }
 func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 	s.scanMu.Lock()
 	defer s.scanMu.Unlock()
+	s.diagBegin()
 	defer func() {
 		s.mu.Lock()
 		s.lastError = err
@@ -130,6 +169,9 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 	defer func() { err = errors.Join(err, restoreIndexes()) }()
 	var work []source
 	var errs []error
+	// liveCandidate records that this scan includes at least one source whose
+	// appended output is live ingestion, so the scan may report a rate.
+	liveCandidate := false
 	dirs := map[string]bool{}
 	s.mu.Lock()
 	if !quick || s.seen == nil {
@@ -137,9 +179,12 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 	}
 	seen := s.seen
 	s.mu.Unlock()
-	for _, p := range s.parsers {
+	for _, inst := range s.instances {
+		p := inst.Parser
+		s.diagAttempt(p.Harness(), inst.ID)
 		srcs, e := p.Discover(ctx)
 		if e != nil {
+			s.diagFailure(p.Harness(), inst.ID)
 			errs = append(errs, fmt.Errorf("discover %s: %w", p.Harness(), e))
 			continue
 		}
@@ -150,9 +195,12 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 			}
 			var size int64
 			var stamp *fileStamp
-			if info, err := os.Stat(src.Path); err == nil {
+			isDir := false
+			info, statErr := os.Stat(src.Path)
+			if statErr == nil {
 				size = info.Size()
 				if info.IsDir() {
+					isDir = true
 					dirs[src.Path] = true
 				} else {
 					dirs[filepath.Dir(src.Path)] = true
@@ -160,22 +208,34 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 					stamp = &st
 				}
 			}
-			key := string(p.Harness()) + "\x00" + src.Path
+			s.diagDiscover(p.Harness(), inst.ID, src, isDir, statErr)
+			key := string(p.Harness()) + "\x00" + inst.ID + "\x00" + src.Path
 			if quick && stamp != nil {
 				s.mu.Lock()
 				old, ok := seen[key]
 				s.mu.Unlock()
 				if ok && old == *stamp {
+					s.diagSkipped(p.Harness(), inst.ID, src.Path)
 					continue
 				}
 			}
 			if cursors == nil {
-				if cursors, err = s.st.Cursors(ctx, p.Harness()); err != nil {
+				if cursors, err = s.st.CursorsIn(ctx, p.Harness(), inst.ID); err != nil {
+					s.diagFailure(p.Harness(), inst.ID)
 					errs = append(errs, err)
 					break
 				}
 			}
-			work = append(work, source{p, src, cursors[src.Path], size, key, stamp})
+			cursor, read := cursors[src.Path]
+			// A watched-change scan of a source already read once continues an
+			// established stream. Everything else is history: startup, periodic,
+			// manual and rebuild scans replay sources that were never read, and
+			// a first read during a watched change is a backfill too.
+			live := quick && read
+			if live {
+				liveCandidate = true
+			}
+			work = append(work, source{parser: p, instance: inst.ID, src: src, cur: cursor, size: size, key: key, stamp: stamp, live: live})
 		}
 	}
 	// Start large logs first to avoid a long single-worker tail.
@@ -188,6 +248,7 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 	ch := make(chan source)
 	type result struct {
 		write *store.Write
+		live  bool
 		err   error
 	}
 	results := make(chan result, s.workers+1)
@@ -207,8 +268,9 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 				if ctx.Err() != nil {
 					return
 				}
-				write, err := s.scanOne(ctx, item)
-				results <- result{write, err}
+				write, out, err := s.scanOne(ctx, item)
+				s.diagParse(item.parser.Harness(), item.instance, item.src, out, err)
+				results <- result{write, item.live, err}
 				s.mu.Lock()
 				s.done++
 				s.parses++
@@ -234,26 +296,84 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 		wg.Wait()
 		close(results)
 	}()
-	var pending []store.Write
+	type queued struct {
+		write store.Write
+		live  bool
+	}
+	var pending []queued
 	eventCount := 0
 	wrote := false
+	// liveFailed records that a live source could not be read or committed, so
+	// this scan must not report a rate: an unreadable live stream is unknown,
+	// not zero.
+	liveFailed := false
 	flush := func() {
 		if len(pending) == 0 {
 			return
 		}
 		wrote = true
-		if err := s.st.CommitMany(ctx, pending); err != nil {
-			errs = append(errs, err)
-		}
+		committed := pending
 		pending = nil
 		eventCount = 0
+		writes := make([]store.Write, len(committed))
+		live := false
+		for i := range committed {
+			writes[i] = committed[i].write
+			if committed[i].live {
+				live = true
+			}
+		}
+		if !live || s.ingest == nil {
+			// The outcome is what the index actually gained: it reports only
+			// rows this commit inserted for the first time, so a replay of
+			// already-indexed records cannot be recorded as new collection.
+			outcome, err := s.st.CommitManyOutcome(ctx, writes)
+			if err != nil {
+				// The cursors did not advance, so the next scan reparses these
+				// sources. Quota is deliberately not published: a failed commit
+				// must not make a fresh observation visible.
+				errs = append(errs, err)
+				liveFailed = liveFailed || live
+				s.diagCommitFailed(writes)
+				return
+			}
+			s.diagCommitted(writes, outcome)
+		} else {
+			// The window ends at the instant of this commit, and only events the
+			// index did not already hold are eligible. A historical record
+			// appended to an already watched file is a genuinely new row, but its
+			// own timestamp places it outside the window, so it cannot inflate a
+			// rate that describes recent ingestion.
+			at := s.now()
+			outcome, err := s.st.CommitManyOutcomeRecent(ctx, writes, at.Add(-ingestrate.Window), at)
+			if err != nil {
+				// Nothing was inserted, so nothing may be observed: a rolled
+				// back commit must not leak tokens into the rate.
+				errs = append(errs, err)
+				liveFailed = true
+				s.diagCommitFailed(writes)
+				return
+			}
+			var tokens int64
+			for i := range committed {
+				if committed[i].live && i < len(outcome.Writes) {
+					tokens = addOutput(tokens, outcome.Writes[i].NewRecentOutputTokens)
+				}
+			}
+			s.observeIngestAt(tokens, at)
+			s.diagCommitted(writes, outcome)
+		}
+		if err := s.publishQuota(ctx, writes); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	for r := range results {
 		if r.err != nil {
 			errs = append(errs, r.err)
+			liveFailed = liveFailed || r.live
 		}
 		if r.write != nil {
-			pending = append(pending, *r.write)
+			pending = append(pending, queued{write: *r.write, live: r.live})
 			eventCount += len(r.write.Batch.Events)
 			if len(pending) >= 32 || eventCount >= 8192 {
 				flush()
@@ -261,6 +381,18 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 		}
 	}
 	flush()
+	// A watched scan that read its live sources cleanly reports the rate even
+	// when nothing was appended: zero new output over a live window is a real
+	// zero, and the heartbeat keeps the signal fresh. A scanner that only ever
+	// full-scans never reports one, so an idle historical index cannot fake a
+	// live zero.
+	if liveCandidate && !liveFailed {
+		if at, snap := s.heartbeatIngest(); !at.IsZero() {
+			if e := s.publishIngestRate(ctx, at, snap); e != nil {
+				errs = append(errs, e)
+			}
+		}
+	}
 	// Only new writes can bring a project path to normalize.
 	if wrote || !quick {
 		if e := s.st.NormalizeProjects(ctx); e != nil {
@@ -274,18 +406,33 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 	}
 	if e := ctx.Err(); e != nil {
 		errs = append(errs, e)
+	} else if e := s.persistDiagnostics(ctx, s.now()); e != nil {
+		// The record is written once per completed scan, after every source and
+		// commit is accounted for. A cancelled scan writes nothing, so the prior
+		// evidence survives it.
+		errs = append(errs, e)
 	}
 	return errors.Join(errs...)
 }
-func (s *Scanner) scanOne(ctx context.Context, item source) (*store.Write, error) {
+func (s *Scanner) scanOne(ctx context.Context, item source) (*store.Write, parseOutcome, error) {
 	h := item.parser.Harness()
 	cur := item.cur
 	b, e := item.parser.Parse(ctx, item.src, cur)
 	if e != nil {
-		return nil, fmt.Errorf("parse %s %s: %w", h, item.src.Path, e)
+		return nil, parseOutcome{}, fmt.Errorf("parse %s %s: %w", h, item.src.Path, e)
 	}
-	if len(b.Events) == 0 && len(b.Sessions) == 0 && b.Next == cur {
-		return nil, nil
+	out := parseOutcome{events: int64(len(b.Events)), sessions: int64(len(b.Sessions)), advanced: b.Next != cur}
+	if len(b.Events) == 0 && len(b.Sessions) == 0 && !out.advanced {
+		return nil, out, nil
+	}
+	if len(b.Events) > 0 {
+		out.zeroTokens = true
+		for i := range b.Events {
+			if !b.Events[i].Tokens.IsZero() {
+				out.zeroTokens = false
+				break
+			}
+		}
 	}
 	resolved := make([]store.Resolution, len(b.Events))
 	for i, event := range b.Events {
@@ -294,7 +441,10 @@ func (s *Scanner) scanOne(ctx context.Context, item source) (*store.Write, error
 		}
 		provider, kind := "", model.AttribInferred
 		if s.resolver != nil {
-			provider, kind = s.resolver.Resolve(ctx, event)
+			// The instance is the one this source was discovered under, so a
+			// named instance never inherits the default instance's global
+			// request matches or config timeline.
+			provider, kind = s.resolver.ResolveInstance(ctx, item.instance, event)
 		} else if event.Provider != "" {
 			provider, kind = event.Provider, model.AttribLog
 		} else {
@@ -310,7 +460,7 @@ func (s *Scanner) scanOne(ctx context.Context, item source) (*store.Write, error
 		}
 		resolved[i] = store.Resolution{Provider: provider, Attrib: kind, Cost: cost, Priced: priced}
 	}
-	return &store.Write{Harness: h, Path: item.src.Path, Batch: b, Resolutions: resolved}, nil
+	return &store.Write{Harness: h, InstanceID: item.instance, Path: item.src.Path, Batch: b, Resolutions: resolved}, out, nil
 }
 func (s *Scanner) Rebuild(ctx context.Context) error {
 	if e := s.st.Rebuild(ctx); e != nil {
@@ -367,8 +517,8 @@ func (s *Scanner) Run(ctx context.Context) error {
 	// each source found: never a whole root, which may hold anything.
 	watchRoots := func() {
 		var roots []string
-		for _, p := range s.parsers {
-			roots = append(roots, p.Roots()...)
+		for _, inst := range s.instances {
+			roots = append(roots, inst.Parser.Roots()...)
 		}
 		s.mu.Lock()
 		dirs := make([]string, 0, len(s.dirs))

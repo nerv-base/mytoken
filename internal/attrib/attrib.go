@@ -28,6 +28,18 @@ type Rule struct {
 	Model    string        `json:"model"`
 	From, To time.Time
 	Provider string `json:"provider"`
+	// Instance scopes the rule to one scanner instance. Empty is the historical
+	// and default scope: the rule applies to every instance, default included.
+	// A rule naming an instance applies to that instance only, so an operator
+	// can pin a provider to one instance without matching another's events.
+	Instance string `json:"instance,omitempty"`
+}
+
+// scopedTo reports whether a rule may decide attribution for an instance whose
+// id is already normalized. An instance-less rule is deliberately global; a
+// named rule never leaks to a differently named instance.
+func (v Rule) scopedTo(instance string) bool {
+	return v.Instance == "" || store.NormalizeInstanceID(v.Instance) == instance
 }
 
 // Resolver attributes an event to a provider. Provider data comes from
@@ -62,14 +74,10 @@ func NewWithSources(st *store.Store, sources ...source.Source) (*Resolver, error
 	if e := r.Refresh(context.Background()); e != nil {
 		return nil, e
 	}
-	if err := r.migrateGenericProviders(context.Background()); err != nil {
-		r.Close()
-		return nil, err
-	}
-	if err := r.migrateBareGeneric(context.Background()); err != nil {
-		r.Close()
-		return nil, err
-	}
+	// Historical attribution is a pricing boundary, not a display label. The
+	// endpoint identity migration handles display grouping without rewriting
+	// old providers or invalidating their pricing checkpoint. Resolve below
+	// still applies current attribution rules to newly ingested requests.
 	return r, nil
 }
 
@@ -189,17 +197,47 @@ func (r *Resolver) Close() error {
 	}
 	return first
 }
-func (r *Resolver) Resolve(_ context.Context, e model.UsageEvent) (string, model.AttribSource) {
+
+// Resolve attributes an event recorded under the store's default instance. It
+// is the legacy entry point and keeps its historical resolution: instance-less
+// user rules, the log's own provider, the request matchers and the global
+// provider_configs timeline, in that order.
+func (r *Resolver) Resolve(ctx context.Context, e model.UsageEvent) (string, model.AttribSource) {
+	return r.ResolveInstance(ctx, store.DefaultInstanceID, e)
+}
+
+// ResolveInstance is the additive, instance-aware form of Resolve. instance is
+// the scanner instance the event was ingested under; the empty string and
+// store.DefaultInstanceID both mean the default instance and preserve Resolve
+// exactly.
+//
+// Global provenance is not instance-bound. The request matchers (cc-switch's
+// proxy log) and the provider_configs timeline are keyed by harness alone, so
+// they cannot say which instance a request or session id belonged to. A named
+// instance therefore never borrows them, however exactly its request or session
+// ids collide with the default instance's. Without that binding, claiming a
+// configured upstream would be a guess: the instance resolves from its own
+// recorded log endpoint, from user rules (an instance-less rule is deliberately
+// global; a rule may also name this instance), and otherwise falls back to the
+// explicit inferred/unknown model name.
+func (r *Resolver) ResolveInstance(_ context.Context, instance string, e model.UsageEvent) (string, model.AttribSource) {
+	inst := store.NormalizeInstanceID(instance)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, v := range r.rules {
-		if (v.Harness == "" || v.Harness == e.Harness) && (v.Model == "" || v.Model == e.Model) && (v.From.IsZero() || !e.Timestamp.Before(v.From)) && (v.To.IsZero() || e.Timestamp.Before(v.To)) {
+		if (v.Harness == "" || v.Harness == e.Harness) && (v.Model == "" || v.Model == e.Model) && v.scopedTo(inst) && (v.From.IsZero() || !e.Timestamp.Before(v.From)) && (v.To.IsZero() || e.Timestamp.Before(v.To)) {
 			return v.Provider, model.AttribUserRule
 		}
 	}
 	// A generic name ("custom") without a base URL says nothing: look further.
+	// A recorded endpoint is exact and belongs to whichever instance wrote it.
 	if provider := displayProvider(e.Provider, e.BaseURL); provider != "" && !generic(provider) {
 		return provider, model.AttribLog
+	}
+	if inst != store.DefaultInstanceID {
+		// The matchers and the config timeline below are global, so a named
+		// instance stops here rather than inherit another profile's upstream.
+		return Infer(e.Model), model.AttribInferred
 	}
 	// Request-level sources (cc-switch's proxy log) come next, in priority order.
 	for _, s := range r.sources {

@@ -100,6 +100,10 @@ const (
 // Parser reads Gemini CLI chat recordings.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 var _ harness.Parser = (*Parser)(nil)
@@ -107,7 +111,11 @@ var _ harness.Parser = (*Parser)(nil)
 func init() { harness.Register(New()) }
 
 // New returns a parser rooted at the default Gemini CLI directories.
-func New() *Parser { return NewWithRoots() }
+func New() *Parser {
+	p := NewWithRoots()
+	p.prov = rootProvenance
+	return p
+}
 
 // NewWithRoot returns a parser reading only root.
 func NewWithRoot(root string) *Parser { return NewWithRoots(root) }
@@ -133,27 +141,64 @@ func NewWithRoots(roots ...string) *Parser {
 	return &Parser{roots: out}
 }
 
-// defaultRoots returns the tmp directories of the Gemini CLI home. gemini-cli's
-// homedir() returns $GEMINI_CLI_HOME, so the data dir is $GEMINI_CLI_HOME/.gemini;
-// tokscale documents GEMINI_CLI_HOME as the data dir itself, so both are read.
-func defaultRoots() []string {
-	if v := os.Getenv("MYTOKEN_GEMINI_DIRS"); v != "" {
-		return filepath.SplitList(v)
+// rootProvenance reports Gemini CLI's default roots and where each came from.
+// MYTOKEN_GEMINI_DIRS replaces the whole set, GEMINI_CLI_HOME is an explicit
+// harness-specific base, and the final ~/.gemini path is a platform default.
+// gemini-cli's homedir() returns $GEMINI_CLI_HOME, so the data dir is
+// $GEMINI_CLI_HOME/.gemini; tokscale documents GEMINI_CLI_HOME as the data dir
+// itself, so both are read.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv("MYTOKEN_GEMINI_DIRS"); ok {
+		dirs, err := harness.SplitEnvList("MYTOKEN_GEMINI_DIRS", v)
+		if err != nil {
+			return nil, err
+		}
+		return harness.EnvRoots("MYTOKEN_GEMINI_DIRS", dirs...), nil
 	}
-	if h := os.Getenv("GEMINI_CLI_HOME"); h != "" {
-		return []string{
+	if h, ok := harness.Getenv("GEMINI_CLI_HOME"); ok {
+		return harness.EnvRoots("GEMINI_CLI_HOME",
 			filepath.Join(h, ".gemini", tmpDirName),
 			filepath.Join(h, tmpDirName),
-		}
+		), nil
 	}
-	return []string{filepath.Join(harness.EnvOr("GEMINI_CLI_HOME", ".gemini"), tmpDirName)}
+	return harness.BuiltinRoots(filepath.Join(harness.Home(), ".gemini", tmpDirName)), nil
+}
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // Harness implements harness.Parser.
 func (p *Parser) Harness() model.Harness { return model.Gemini }
 
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
+
 // Roots implements harness.Parser.
-func (p *Parser) Roots() []string { return p.roots }
+func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }
 
 // ---------------------------------------------------------------------------
 // discovery

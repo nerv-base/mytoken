@@ -10,6 +10,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -19,8 +20,13 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"time"
+	// The IANA database travels with the binary: a budget period is resolved
+	// in a named zone the user typed, and a shipped build cannot rely on the
+	// machine having one installed.
+	_ "time/tzdata"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/updater"
@@ -28,8 +34,13 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/zzstar101/mytoken/internal/app"
+	"github.com/zzstar101/mytoken/internal/budget"
+	"github.com/zzstar101/mytoken/internal/claudequota"
 	"github.com/zzstar101/mytoken/internal/cli"
 	"github.com/zzstar101/mytoken/internal/gui"
+	"github.com/zzstar101/mytoken/internal/harness"
+	"github.com/zzstar101/mytoken/internal/ingestrate"
+	"github.com/zzstar101/mytoken/internal/instance"
 	"github.com/zzstar101/mytoken/internal/paths"
 )
 
@@ -79,7 +90,7 @@ func main() {
 	// builds and the Debian package, never check.
 	mygo.Use(native.Plugin)
 
-	a, err := app.Open()
+	a, err := app.OpenWith(app.Options{Notify: systemNotifier{}})
 	if err != nil {
 		log.Fatalf("mytoken: %v", err)
 	}
@@ -104,11 +115,10 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() {
-		if err := a.Scanner.Run(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("mytoken: scanner: %v", err)
-		}
-	}()
+	// The app owns the watcher's lifecycle: a source reload cancels and joins
+	// this run before starting the replacement, and a runtime failure is
+	// recorded on the app instead of falling back to another source set.
+	a.StartScanning(ctx)
 	// Keeps the relays the user turned on in sync; nothing is sent for a
 	// relay that is off, and by default every relay is off.
 	a.StartRelaySync()
@@ -134,29 +144,9 @@ func main() {
 			}
 		})
 	}
-	hooks := gui.Hooks{
-		Progress: a.Scanner.Progress,
-		Rebuild: func() {
-			if err := a.Scanner.Rebuild(ctx); err != nil {
-				log.Printf("mytoken: rebuild: %v", err)
-			}
-		},
-		OpenAtLogin:    mygo.App.OpenAtLogin,
-		SetOpenAtLogin: func(on bool) { _ = mygo.App.SetOpenAtLogin(on) },
-		DataDir:        dataDir,
-		Settings:       a.Settings,
-		Relays:         a.Relays,
-		OpenMain:       func() { mygo.RunOnMain(openMain) },
-		Quit:           func() { mygo.App.Quit() },
-		Version:        cli.Version,
-		CanUpdate:      mygo.Updater.Enabled,
-		CheckUpdates:   updater.CheckForUpdates,
-		AutoUpdates:    updater.AutomaticChecks,
-		SetAutoUpdates: updater.SetAutomaticChecks,
-		Visible: func() bool {
-			return main != nil && main.IsVisible() || panel != nil && panel.IsVisible()
-		},
-	}
+	hooks := guiHooks(a, ctx, dataDir, func() { mygo.RunOnMain(openMain) }, func() bool {
+		return main != nil && main.IsVisible() || panel != nil && panel.IsVisible()
+	})
 	if l := mygo.App.Locale(); os.Getenv("MYTOKEN_LANG") == "" && l != "" {
 		if strings.HasPrefix(strings.ToLower(l), "zh") {
 			gui.SetLang("zh")
@@ -233,6 +223,24 @@ func main() {
 
 		state.Start()
 
+		// Budget checks run on the service's own goroutine: it reserves a
+		// crossed threshold in the store first, then asks the system to show
+		// the notification. It starts only here, in the desktop app, so a CLI
+		// command never writes the stats timezone and never notifies.
+		a.Budget.SetOnUpdate(func() { post(state.BudgetChanged) })
+		a.StartBudget(ctx)
+		// A budget notification opens the settings page, where the rules and
+		// the delivery report are.
+		mygo.App.OnNotificationClick(func(id string) {
+			if !strings.HasPrefix(id, "budget:") {
+				return
+			}
+			mygo.RunOnMain(func() {
+				state.SetPage("settings")
+				openMain()
+			})
+		})
+
 		tray, err := mygo.NewTray(mygo.TrayOptions{Icon: trayIcon(), IconIsTemplate: true, ToolTip: "MyToken!!!!!"})
 		if err != nil {
 			// No tray (e.g. Linux without appindicator): the window is the app.
@@ -271,6 +279,430 @@ func main() {
 		fmt.Fprintln(os.Stderr, "mytoken:", err)
 		os.Exit(1)
 	}
+}
+
+// guiHooks is the window's view of the app main() has already opened: what the
+// GUI may ask of it. It is built from that app — never by opening a second one —
+// and it hands the pricing settings through untouched: renaming an endpoint for
+// display is a store write, not a pricing change.
+func guiHooks(a *app.App, ctx context.Context, dataDir string, openMain func(), visible func() bool) gui.Hooks {
+	// A method value on a nil receiver is not nil, so a storeless app must be
+	// checked here: otherwise the tab would draw its editor and panic on save.
+	// No store means no display-name write, which is the hook being nil.
+	var setProviderAlias func(ctx context.Context, id, label string) error
+	if a.Store != nil {
+		setProviderAlias = a.Store.SetProviderAlias
+	}
+	// The sources editor writes sources.json, so it needs the data directory
+	// it lives in; without one there is nothing to administer.
+	var sources gui.SourceAdmin
+	if dataDir != "" {
+		sources = sourceAdmin{dataDir: dataDir, app: a}
+	}
+	// The quota panels are only meaningful for an app that has a quota
+	// service: they read and write the same consent and cache it holds.
+	var claudeQuota gui.ClaudeQuota
+	if a.ClaudeQuota() != nil {
+		claudeQuota = claudeQuotaAdmin{app: a}
+	}
+	// The offline quota cards read the app's own key/value store. No store
+	// means no observation to show, which is the hook being nil.
+	var quotaStore gui.QuotaStore
+	if a.Store != nil {
+		quotaStore = a.Store
+	}
+	// The collection evidence the scanner persisted for each instance is read
+	// from that same store's settings, one read per scanned instance per
+	// background reload of the sources card. Without a store there is nothing
+	// recorded, which is the hook being nil rather than an empty record.
+	var diagnostics gui.DiagnosticsReader
+	if a.Store != nil {
+		diagnostics = a.SourceDiagnostics
+	}
+	// The tray's ingest rate is the scanner's own committed-output count.
+	// Without a scanner there is nothing to read, which is nil → "—". The
+	// bindings go through the app's accessors: a source reload replaces the
+	// scanner instance, and a method value captured here would keep reading
+	// the one Open built.
+	var ingestRate func(now time.Time) ingestrate.Snapshot
+	if a.CurrentScanner() != nil {
+		ingestRate = a.ScannerIngestRate
+	}
+	return gui.Hooks{
+		Progress: a.ScannerProgress,
+		Rebuild: func() {
+			if err := a.ScannerRebuild(ctx); err != nil {
+				log.Printf("mytoken: rebuild: %v", err)
+			}
+		},
+		OpenAtLogin:    mygo.App.OpenAtLogin,
+		SetOpenAtLogin: func(on bool) { _ = mygo.App.SetOpenAtLogin(on) },
+		DataDir:        dataDir,
+		Settings:       a.Settings,
+		// The providers tab renames an endpoint for display only; the write
+		// goes to the store this app already opened.
+		SetProviderAlias: setProviderAlias,
+		Relays:           a.Relays,
+		Budget:           a.Budget,
+		Calendar:         a,
+		// The dashboard and the tray resolve calendar days and weeks in the
+		// persisted stats zone, the same one the budget card and the snapshot
+		// worker use, so a timezone change moves every period together.
+		Location:       a.Location,
+		Sources:        sources,
+		Diagnostics:    diagnostics,
+		ClaudeQuota:    claudeQuota,
+		QuotaStore:     quotaStore,
+		IngestRate:     ingestRate,
+		OpenMain:       openMain,
+		Quit:           func() { mygo.App.Quit() },
+		Version:        cli.Version,
+		CanUpdate:      mygo.Updater.Enabled,
+		CheckUpdates:   updater.CheckForUpdates,
+		AutoUpdates:    updater.AutomaticChecks,
+		SetAutoUpdates: updater.SetAutomaticChecks,
+		Visible:        visible,
+	}
+}
+
+// sourceAdmin implements gui.SourceAdmin over sources.json. It is a thin
+// adapter: the resolution rules live in internal/instance, and a write is
+// committed only when the configuration it produces still resolves. An
+// unusable explicit root is refused instead of being dropped, because
+// instance.Resolve refuses it and this refuses to save what Resolve rejects.
+type sourceAdmin struct {
+	dataDir string
+	app     *app.App
+}
+
+// Sources is the running resolution: what this process actually scans, which
+// is not necessarily what sources.json holds now.
+func (s sourceAdmin) Sources() []gui.SourceInfo { return runningSourceInfos(s.app) }
+
+// Problems is the running resolution's diagnostics.
+func (s sourceAdmin) Problems() []gui.SourceProblem { return runningSourceProblems(s.app) }
+
+// Config loads sources.json and resolves it, so the editor shows what the
+// next start would do.
+func (s sourceAdmin) Config(_ context.Context) (gui.SourceView, error) {
+	cfg, err := instance.Load(s.dataDir)
+	if err != nil {
+		return gui.SourceView{}, err
+	}
+	return s.view(cfg), nil
+}
+
+func (s sourceAdmin) Add(ctx context.Context, req gui.SourceAdd) (gui.SourceView, error) {
+	return s.update(ctx, func(cfg *instance.Config) error {
+		// An empty kind asks for an independent instance; an empty id asks
+		// for a generated one, so the identity never comes from the paths.
+		_, err := cfg.Add(instance.AddRequest{
+			Label:    req.Label,
+			Harness:  req.Harness,
+			Roots:    req.Roots,
+			Kind:     instance.Kind(req.Kind),
+			Disabled: req.Disabled,
+		})
+		return err
+	})
+}
+
+// Move changes an entry's roots and keeps its id: the instance is the same
+// instance at a new location, not a new one.
+func (s sourceAdmin) Move(ctx context.Context, id string, roots []string) (gui.SourceView, error) {
+	return s.update(ctx, func(cfg *instance.Config) error {
+		_, err := cfg.Move(id, roots)
+		return err
+	})
+}
+
+// Remove deletes the entry from sources.json. It never deletes data: the
+// directory it pointed at is left exactly as it was.
+func (s sourceAdmin) Remove(ctx context.Context, id string) (gui.SourceView, error) {
+	return s.update(ctx, func(cfg *instance.Config) error { return cfg.Remove(id) })
+}
+
+// Promote turns a backup copy into an independent instance. The id, the
+// label and the paths are unchanged; only what gets scanned changes.
+func (s sourceAdmin) Promote(ctx context.Context, id string) (gui.SourceView, error) {
+	return s.update(ctx, func(cfg *instance.Config) error {
+		_, err := cfg.Promote(id)
+		return err
+	})
+}
+
+// update applies one mutation through instance.Update and refuses to save a
+// configuration whose resolution gained a new fatal problem. Problems that
+// were already there (an unrelated environment default, say) do not block an
+// edit; a newly unusable explicit root does.
+//
+// A save is only half the edit: the running scan keeps the configuration it
+// started with until the scanner is replaced. The reload resolves the new
+// configuration and builds its scanner before anything is stopped, then
+// cancels and joins the old watcher and starts the replacement — so a save
+// that cannot be honoured leaves the running scan exactly as it was, and the
+// view keeps reporting that a restart is needed instead of pretending the new
+// configuration is live.
+func (s sourceAdmin) update(ctx context.Context, act func(*instance.Config) error) (gui.SourceView, error) {
+	cfg, err := instance.Update(s.dataDir, func(cfg *instance.Config) error {
+		before := fatalKeys(cfg)
+		if err := act(cfg); err != nil {
+			return err
+		}
+		p, ok := firstNewFatal(before, cfg)
+		if !ok {
+			return nil
+		}
+		if p.Path != "" {
+			return fmt.Errorf("%s: %s (instance %s, path %s)", p.Code, p.Message, p.ID, p.Path)
+		}
+		return fmt.Errorf("%s: %s (instance %s)", p.Code, p.Message, p.ID)
+	})
+	if err != nil {
+		return gui.SourceView{}, err
+	}
+	if err := s.app.ReloadSources(ctx); err != nil {
+		// Everything a reload can fail on happens before anything is stopped,
+		// so a preflight failure left the previous scan running — unless it
+		// had already stopped on its own. Say which of the two is true: a
+		// saved-but-unapplied edit is not "scanning stopped".
+		if s.app.ScanError() == nil && !errors.Is(err, app.ErrClosed) {
+			return s.view(cfg), fmt.Errorf("sources: saved, but the running scan was not reloaded: %w (the previous sources are still being scanned)", err)
+		}
+		return s.view(cfg), fmt.Errorf("sources: saved, but the running scan was not reloaded: %w", err)
+	}
+	return s.view(cfg), nil
+}
+
+// view maps one resolved configuration into what the editor draws. Scanned
+// mirrors internal/app: an instance is scanned only when it is enabled, is an
+// instance rather than a backup copy, has roots, and its harness can build a
+// rooted parser for them.
+func (s sourceAdmin) view(cfg *instance.Config) gui.SourceView {
+	resolved, problems := instance.Resolve(cfg, instance.DefaultFallbacks())
+	// The editor edits what sources.json declares. A harness that only has a
+	// built-in or environment root is a fallback, not an entry: it is shown by
+	// the read-only sources summary, never offered for rename or removal.
+	declared := make(map[string]bool, len(cfg.Entries))
+	for _, e := range cfg.Entries {
+		declared[e.ID] = true
+	}
+	out := gui.SourceView{Sources: make([]gui.SourceInfo, 0, len(cfg.Entries))}
+	for _, r := range resolved {
+		if !declared[r.ID] {
+			continue
+		}
+		out.Sources = append(out.Sources, gui.SourceInfo{
+			ID:       r.ID,
+			Label:    r.Label,
+			Harness:  r.Harness,
+			Roots:    r.Roots,
+			Source:   string(r.Source),
+			Kind:     string(r.Kind),
+			Disabled: r.Disabled,
+			Scanned:  scannable(r),
+			Reason:   firstReason(problems, r),
+		})
+	}
+	for _, p := range problems {
+		// A fatal problem is always worth showing: it is why a source is not
+		// being scanned at all. The rest belong to the entries being edited.
+		if !p.Fatal && !declared[p.ID] {
+			continue
+		}
+		out.Problems = append(out.Problems, gui.SourceProblem{
+			Code:    string(p.Code),
+			ID:      p.ID,
+			Harness: p.Harness,
+			Path:    p.Path,
+			Message: p.Message,
+			Fatal:   p.Fatal,
+		})
+	}
+	// A save reloads the running scanner, so this is normally false. It stays
+	// true when the saved configuration no longer matches what this process
+	// resolved — a config edited outside the app, or a reload that could not
+	// be honoured — and the card says so instead of implying the change is
+	// already live.
+	out.Restart = resolutionKey(out.Sources) != resolutionKey(runningSourceInfos(s.app))
+	// A watcher that stopped on a runtime failure is reported here, next to
+	// the sources it stopped scanning. Nothing falls back to another source
+	// set: scanning is stopped until a reload starts a replacement.
+	if err := s.app.ScanError(); err != nil {
+		out.ScanError = err.Error()
+	}
+	return out
+}
+
+// scannable is internal/app's own rule, restated here because that package
+// builds the running app and this only previews the next start.
+func scannable(r instance.Resolved) bool {
+	if !r.Scannable() || len(r.Roots) == 0 {
+		return false
+	}
+	_, ok := harness.NewRooted(r.Harness, r.Roots...)
+	return ok
+}
+
+// firstReason is the first non-fatal problem attached to an instance, in
+// resolution order: the same "why is this not being scanned" app records.
+func firstReason(problems []instance.Problem, r instance.Resolved) string {
+	for _, p := range problems {
+		if p.Fatal || p.Harness != r.Harness || p.ID != r.ID {
+			continue
+		}
+		return p.Message
+	}
+	return ""
+}
+
+func fatalKeys(cfg *instance.Config) map[string]bool {
+	_, problems := instance.Resolve(cfg, instance.DefaultFallbacks())
+	out := make(map[string]bool, len(problems))
+	for _, p := range problems {
+		if p.Fatal {
+			out[problemKey(p)] = true
+		}
+	}
+	return out
+}
+
+func firstNewFatal(before map[string]bool, cfg *instance.Config) (instance.Problem, bool) {
+	_, problems := instance.Resolve(cfg, instance.DefaultFallbacks())
+	for _, p := range problems {
+		if p.Fatal && !before[problemKey(p)] {
+			return p, true
+		}
+	}
+	return instance.Problem{}, false
+}
+
+func problemKey(p instance.Problem) string {
+	return string(p.Code) + "|" + p.ID + "|" + string(p.Harness) + "|" + p.Path
+}
+
+func runningSourceInfos(a *app.App) []gui.SourceInfo {
+	if a == nil {
+		return nil
+	}
+	// The live resolution, not the field Open filled: a source reload replaces
+	// it, and the editor's "needs a restart" comparison must see the scanner
+	// that is actually running.
+	sources := a.LiveSources()
+	if len(sources) == 0 {
+		return nil
+	}
+	out := make([]gui.SourceInfo, 0, len(sources))
+	for _, src := range sources {
+		// Only declared entries are compared: the rest are this process's
+		// fallbacks, which sources.json cannot change.
+		if src.Source != instance.PathUser {
+			continue
+		}
+		out = append(out, gui.SourceInfo{
+			ID:       src.ID,
+			Label:    src.Label,
+			Harness:  src.Harness,
+			Roots:    src.Roots,
+			Source:   string(src.Source),
+			Kind:     string(src.Kind),
+			Disabled: src.Disabled,
+			Scanned:  src.Scanned,
+			Reason:   src.Reason,
+		})
+	}
+	return out
+}
+
+func runningSourceProblems(a *app.App) []gui.SourceProblem {
+	if a == nil {
+		return nil
+	}
+	sources := a.LiveSources()
+	problems := a.LiveSourceProblems()
+	if len(problems) == 0 {
+		return nil
+	}
+	declared := make(map[string]bool, len(sources))
+	for _, src := range sources {
+		if src.Source == instance.PathUser {
+			declared[src.ID] = true
+		}
+	}
+	out := make([]gui.SourceProblem, 0, len(problems))
+	for _, p := range problems {
+		if !p.Fatal && !declared[p.ID] {
+			continue
+		}
+		out = append(out, gui.SourceProblem{
+			Code:    string(p.Code),
+			ID:      p.ID,
+			Harness: p.Harness,
+			Path:    p.Path,
+			Message: p.Message,
+			Fatal:   p.Fatal,
+		})
+	}
+	return out
+}
+
+// resolutionKey is the order-independent signature of a resolution: two
+// resolutions with the same key scan the same instances at the same roots.
+func resolutionKey(list []gui.SourceInfo) string {
+	keys := make([]string, 0, len(list))
+	for _, in := range list {
+		keys = append(keys, fmt.Sprintf("%s|%s|%s|%t|%t|%s",
+			in.ID, in.Harness, in.Kind, in.Disabled, in.Scanned, strings.Join(in.Roots, ",")))
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, "\n")
+}
+
+// claudeQuotaAdmin implements gui.ClaudeQuota by delegating to the app's one
+// quota service: the same consent, cache and throttle the CLI shares.
+type claudeQuotaAdmin struct{ app *app.App }
+
+func (c claudeQuotaAdmin) Info(ctx context.Context, instance string) (claudequota.Info, error) {
+	return c.app.ClaudeQuotaInfo(ctx, instance)
+}
+
+func (c claudeQuotaAdmin) Sources(instance string) []claudequota.Source {
+	return c.app.ClaudeQuotaSources(instance)
+}
+
+func (c claudeQuotaAdmin) Enable(ctx context.Context, instance, ref string) (claudequota.Info, error) {
+	return c.app.EnableClaudeQuota(ctx, instance, ref)
+}
+
+func (c claudeQuotaAdmin) Disable(ctx context.Context, instance string) error {
+	return c.app.DisableClaudeQuota(ctx, instance)
+}
+
+func (c claudeQuotaAdmin) Snapshot(ctx context.Context, instance string) (claudequota.Quota, error) {
+	return c.app.ClaudeQuotaSnapshot(ctx, instance)
+}
+
+func (c claudeQuotaAdmin) Refresh(ctx context.Context, instance string) (claudequota.Quota, error) {
+	return c.app.RefreshClaudeQuota(ctx, instance)
+}
+
+// systemNotifier delivers one reserved budget notification through the
+// system's notification centre. Show waits for the system to accept or refuse
+// it; the caller is the budget service's own goroutine, never the UI thread,
+// so a slow notification centre cannot freeze a window. Reusing the
+// notification's id replaces an older copy of the same reservation.
+type systemNotifier struct{}
+
+func (systemNotifier) Notify(_ context.Context, n budget.Notification) error {
+	if !mygo.NotificationsSupported() {
+		return errors.New("this system has no notification support")
+	}
+	return mygo.NewNotification(mygo.NotificationOptions{
+		ID:    n.ID,
+		Title: n.Title(),
+		Body:  n.Body(),
+		Group: "budget",
+	}).Show()
 }
 
 // trayIcon draws the template icon: three rising bars, like a tiny chart.

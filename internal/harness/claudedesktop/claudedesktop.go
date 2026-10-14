@@ -92,10 +92,14 @@ type ledgerRecord struct {
 // Parser implements harness.Parser for Claude Desktop.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 // New returns a parser for the standard Claude Desktop locations.
-func New() *Parser { return &Parser{roots: DefaultRoots()} }
+func New() *Parser { return &Parser{roots: DefaultRoots(), prov: rootProvenance} }
 
 // NewWithRoots returns a parser reading the given sessions roots (tests).
 func NewWithRoots(roots ...string) *Parser {
@@ -104,19 +108,22 @@ func NewWithRoots(roots ...string) *Parser {
 
 func init() { harness.Register(New()) }
 
-// DefaultRoots returns the Claude Desktop sessions roots for this machine.
-func DefaultRoots() []string {
-	if v := os.Getenv("MYTOKEN_CLAUDEDESKTOP_DIRS"); v != "" {
-		var out []string
-		for _, p := range filepath.SplitList(v) {
-			if p = strings.TrimSpace(p); p != "" {
-				out = append(out, filepath.Clean(p))
-			}
+// rootProvenance reports Claude Desktop's default roots and where each came
+// from. MYTOKEN_CLAUDEDESKTOP_DIRS replaces the whole set; otherwise the roots
+// come from the platform's own application-data location.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv("MYTOKEN_CLAUDEDESKTOP_DIRS"); ok {
+		dirs, err := harness.SplitEnvList("MYTOKEN_CLAUDEDESKTOP_DIRS", v)
+		if err != nil {
+			return nil, err
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return harness.EnvRoots("MYTOKEN_CLAUDEDESKTOP_DIRS", dirs...), nil
 	}
+	return harness.BuiltinRoots(builtinRoots()...), nil
+}
+
+// builtinRoots is the platform default used when no explicit override is set.
+func builtinRoots() []string {
 	switch runtime.GOOS {
 	case "windows":
 		base := firstNonEmpty(os.Getenv("APPDATA"), os.Getenv("LOCALAPPDATA"))
@@ -139,8 +146,41 @@ func DefaultRoots() []string {
 	}
 }
 
+// DefaultRoots returns the Claude Desktop sessions roots for this machine.
+func DefaultRoots() []string { return defaultRoots() }
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
+}
+
 // Harness implements harness.Parser.
 func (p *Parser) Harness() model.Harness { return model.ClaudeDesktop }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots implements harness.Parser.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }

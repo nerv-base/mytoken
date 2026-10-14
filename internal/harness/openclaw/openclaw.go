@@ -117,6 +117,10 @@ var storeRoots = [][2]string{
 // Parser implements harness.Parser for OpenClaw agent transcripts.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 var _ harness.Parser = (*Parser)(nil)
@@ -124,7 +128,11 @@ var _ harness.Parser = (*Parser)(nil)
 func init() { harness.Register(New()) }
 
 // New returns a parser rooted at the default agents directories.
-func New() *Parser { return NewWithRoots() }
+func New() *Parser {
+	p := NewWithRoots()
+	p.prov = rootProvenance
+	return p
+}
 
 // NewWithRoot returns a parser rooted at one agents directory.
 func NewWithRoot(root string) *Parser { return NewWithRoots(root) }
@@ -150,32 +158,59 @@ func NewWithRoots(roots ...string) *Parser {
 	return p
 }
 
-// defaultRoots resolves the agents directories: $MYTOKEN_OPENCLAW_DIRS (a list)
-// wins, then the four known installations.
-func defaultRoots() []string {
-	if v := os.Getenv(agentsEnv); v != "" {
-		var out []string
-		for _, root := range filepath.SplitList(v) {
-			if root != "" {
-				out = append(out, filepath.Clean(root))
-			}
+// rootProvenance reports OpenClaw's default roots and where each came from.
+// MYTOKEN_OPENCLAW_DIRS replaces the whole set; the four known installations
+// are platform defaults.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv(agentsEnv); ok {
+		dirs, err := harness.SplitEnvList(agentsEnv, v)
+		if err != nil {
+			return nil, err
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return harness.EnvRoots(agentsEnv, dirs...), nil
 	}
 	out := make([]string, 0, len(storeRoots))
 	for _, parts := range storeRoots {
 		out = append(out, filepath.Join(harness.Home(), parts[0], parts[1]))
 	}
-	return out
+	return harness.BuiltinRoots(out...), nil
+}
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // Harness identifies the recordings this parser understands.
 func (p *Parser) Harness() model.Harness { return model.OpenClaw }
 
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
+
 // Roots returns the agents directories this parser scans.
-func (p *Parser) Roots() []string { return p.roots }
+func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }
 
 // Discover lists every transcript the installations hold: one source per
 // session, either a .jsonl file or a session inside an agent-schema store.

@@ -1,6 +1,10 @@
 package query
 
-import "time"
+import (
+	"time"
+
+	"github.com/zzstar101/mytoken/internal/store"
+)
 
 // 0.3 缓存账本 read types (docs/CACHE.md §6). A "miss" is a request whose
 // cacheable prefix should have been a CacheRead but was re-sent as fresh
@@ -71,4 +75,15 @@ const (
 // CacheSessionKey builds the CacheBySession key for a harness/session pair.
 func CacheSessionKey(harness, session string) string {
 	return harness + "/" + session
+}
+
+// CacheSessionKeyIn builds the CacheBySession key for one explicit instance. The
+// reserved default instance keeps the historical "harness/session" shape, so an
+// index with a single data source reports exactly the keys it always did; every
+// other instance is prefixed so two data sources can never collide.
+func CacheSessionKeyIn(instance, harness, session string) string {
+	if instance == "" || instance == store.DefaultInstanceID {
+		return CacheSessionKey(harness, session)
+	}
+	return "instance:" + instance + ":" + CacheSessionKey(harness, session)
 }

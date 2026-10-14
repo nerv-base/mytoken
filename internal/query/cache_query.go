@@ -18,51 +18,61 @@ import (
 //
 //	day,harness,session_id,project,model,resolved_provider,cause,
 //	requests,cacheable,expected,read,miss,miss_cost
-const cacheSubColumns = "day,harness,session_id,project,model,resolved_provider,cause,requests,cacheable,expected,read,miss,miss_cost"
+const cacheSubColumns = "day,harness,instance_id,session_id,project,model,resolved_provider,cause,requests,cacheable,expected,read,miss,miss_cost"
+
+// providerCacheSubColumns is cacheSubColumns with base_url, in the position the
+// endpoint-aware rollup and the endpoint-aware fact scan both emit it, so the
+// UNION ALL arms of a single cache query scan into one shape.
+const providerCacheSubColumns = "day,harness,instance_id,session_id,project,model,resolved_provider,base_url,cause,requests,cacheable,expected,read,miss,miss_cost"
 
 // cacheRollupFromEvents computes the cache rollup straight from events for a
 // (possibly partial-day) filter, grouped by local day and cause.
 func cacheRollupFromEvents(f Filter) (string, []any) {
+	return cacheRollupFromEventsWhere(f, "", nil)
+}
+
+// cacheRollupFromEventsEndpoint is the endpoint-aware variant: it also groups by
+// base_url so that the endpoint identity predicate can be evaluated against the
+// derivation instead of being applied after a full fact aggregation. Without it
+// each distinct endpoint identity would need its own full scan.
+func cacheRollupFromEventsEndpoint(f Filter, extra string, extraArgs []any) (string, []any) {
 	where, args := filterSQL(f)
 	where = strings.ReplaceAll(where, "harness IN", "(harness || '') IN")
-	return `SELECT mytoken_day(timestamp),harness,session_id,project,model,resolved_provider,miss_cause,count(*),sum(cache_expected>=0),sum(max(cache_expected,0)),sum(CASE WHEN cache_expected>=0 THEN cache_read ELSE 0 END),sum(cache_miss),sum(miss_cost) FROM events` + where + ` GROUP BY 1,2,3,4,5,6,7`, args
+	if extra != "" {
+		if where == "" {
+			where = " WHERE " + extra
+		} else {
+			where += " AND " + extra
+		}
+		args = append(args, extraArgs...)
+	}
+	return `SELECT mytoken_day(timestamp) AS day,harness,instance_id,session_id,project,model,resolved_provider,base_url,miss_cause AS cause,count(*) AS requests,sum(cache_expected>=0) AS cacheable,sum(max(cache_expected,0)) AS expected,sum(CASE WHEN cache_expected>=0 THEN cache_read ELSE 0 END) AS read,sum(cache_miss) AS miss,sum(miss_cost) AS miss_cost FROM events` + where + ` GROUP BY 1,2,3,4,5,6,7,8,9`, args
+}
+
+// cacheRollupFromEventsWhere appends an extra predicate (with its bound args) to
+// the events scan. Cache identity filters pass the predicate from
+// providerIdentityPredicate here because neither cache_daily nor daily_usage
+// carry an endpoint column and EndpointID hashes in Go.
+func cacheRollupFromEventsWhere(f Filter, extra string, extraArgs []any) (string, []any) {
+	where, args := filterSQL(f)
+	where = strings.ReplaceAll(where, "harness IN", "(harness || '') IN")
+	if extra != "" {
+		if where == "" {
+			where = " WHERE " + extra
+		} else {
+			where += " AND " + extra
+		}
+		args = append(args, extraArgs...)
+	}
+	// Alias every column to the cache_daily names: this SELECT also feeds
+	// UNION ALL arms and outer queries that reference those names.
+	return `SELECT mytoken_day(timestamp) AS day,harness,instance_id,session_id,project,model,resolved_provider,miss_cause AS cause,count(*) AS requests,sum(cache_expected>=0) AS cacheable,sum(max(cache_expected,0)) AS expected,sum(CASE WHEN cache_expected>=0 THEN cache_read ELSE 0 END) AS read,sum(cache_miss) AS miss,sum(miss_cost) AS miss_cost FROM events` + where + ` GROUP BY 1,2,3,4,5,6,7,8`, args
 }
 
 // cacheRangeSQL uses complete local days from cache_daily and scans only the
 // partial boundary days through events. Intervals stay exactly [From,To).
 func cacheRangeSQL(f Filter) (string, []any) {
-	middle := f
-	var edges []Filter
-	eventsOnly := false
-	if !f.Range.From.IsZero() && !f.Range.From.Equal(floor(f.Range.From, false)) {
-		end := step(floor(f.Range.From, false), false)
-		if !f.Range.To.IsZero() && !end.Before(f.Range.To) {
-			eventsOnly = true
-		} else {
-			edge := f
-			edge.Range.To = end
-			edges = append(edges, edge)
-			middle.Range.From = end
-		}
-	}
-	if !eventsOnly && !f.Range.To.IsZero() && !f.Range.To.Equal(floor(f.Range.To, false)) {
-		start := floor(f.Range.To, false)
-		if !middle.Range.From.IsZero() && !start.After(middle.Range.From) {
-			edge := middle
-			edge.Range.To = f.Range.To
-			if len(edges) == 0 {
-				eventsOnly = true
-			} else {
-				edges = append(edges, edge)
-				middle.Range.To = middle.Range.From
-			}
-		} else {
-			edge := f
-			edge.Range.From = start
-			edges = append(edges, edge)
-			middle.Range.To = start
-		}
-	}
+	middle, edges, eventsOnly := daySplit(f)
 	if eventsOnly {
 		return cacheRollupFromEvents(f)
 	}
@@ -77,15 +87,62 @@ func cacheRangeSQL(f Filter) (string, []any) {
 	return q, args
 }
 
+// providerCacheRangeSQL mirrors cacheRangeSQL against the endpoint-aware
+// provider_cache_daily rollup, so an endpoint identity filter still gets the
+// whole-day rollup path and only the partial boundary days read facts. The extra
+// predicate and its args are the identity restriction; they are applied to both
+// arms so every returned group is inside the selected identity set.
+func providerCacheRangeSQL(f Filter, extra string, extraArgs []any) (string, []any) {
+	middle, edges, eventsOnly := daySplit(f)
+	if eventsOnly {
+		return cacheRollupFromEventsEndpoint(f, extra, extraArgs)
+	}
+	where, args := filterSQL(middle)
+	where = strings.ReplaceAll(where, "timestamp", "day")
+	if extra != "" {
+		if where == "" {
+			where = " WHERE " + extra
+		} else {
+			where += " AND " + extra
+		}
+		args = append(args, extraArgs...)
+	}
+	q := "SELECT " + providerCacheSubColumns + " FROM provider_cache_daily" + where
+	for _, edge := range edges {
+		eq, ea := cacheRollupFromEventsEndpoint(edge, extra, extraArgs)
+		q += " UNION ALL " + eq
+		args = append(args, ea...)
+	}
+	return q, args
+}
+
 // cacheSource picks the rollup-backed range SQL, but falls back to a pure events
 // scan whenever the stored daily timezone differs from the local zone, because a
 // display-timezone override must never read (or rewrite) persistent summaries.
 func (s *service) cacheSource(ctx context.Context, tx *sql.Tx, f Filter) (string, []any, error) {
+	// filterSQL still applies the ordinary name/model/project/date filters, so
+	// identity selection only ever narrows the usual semantics.
+	predicate, args, restricted, err := providerIdentityPredicate(ctx, tx, f)
+	if err != nil {
+		return "", nil, err
+	}
 	var zone string
 	if err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key='daily_timezone'`).Scan(&zone); err != nil && err != sql.ErrNoRows {
 		return "", nil, err
 	}
-	if zone != store.LocalDayZone() {
+	persistentDays := zone == store.LocalDayZone()
+	if restricted {
+		// The endpoint-aware cache rollup carries base_url, so the same bounded
+		// identity predicate applies to it directly instead of to raw facts. A
+		// non-nil empty identity set means no event matched, not "no filter".
+		if persistentDays {
+			q, a := providerCacheRangeSQL(f, predicate, args)
+			return q, a, nil
+		}
+		q, a := cacheRollupFromEventsEndpoint(f, predicate, args)
+		return q, a, nil
+	}
+	if !persistentDays {
 		q, a := cacheRollupFromEvents(f)
 		return q, a, nil
 	}
@@ -110,12 +167,22 @@ func sortCauses(m map[string]*CacheCause) []CacheCause {
 }
 
 func (s *service) CacheTotals(ctx context.Context, f Filter) (CacheTotals, error) {
-	var out CacheTotals
 	tx, err := s.st.DB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return CacheTotals{}, err
+	}
+	defer tx.Rollback()
+	out, err := s.cacheTotalsTx(ctx, tx, f)
 	if err != nil {
 		return out, err
 	}
-	defer tx.Rollback()
+	return out, tx.Commit()
+}
+
+// cacheTotalsTx reads the cache ledger inside a caller-owned transaction so a
+// snapshot can pair it with totals from the same read snapshot.
+func (s *service) cacheTotalsTx(ctx context.Context, tx *sql.Tx, f Filter) (CacheTotals, error) {
+	var out CacheTotals
 	sub, args, err := s.cacheSource(ctx, tx, f)
 	if err != nil {
 		return out, err
@@ -147,7 +214,7 @@ func (s *service) CacheTotals(ctx context.Context, f Filter) (CacheTotals, error
 	}
 	rows.Close()
 	out.ByCause = sortCauses(causes)
-	return out, tx.Commit()
+	return out, nil
 }
 
 func (s *service) CacheDaily(ctx context.Context, f Filter) ([]CachePoint, error) {
@@ -242,7 +309,10 @@ func (s *service) CacheBy(ctx context.Context, f Filter, dim CacheDim) ([]CacheB
 	}
 	var query string
 	if dim == CacheBySession {
-		query = `SELECT harness,session_id,cause,sum(requests),sum(cacheable),sum(expected),sum(read),sum(miss),sum(miss_cost) FROM (` + sub + `) GROUP BY harness,session_id,cause`
+		// The instance is part of a session's identity, so it must be part of the
+		// grouping and of the bucket key; otherwise two instances' identical
+		// harness/session id would sum into one row.
+		query = `SELECT instance_id,harness,session_id,cause,sum(requests),sum(cacheable),sum(expected),sum(read),sum(miss),sum(miss_cost) FROM (` + sub + `) GROUP BY instance_id,harness,session_id,cause`
 	} else {
 		query = `SELECT ` + group + `,cause,sum(requests),sum(cacheable),sum(expected),sum(read),sum(miss),sum(miss_cost) FROM (` + sub + `) GROUP BY ` + group + `,cause`
 	}
@@ -257,12 +327,12 @@ func (s *service) CacheBy(ctx context.Context, f Filter, dim CacheDim) ([]CacheB
 		var req, cacheable, expected, read, miss int64
 		var usd float64
 		if dim == CacheBySession {
-			var h, sid string
-			if err = rows.Scan(&h, &sid, &cause, &req, &cacheable, &expected, &read, &miss, &usd); err != nil {
+			var instance, h, sid string
+			if err = rows.Scan(&instance, &h, &sid, &cause, &req, &cacheable, &expected, &read, &miss, &usd); err != nil {
 				rows.Close()
 				return nil, err
 			}
-			key = CacheSessionKey(h, sid)
+			key = CacheSessionKeyIn(instance, h, sid)
 		} else {
 			if err = rows.Scan(&key, &cause, &req, &cacheable, &expected, &read, &miss, &usd); err != nil {
 				rows.Close()
@@ -307,6 +377,20 @@ func (s *service) CacheBy(ctx context.Context, f Filter, dim CacheDim) ([]CacheB
 }
 
 func (s *service) SessionCache(ctx context.Context, h model.Harness, id string) ([]CacheStep, error) {
+	return s.sessionCache(ctx, h, "", id, false)
+}
+
+// SessionCacheIn is SessionCache for one explicit instance, so a session id that
+// exists in several data sources can still be read unambiguously.
+func (s *service) SessionCacheIn(ctx context.Context, h model.Harness, instance, id string) ([]CacheStep, error) {
+	return s.sessionCache(ctx, h, store.NormalizeInstanceID(instance), id, true)
+}
+
+// sessionCache reads one session's cache verdicts. Without an explicit instance
+// it reports ErrAmbiguousInstance rather than merging two data sources' steps:
+// the per-request rows carry no instance column of their own, so mixing them
+// would silently interleave two unrelated sessions.
+func (s *service) sessionCache(ctx context.Context, h model.Harness, instance, id string, scoped bool) ([]CacheStep, error) {
 	tx, err := s.st.DB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
@@ -314,23 +398,38 @@ func (s *service) SessionCache(ctx context.Context, h model.Harness, id string) 
 	defer tx.Rollback()
 	// Drive the fact lookup through the dimension index; a session predicate on the
 	// view would otherwise tempt SQLite into scanning the dedup index.
-	rows, err := tx.QueryContext(ctx, `SELECT e.timestamp,d.model,e.input,e.cache_read,e.cache_write,e.cache_expected,e.cache_miss,e.miss_cause,e.miss_cost,e.boundary FROM event_data e JOIN event_dimensions d ON d.id=e.dimension_id WHERE d.harness=? AND d.session_id=? ORDER BY e.timestamp,e.dedup_key`, h, id)
+	query := `SELECT e.instance_id,e.timestamp,d.model,e.input,e.cache_read,e.cache_write,e.cache_expected,e.cache_miss,e.miss_cause,e.miss_cost,e.boundary FROM event_data e JOIN event_dimensions d ON d.id=e.dimension_id WHERE d.harness=? AND d.session_id=?`
+	args := []any{h, id}
+	if scoped {
+		query += ` AND e.instance_id=?`
+		args = append(args, instance)
+	}
+	query += ` ORDER BY e.timestamp,e.dedup_key`
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	instances := map[string]bool{}
 	out := []CacheStep{}
 	for rows.Next() {
+		var instance, mdl, cause, boundary string
 		var ts int64
-		var mdl, cause, boundary string
 		var input, cacheRead, cacheWrite, expected, miss int64
 		var usd float64
-		if err = rows.Scan(&ts, &mdl, &input, &cacheRead, &cacheWrite, &expected, &miss, &cause, &usd, &boundary); err != nil {
+		if err = rows.Scan(&instance, &ts, &mdl, &input, &cacheRead, &cacheWrite, &expected, &miss, &cause, &usd, &boundary); err != nil {
 			return nil, err
 		}
+		instances[store.NormalizeInstanceID(instance)] = true
 		// Expected passes through verbatim: -1 marks an uncacheable request (see
 		// cache.go), letting callers tell it apart from a cacheable zero expectation.
 		out = append(out, CacheStep{At: time.Unix(0, ts).UTC(), Model: mdl, Prompt: input, Read: cacheRead, Write: cacheWrite, Expected: expected, Miss: miss, Cause: cause, USD: usd, Boundary: boundary})
 	}
-	return out, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	if !scoped && len(instances) > 1 {
+		return nil, ErrAmbiguousInstance
+	}
+	return out, tx.Commit()
 }

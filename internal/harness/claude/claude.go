@@ -45,10 +45,14 @@ const (
 // Parser implements harness.Parser for Claude Code.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 // New returns a parser for the standard Claude Code locations.
-func New() *Parser { return &Parser{roots: DefaultRoots()} }
+func New() *Parser { return &Parser{roots: DefaultRoots(), prov: rootProvenance} }
 
 // NewWithRoots returns a parser reading the given project roots (tests).
 func NewWithRoots(roots ...string) *Parser {
@@ -57,11 +61,18 @@ func NewWithRoots(roots ...string) *Parser {
 
 func init() { harness.Register(New()) }
 
-// DefaultRoots returns the Claude Code project roots for this machine.
-func DefaultRoots() []string {
-	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		return []string{filepath.Join(dir, "projects")}
+// rootProvenance reports Claude Code's default roots and where each came from.
+// CLAUDE_CONFIG_DIR is an explicit harness-specific base; otherwise both roots
+// are platform defaults (the second only when it already exists).
+func rootProvenance() ([]harness.Root, error) {
+	if dir, ok := harness.Getenv("CLAUDE_CONFIG_DIR"); ok {
+		return harness.EnvRoots("CLAUDE_CONFIG_DIR", filepath.Join(dir, "projects")), nil
 	}
+	return harness.BuiltinRoots(builtinRoots()...), nil
+}
+
+// builtinRoots is the platform default used when CLAUDE_CONFIG_DIR is unset.
+func builtinRoots() []string {
 	roots := []string{filepath.Join(harness.Home(), configDirName, "projects")}
 	if alt := filepath.Join(harness.Home(), ".config", "claude", "projects"); isDir(alt) {
 		roots = append(roots, alt)
@@ -69,8 +80,41 @@ func DefaultRoots() []string {
 	return roots
 }
 
+// DefaultRoots returns the Claude Code project roots for this machine.
+func DefaultRoots() []string { return defaultRoots() }
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
+}
+
 // Harness implements harness.Parser.
 func (p *Parser) Harness() model.Harness { return model.ClaudeCode }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots implements harness.Parser.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }
@@ -145,24 +189,32 @@ type state struct {
 	StartedAt  string                            `json:"s,omitempty"`
 	UpdatedAt  string                            `json:"u,omitempty"`
 	Boundaries map[string]*harness.BoundaryState `json:"boundaries,omitempty"`
+	// Branch is the last branch this transcript recorded. It is carried across
+	// an incremental cursor so a line that omits gitBranch still gets the
+	// session's branch context instead of losing it, and it is only ever
+	// applied to lines read after the record that stated it.
+	Branch string `json:"b,omitempty"`
 }
 
 type rawLine struct {
-	Subtype     string      `json:"subtype"`
-	Type        string      `json:"type"`
-	Timestamp   string      `json:"timestamp"`
-	SessionID   string      `json:"sessionId"`
-	Cwd         string      `json:"cwd"`
-	UUID        string      `json:"uuid"`
-	IsSidechain bool        `json:"isSidechain"`
-	IsMeta      bool        `json:"isMeta"`
-	RequestID   string      `json:"requestId"`
-	AgentID     string      `json:"agentId"`
-	Provider    string      `json:"providerId"`
-	ProviderAlt string      `json:"provider"`
-	ProviderSnk string      `json:"provider_id"`
-	CustomTitle string      `json:"customTitle"`
-	Message     *rawMessage `json:"message"`
+	Subtype     string `json:"subtype"`
+	Type        string `json:"type"`
+	Timestamp   string `json:"timestamp"`
+	SessionID   string `json:"sessionId"`
+	Cwd         string `json:"cwd"`
+	UUID        string `json:"uuid"`
+	IsSidechain bool   `json:"isSidechain"`
+	IsMeta      bool   `json:"isMeta"`
+	RequestID   string `json:"requestId"`
+	AgentID     string `json:"agentId"`
+	Provider    string `json:"providerId"`
+	ProviderAlt string `json:"provider"`
+	ProviderSnk string `json:"provider_id"`
+	CustomTitle string `json:"customTitle"`
+	// GitBranch is the branch Claude Code recorded on this transcript line. It
+	// is read as evidence only: the working tree is never consulted.
+	GitBranch string      `json:"gitBranch"`
+	Message   *rawMessage `json:"message"`
 }
 
 type rawMessage struct {
@@ -208,6 +260,7 @@ func decodeLine(raw []byte) (rawLine, bool) {
 	rl.ProviderAlt = fieldString(fields, "provider")
 	rl.ProviderSnk = fieldString(fields, "provider_id")
 	rl.CustomTitle = fieldString(fields, "customTitle")
+	rl.GitBranch = fieldString(fields, "gitBranch")
 	rl.IsSidechain = fieldBool(fields["isSidechain"])
 	rl.IsMeta = fieldBool(fields["isMeta"])
 	if r, ok := fields["message"]; ok && string(r) != "null" {
@@ -314,6 +367,9 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 	if st8.Title != "" {
 		acc.titles[acc.primary] = st8.Title
 	}
+	if st8.Branch != "" {
+		acc.branch = st8.Branch
+	}
 
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		return b, err
@@ -381,6 +437,12 @@ func (p *Parser) handleLine(b *harness.Batch, rl *rawLine, acc *accumulator, fil
 	if rl.Cwd != "" {
 		acc.project = rl.Cwd
 	}
+	// Record the branch in line order. A line that carries gitBranch updates the
+	// context for every later line; earlier events already emitted keep the
+	// branch that was current when they were written.
+	if rl.GitBranch != "" {
+		acc.branch = rl.GitBranch
+	}
 	acc.observe(sid, pid, ts, rl.Cwd)
 
 	switch rl.Type {
@@ -442,6 +504,7 @@ func (p *Parser) handleAssistant(b *harness.Batch, rl *rawLine, sid, pid string,
 		Model:       modelName,
 		Provider:    provider,
 		Tokens:      tk,
+		GitBranch:   acc.branch,
 	}
 	acc.addEvent(b, ev)
 }
@@ -542,9 +605,14 @@ func parentSessionOf(path string) string {
 
 // accumulator collects the per-batch sessions and merges streaming duplicates.
 type accumulator struct {
-	primary    string
-	parent     string
-	project    string
+	primary string
+	parent  string
+	project string
+	// branch is the most recent branch the transcript recorded. Claude Code
+	// stamps gitBranch per line, so a branch change is observed in line order;
+	// records that omit it inherit this value forward, which is why no line is
+	// ever retro-assigned a later branch.
+	branch     string
 	started    time.Time
 	updated    time.Time
 	boundaries map[string]*harness.BoundaryState
@@ -649,6 +717,9 @@ func (a *accumulator) addEvent(b *harness.Batch, ev model.UsageEvent) {
 			if prev.Provider == "" {
 				prev.Provider = ev.Provider
 			}
+			if prev.GitBranch == "" {
+				prev.GitBranch = ev.GitBranch
+			}
 			return
 		}
 		a.index[ev.DedupKey] = len(b.Events)
@@ -683,7 +754,7 @@ func (a *accumulator) sessions() []model.SessionMeta {
 }
 
 func (a *accumulator) encodeState() string {
-	s := state{Project: a.project, Boundaries: a.boundaries}
+	s := state{Project: a.project, Boundaries: a.boundaries, Branch: a.branch}
 	if t, ok := a.titles[a.primary]; ok {
 		s.Title = t
 	} else if t, ok := a.fallback[a.primary]; ok {
@@ -703,7 +774,7 @@ func (a *accumulator) encodeState() string {
 	if !a.updated.IsZero() {
 		s.UpdatedAt = a.updated.UTC().Format(time.RFC3339Nano)
 	}
-	if s.Title == "" && s.Project == "" && s.StartedAt == "" && s.UpdatedAt == "" && len(s.Boundaries) == 0 {
+	if s.Title == "" && s.Project == "" && s.StartedAt == "" && s.UpdatedAt == "" && s.Branch == "" && len(s.Boundaries) == 0 {
 		return ""
 	}
 	raw, err := json.Marshal(s)

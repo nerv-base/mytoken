@@ -57,10 +57,14 @@ const (
 // Parser implements harness.Parser for Antigravity.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 // New returns a parser for the standard Antigravity locations.
-func New() *Parser { return &Parser{roots: DefaultRoots()} }
+func New() *Parser { return &Parser{roots: DefaultRoots(), prov: rootProvenance} }
 
 // NewWithRoots returns a parser reading the given conversation roots (tests).
 func NewWithRoots(roots ...string) *Parser {
@@ -69,20 +73,25 @@ func NewWithRoots(roots ...string) *Parser {
 
 func init() { harness.Register(New()) }
 
-// DefaultRoots returns the Antigravity conversation directories for this machine.
-func DefaultRoots() []string {
-	if v := os.Getenv("MYTOKEN_ANTIGRAVITY_DIRS"); v != "" {
-		var out []string
-		for _, p := range filepath.SplitList(v) {
-			if p = strings.TrimSpace(p); p != "" {
-				out = append(out, filepath.Clean(p))
-			}
+// rootProvenance reports Antigravity's default roots and where each came from.
+// MYTOKEN_ANTIGRAVITY_DIRS replaces the whole set; GEMINI_CLI_HOME is an
+// explicit harness-specific base; otherwise the base is the platform default.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv("MYTOKEN_ANTIGRAVITY_DIRS"); ok {
+		dirs, err := harness.SplitEnvList("MYTOKEN_ANTIGRAVITY_DIRS", v)
+		if err != nil {
+			return nil, err
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return harness.EnvRoots("MYTOKEN_ANTIGRAVITY_DIRS", dirs...), nil
 	}
-	base := harness.EnvOr("GEMINI_CLI_HOME", ".gemini")
+	if base, ok := harness.Getenv("GEMINI_CLI_HOME"); ok {
+		return harness.EnvRoots("GEMINI_CLI_HOME", conversationDirs(base)...), nil
+	}
+	return harness.BuiltinRoots(conversationDirs(filepath.Join(harness.Home(), ".gemini"))...), nil
+}
+
+// conversationDirs returns the five conversation directories under base.
+func conversationDirs(base string) []string {
 	return []string{
 		filepath.Join(base, "antigravity", "conversations"),
 		filepath.Join(base, "antigravity-cli", "conversations"),
@@ -92,8 +101,41 @@ func DefaultRoots() []string {
 	}
 }
 
+// DefaultRoots returns the Antigravity conversation directories for this machine.
+func DefaultRoots() []string { return defaultRoots() }
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
+}
+
 // Harness identifies this parser's logs.
 func (p *Parser) Harness() model.Harness { return model.Antigravity }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots returns the configured roots; missing ones are ignored.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }

@@ -3,6 +3,52 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## 0.4.0
+
+- **Rebuilt on MyGo 0.4.8.** Charts, tables, selectors and search boxes are
+  now the framework's own controls, so keyboard navigation, screen readers
+  and animation come from the platform: data tips follow the arrow keys and
+  are announced, the sidebar is a labelled tab list, and the sliding
+  highlight is a real transition instead of a per-frame animation. The
+  five-colour theme, the glass panels and each page's own accent are
+  unchanged.
+- **More than one copy of a tool.** Settings › Sources can add, move, remove
+  and promote sources, including turning a backup copy of a folder into a
+  live one. Every copy keeps a stable id, so sessions, cache rows, providers
+  and reports never mix two installations. An explicit path that is wrong is
+  now reported as an error instead of silently falling back to a default.
+- **Providers by identity, not by name.** Requests are grouped by the
+  endpoint they came from, so a renamed alias or a moved domain no longer
+  splits the statistics and two accounts behind one relay keep their own
+  billing. Renaming a provider changes its label only.
+- **`mytoken snapshot --once --json`,** a versioned JSON envelope with
+  freshness, source and diagnostics for scripts and status bars, plus
+  `mytoken statusline`, `mytoken report day|week|month` and
+  `mytoken report --by branch`. Read-only commands never write to the
+  database, even while another copy of MyToken is running.
+- **Know why a source is empty.** Settings and `mytoken doctor` say whether a
+  source has no data because it was never scanned, has no token counts,
+  cannot be read, or is not supported — instead of showing a silent zero.
+- **Budget alerts** (Settings › Budget): notify when a day, week or month
+  crosses 80% or 100% of a limit, at most once per period, from estimated
+  cost. Alerts stay off until a fixed IANA timezone is selected, because day
+  boundaries are otherwise undefined.
+- **Quotas.** Codex rate limits are read from its own logs, offline, and a
+  fresh unusable reading never replaces a usable older one; `quota list`,
+  `quota status` and the countdown come from the percentages the provider
+  reports. Claude's quota is opt-in and off by default: enabling it shows the
+  exact credential source and endpoint first, never refreshes tokens, and can
+  be turned off from the CLI while the app runs.
+- **Live speed in the tray:** committed output tokens per second over the
+  last minute, labelled as a measurement of committed output and not of model
+  generation speed. `mytoken statusline` shows the same.
+- **Branch reports:** usage grouped by the git branch a session's own records
+  name, with worktrees of one repository folded together; contradictory
+  evidence is reported as unknown rather than guessed.
+- The Windows installer is still unsigned and macOS builds are ad-hoc signed;
+  the second batch of supported tools has not been checked against real logs
+  yet.
+
 ## 0.3.0
 
 - **Cache ledger.** A new Cache page shows, for every request that should

@@ -13,12 +13,31 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zzstar101/mytoken/internal/provider"
 	"github.com/zzstar101/mytoken/internal/sqlitedsn"
 
 	"github.com/zzstar101/mytoken/internal/harness"
 	"github.com/zzstar101/mytoken/internal/model"
 	_ "modernc.org/sqlite"
 )
+
+// DefaultInstanceID is the reserved instance every legacy caller writes to. An
+// empty Write.InstanceID, an empty filter instance and an old parser all map to
+// it, so the instance dimension is additive: an index with one data source keeps
+// exactly the behaviour it had before the dimension existed.
+const DefaultInstanceID = "default"
+
+// normalizeInstance maps the empty (legacy) instance to the reserved default.
+func normalizeInstance(instance string) string {
+	if instance == "" {
+		return DefaultInstanceID
+	}
+	return instance
+}
+
+// NormalizeInstanceID is the exported form of the empty-to-default mapping, so
+// read-side consumers report the same instance a legacy write landed on.
+func NormalizeInstanceID(instance string) string { return normalizeInstance(instance) }
 
 type Resolution struct {
 	Provider string
@@ -34,6 +53,12 @@ type Store struct {
 	projects      *projectResolver
 	closed        bool
 	aggregateZone string
+	// readOnly marks a handle produced by OpenReadOnly (readonly.go). Such a
+	// handle performs no application write; schema is the schema report captured
+	// when it was opened, so a caller can explain exactly which generation of the
+	// index it is reading.
+	readOnly bool
+	schema   SchemaReport
 	// costFn is the local estimate price function, captured from the most recent
 	// EnsurePrices/ReplacePricing call (always under the writer lock). It powers
 	// MissUSD recomputation on commit and rebuild; nil until prices are first
@@ -59,16 +84,22 @@ func Open(path string) (*Store, error) {
 	st := &Store{db: db, subscribers: make(map[chan struct{}]struct{})}
 	// Keep bulk-index pages and temporary journals in memory without changing
 	// WAL durability. A negative cache_size is a KiB budget, allocated on demand.
-	if _, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-8192;
- CREATE TABLE IF NOT EXISTS events (
+	//
+	// This is also the bootstrap that converts the file to WAL and creates its
+	// -wal/-shm sidecars. A read-only open of a WAL database uses SQLite's own
+	// reader coordination for those sidecars (readonly.go) and never writes
+	// index data.
+	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-8192;
+CREATE TABLE IF NOT EXISTS events (
  harness TEXT NOT NULL,dedup_key TEXT NOT NULL,session_id TEXT NOT NULL,parent_id TEXT NOT NULL DEFAULT '',project TEXT NOT NULL DEFAULT '',timestamp INTEGER NOT NULL,
  model TEXT NOT NULL,provider TEXT NOT NULL DEFAULT '',base_url TEXT NOT NULL DEFAULT '',input INTEGER NOT NULL,output INTEGER NOT NULL,cache_read INTEGER NOT NULL,cache_write INTEGER NOT NULL,reasoning INTEGER NOT NULL,
  log_cost REAL,resolved_provider TEXT NOT NULL,attrib TEXT NOT NULL,cost REAL NOT NULL,PRIMARY KEY(harness,dedup_key));
- CREATE TABLE IF NOT EXISTS sessions(harness TEXT NOT NULL,session_id TEXT NOT NULL,parent_id TEXT NOT NULL DEFAULT '',title TEXT NOT NULL DEFAULT '',project TEXT NOT NULL DEFAULT '',started_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(harness,session_id));
- CREATE INDEX IF NOT EXISTS sessions_parent ON sessions(harness,parent_id);
- CREATE TABLE IF NOT EXISTS cursors(harness TEXT NOT NULL,path TEXT NOT NULL,cursor TEXT NOT NULL,PRIMARY KEY(harness,path));
- CREATE TABLE IF NOT EXISTS provider_configs(harness TEXT NOT NULL,from_time INTEGER NOT NULL,base_url TEXT NOT NULL,provider TEXT NOT NULL,PRIMARY KEY(harness,from_time));
- CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`); err != nil {
+CREATE TABLE IF NOT EXISTS sessions(harness TEXT NOT NULL,session_id TEXT NOT NULL,parent_id TEXT NOT NULL DEFAULT '',title TEXT NOT NULL DEFAULT '',project TEXT NOT NULL DEFAULT '',started_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(harness,session_id));
+CREATE INDEX IF NOT EXISTS sessions_parent ON sessions(harness,parent_id);
+CREATE TABLE IF NOT EXISTS cursors(harness TEXT NOT NULL,path TEXT NOT NULL,cursor TEXT NOT NULL,PRIMARY KEY(harness,path));
+CREATE TABLE IF NOT EXISTS provider_configs(harness TEXT NOT NULL,from_time INTEGER NOT NULL,base_url TEXT NOT NULL,provider TEXT NOT NULL,PRIMARY KEY(harness,from_time));
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`)
+	if err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -87,6 +118,9 @@ func (s *Store) Close() error {
 		delete(s.subscribers, ch)
 	}
 	s.mu.Unlock()
+	// Closing the last writable connection checkpoints the WAL and unlinks the
+	// sidecars. A read-only handle never depends on this process owning them, so
+	// there is nothing to release here.
 	return s.db.Close()
 }
 func (s *Store) Exec(ctx context.Context, q string, args ...any) error {
@@ -95,10 +129,19 @@ func (s *Store) Exec(ctx context.Context, q string, args ...any) error {
 	_, err := s.db.ExecContext(ctx, q, args...)
 	return err
 }
+
+// Cursor returns the reserved default instance's checkpoint for one source. The
+// pre-instance signature is preserved so existing callers are unchanged.
 func (s *Store) Cursor(ctx context.Context, h model.Harness, path string) (harness.Cursor, error) {
+	return s.CursorIn(ctx, h, DefaultInstanceID, path)
+}
+
+// CursorIn returns one instance's checkpoint for one source. Two instances that
+// scan the same path keep independent cursors.
+func (s *Store) CursorIn(ctx context.Context, h model.Harness, instance, path string) (harness.Cursor, error) {
 	var c harness.Cursor
 	var raw string
-	err := s.db.QueryRowContext(ctx, "SELECT cursor FROM cursors WHERE harness=? AND path=?", h, path).Scan(&raw)
+	err := s.db.QueryRowContext(ctx, "SELECT cursor FROM cursors WHERE harness=? AND instance_id=? AND path=?", h, normalizeInstance(instance), path).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, nil
 	}
@@ -109,9 +152,16 @@ func (s *Store) Cursor(ctx context.Context, h model.Harness, path string) (harne
 	return c, err
 }
 
-// Cursors returns the cursors of a harness's sources by path.
+// Cursors returns the cursors of a harness's sources by path for the reserved
+// default instance. The pre-instance signature is preserved.
 func (s *Store) Cursors(ctx context.Context, h model.Harness) (map[string]harness.Cursor, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT path, cursor FROM cursors WHERE harness=?", h)
+	return s.CursorsIn(ctx, h, DefaultInstanceID)
+}
+
+// CursorsIn returns one instance's source checkpoints by path. Scanner wiring for
+// a configured instance calls this with that instance's id.
+func (s *Store) CursorsIn(ctx context.Context, h model.Harness, instance string) (map[string]harness.Cursor, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT path, cursor FROM cursors WHERE harness=? AND instance_id=?", h, normalizeInstance(instance))
 	if err != nil {
 		return nil, err
 	}
@@ -137,22 +187,45 @@ func stamp(t time.Time) int64 {
 	return t.UnixNano()
 }
 
-const sessionSQL = `INSERT INTO sessions(harness,session_id,parent_id,title,project,started_at,updated_at,raw_project) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(harness,session_id) DO UPDATE SET parent_id=CASE WHEN excluded.parent_id!='' THEN excluded.parent_id ELSE sessions.parent_id END,title=CASE WHEN excluded.title!='' THEN excluded.title ELSE sessions.title END,project=CASE WHEN excluded.project!='' THEN excluded.project ELSE sessions.project END,raw_project=CASE WHEN excluded.raw_project!='' THEN excluded.raw_project ELSE sessions.raw_project END,started_at=CASE WHEN sessions.started_at=0 THEN excluded.started_at WHEN excluded.started_at=0 THEN sessions.started_at ELSE min(sessions.started_at,excluded.started_at) END,updated_at=max(sessions.updated_at,excluded.updated_at)`
+const sessionSQL = `INSERT INTO sessions(harness,instance_id,session_id,parent_id,title,project,started_at,updated_at,raw_project) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(harness,instance_id,session_id) DO UPDATE SET parent_id=CASE WHEN excluded.parent_id!='' THEN excluded.parent_id ELSE sessions.parent_id END,title=CASE WHEN excluded.title!='' THEN excluded.title ELSE sessions.title END,project=CASE WHEN excluded.project!='' THEN excluded.project ELSE sessions.project END,raw_project=CASE WHEN excluded.raw_project!='' THEN excluded.raw_project ELSE sessions.raw_project END,started_at=CASE WHEN sessions.started_at=0 THEN excluded.started_at WHEN excluded.started_at=0 THEN sessions.started_at ELSE min(sessions.started_at,excluded.started_at) END,updated_at=max(sessions.updated_at,excluded.updated_at)`
 
 // Write couples a parsed source with its resolutions and checkpoint.
+//
+// InstanceID is additive: the empty string means the reserved default instance,
+// so every pre-instance caller keeps its exact behaviour. A scanner that knows
+// which configured instance a source belongs to sets it explicitly; the instance
+// is a column, never a prefix or hash inside the dedup key or session id.
 type Write struct {
 	Harness     model.Harness
+	InstanceID  string
 	Path        string
 	Batch       harness.Batch
 	Resolutions []Resolution
 }
 
 func (s *Store) Commit(ctx context.Context, h model.Harness, path string, b harness.Batch, res []Resolution) error {
-	return s.CommitMany(ctx, []Write{{h, path, b, res}})
+	return s.CommitMany(ctx, []Write{{Harness: h, Path: path, Batch: b, Resolutions: res}})
 }
 
 // CommitMany atomically persists a group of sources and their cursors.
 func (s *Store) CommitMany(ctx context.Context, writes []Write) error {
+	_, err := s.commitMany(ctx, writes, false, recentWindow{})
+	return err
+}
+
+// CommitManyOutcome persists writes exactly like CommitMany and additionally
+// reports, per write, what this commit inserted for the first time: see
+// CommitOutcome. The report costs one indexed existence probe per flush and is
+// only paid by callers that ask for it.
+func (s *Store) CommitManyOutcome(ctx context.Context, writes []Write) (CommitOutcome, error) {
+	return s.commitMany(ctx, writes, true, recentWindow{})
+}
+
+func (s *Store) commitMany(ctx context.Context, writes []Write, report bool, recent recentWindow) (CommitOutcome, error) {
+	var outcome CommitOutcome
+	if report {
+		outcome.Writes = make([]WriteOutcome, len(writes))
+	}
 	s.writer.Lock()
 	defer s.writer.Unlock()
 	for _, w := range writes {
@@ -165,7 +238,7 @@ func (s *Store) CommitMany(ctx context.Context, writes []Write) error {
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return CommitOutcome{}, err
 	}
 	defer tx.Rollback()
 	prepared := make(map[string]*sql.Stmt)
@@ -184,11 +257,12 @@ func (s *Store) CommitMany(ctx context.Context, writes []Write) error {
 		}
 		return stmt, err
 	}
-	touched := map[string][2]string{}
-	for _, w := range writes {
+	touched := map[string][3]string{}
+	for i, w := range writes {
+		instance := normalizeInstance(w.InstanceID)
 		if len(w.Batch.Events) > 0 && len(w.Resolutions) == 0 {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM settings WHERE key='pricing_fingerprint'"); err != nil {
-				return err
+				return CommitOutcome{}, err
 			}
 		}
 		for _, e := range w.Batch.Events {
@@ -197,10 +271,10 @@ func (s *Store) CommitMany(ctx context.Context, writes []Write) error {
 				h = w.Harness
 			}
 			if e.SessionID != "" {
-				touched[string(h)+"\x00"+e.SessionID] = [2]string{string(h), e.SessionID}
+				touched[string(h)+"\x00"+instance+"\x00"+e.SessionID] = [3]string{string(h), instance, e.SessionID}
 			}
 			if e.ParentID != "" {
-				touched[string(h)+"\x00"+e.ParentID] = [2]string{string(h), e.ParentID}
+				touched[string(h)+"\x00"+instance+"\x00"+e.ParentID] = [3]string{string(h), instance, e.ParentID}
 			}
 		}
 		for _, m := range w.Batch.Sessions {
@@ -209,47 +283,93 @@ func (s *Store) CommitMany(ctx context.Context, writes []Write) error {
 				h = w.Harness
 			}
 			if m.SessionID != "" {
-				touched[string(h)+"\x00"+m.SessionID] = [2]string{string(h), m.SessionID}
+				touched[string(h)+"\x00"+instance+"\x00"+m.SessionID] = [3]string{string(h), instance, m.SessionID}
 			}
 		}
-		if err := s.commit(ctx, w.Harness, w.Path, w.Batch, w.Resolutions, prepare); err != nil {
-			return err
+		var stats *commitCollector
+		if report {
+			stats = &commitCollector{recent: recent}
+		}
+		if err := s.commit(ctx, w.Harness, w.InstanceID, w.Path, w.Batch, w.Resolutions, prepare, stats); err != nil {
+			return CommitOutcome{}, err
+		}
+		if stats != nil {
+			outcome.Writes[i] = WriteOutcome{
+				NewEvents:             stats.newEvents,
+				NewOutputTokens:       stats.newOutputTokens,
+				NewRecentOutputTokens: stats.newRecentOutputTokens,
+			}
 		}
 	}
 	// Re-Analyze only the touched sessions' whole chains, patching just the events
 	// whose verdict changed, before the commit becomes visible.
 	if err := s.recomputeSessions(ctx, tx, touched); err != nil {
-		return err
+		return CommitOutcome{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return CommitOutcome{}, err
 	}
 	s.notify()
-	return nil
+	return outcome, nil
 }
-func (s *Store) commit(ctx context.Context, h model.Harness, path string, b harness.Batch, res []Resolution, prepare func(string) (*sql.Stmt, error)) error {
+func (s *Store) commit(ctx context.Context, h model.Harness, instance, path string, b harness.Batch, res []Resolution, prepare func(string) (*sql.Stmt, error), stats *commitCollector) error {
 	if len(res) != 0 && len(res) != len(b.Events) {
 		return errors.New("resolution count differs from event count")
 	}
+	instance = normalizeInstance(instance)
 	var err error
 
-	const row = `(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-	const suffix = ` ON CONFLICT(harness,dedup_key) DO UPDATE SET dimension_id=excluded.dimension_id,timestamp=excluded.timestamp,input=excluded.input,output=excluded.output,cache_read=excluded.cache_read,cache_write=excluded.cache_write,reasoning=excluded.reasoning,log_cost=excluded.log_cost,cost=excluded.cost,priced=excluded.priced,request_id=coalesce(nullif(excluded.request_id,''),event_data.request_id),boundary=coalesce(nullif(excluded.boundary,''),event_data.boundary),bill_amount=coalesce(excluded.bill_amount,event_data.bill_amount),bill_unit=CASE WHEN excluded.bill_amount IS NOT NULL THEN excluded.bill_unit ELSE event_data.bill_unit END WHERE (event_data.dimension_id,event_data.timestamp,event_data.input,event_data.output,event_data.cache_read,event_data.cache_write,event_data.reasoning,event_data.log_cost,event_data.cost,event_data.priced,event_data.request_id,event_data.boundary,event_data.bill_amount,event_data.bill_unit) IS NOT (excluded.dimension_id,excluded.timestamp,excluded.input,excluded.output,excluded.cache_read,excluded.cache_write,excluded.reasoning,excluded.log_cost,excluded.cost,excluded.priced,coalesce(nullif(excluded.request_id,''),event_data.request_id),coalesce(nullif(excluded.boundary,''),event_data.boundary),coalesce(excluded.bill_amount,event_data.bill_amount),CASE WHEN excluded.bill_amount IS NOT NULL THEN excluded.bill_unit ELSE event_data.bill_unit END) AND (SELECT old.session_id=new.session_id OR (old.parent_id!='' AND new.parent_id='') FROM event_dimensions old JOIN event_dimensions new ON new.id=excluded.dimension_id WHERE old.id=event_data.dimension_id)`
+	const row = `(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	const suffix = ` ON CONFLICT(harness,instance_id,dedup_key) DO UPDATE SET dimension_id=excluded.dimension_id,timestamp=excluded.timestamp,input=excluded.input,output=excluded.output,cache_read=excluded.cache_read,cache_write=excluded.cache_write,reasoning=excluded.reasoning,log_cost=excluded.log_cost,cost=excluded.cost,priced=excluded.priced,request_id=coalesce(nullif(excluded.request_id,''),event_data.request_id),boundary=coalesce(nullif(excluded.boundary,''),event_data.boundary),bill_amount=coalesce(excluded.bill_amount,event_data.bill_amount),bill_unit=CASE WHEN excluded.bill_amount IS NOT NULL THEN excluded.bill_unit ELSE event_data.bill_unit END WHERE (event_data.dimension_id,event_data.timestamp,event_data.input,event_data.output,event_data.cache_read,event_data.cache_write,event_data.reasoning,event_data.log_cost,event_data.cost,event_data.priced,event_data.request_id,event_data.boundary,event_data.bill_amount,event_data.bill_unit) IS NOT (excluded.dimension_id,excluded.timestamp,excluded.input,excluded.output,excluded.cache_read,excluded.cache_write,excluded.reasoning,excluded.log_cost,excluded.cost,excluded.priced,coalesce(nullif(excluded.request_id,''),event_data.request_id),coalesce(nullif(excluded.boundary,''),event_data.boundary),coalesce(excluded.bill_amount,event_data.bill_amount),CASE WHEN excluded.bill_amount IS NOT NULL THEN excluded.bill_unit ELSE event_data.bill_unit END) AND (SELECT old.session_id=new.session_id OR (old.parent_id!='' AND new.parent_id='') FROM event_dimensions old JOIN event_dimensions new ON new.id=excluded.dimension_id WHERE old.id=event_data.dimension_id)`
 	const batchSize = 128
 	var values []any
+	// chunkKeys/chunkOutput run parallel to the events buffered in values, so a
+	// flush can ask the index which of them it already held before the upsert.
+	// counted remembers keys this write already reported, including repeats
+	// inside a chunk the index did not hold yet.
+	var chunkKeys []string
+	var chunkOutput []int64
+	// chunkTime runs parallel too, so a flush can split the output it reports by
+	// the event's own timestamp without a second pass over the batch.
+	var chunkTime []time.Time
+	var counted map[string]bool
+	if stats != nil {
+		counted = map[string]bool{}
+	}
 	// Resolve each distinct dimension tuple once per parser batch, rather than
 	// doing two dictionary lookups per event through the compatibility view.
-	dimensions := map[[10]string]int64{}
-	dimensionID := func(key [10]string) (int64, error) {
+	// Keep display identity metadata in the same transaction as facts/cursors.
+	// Deduplicate lookups per batch, including endpoints we cannot identify.
+	endpoints := map[string]bool{}
+	ensureEndpoint := func(raw string) error {
+		if endpoints[raw] {
+			return nil
+		}
+		endpoint, ok := provider.NormalizeEndpoint(raw)
+		if ok {
+			id, _ := provider.EndpointID(raw)
+			stmt, err := prepare(`INSERT INTO provider_endpoints(raw_endpoint,provider_id,endpoint) VALUES(?,?,?) ON CONFLICT(raw_endpoint) DO NOTHING`)
+			if err != nil {
+				return err
+			}
+			if _, err = stmt.ExecContext(ctx, raw, id, endpoint); err != nil {
+				return err
+			}
+		}
+		endpoints[raw] = true
+		return nil
+	}
+	dimensions := map[[11]string]int64{}
+	dimensionID := func(key [11]string) (int64, error) {
 		if id, ok := dimensions[key]; ok {
 			return id, nil
 		}
-		stmt, err := prepare(`INSERT INTO event_dimensions(` + dimensionColumns + `) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(` + dimensionColumns + `) DO UPDATE SET id=id RETURNING id`)
+		stmt, err := prepare(`INSERT INTO event_dimensions(` + dimensionColumns + `) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(` + dimensionColumns + `) DO UPDATE SET id=id RETURNING id`)
 		if err != nil {
 			return 0, err
 		}
 		var id int64
-		err = stmt.QueryRowContext(ctx, key[0], key[1], key[2], key[3], key[4], key[5], key[6], key[7], key[8], key[9]).Scan(&id)
+		err = stmt.QueryRowContext(ctx, key[0], key[1], key[2], key[3], key[4], key[5], key[6], key[7], key[8], key[9], key[10]).Scan(&id)
 		if err == nil {
 			dimensions[key] = id
 		}
@@ -259,17 +379,58 @@ func (s *Store) commit(ctx context.Context, h model.Harness, path string, b harn
 		if len(values) == 0 {
 			return nil
 		}
-		query := `INSERT INTO event_data(` + factColumns + `) VALUES ` + strings.TrimSuffix(strings.Repeat(row+",", len(values)/16), ",") + suffix
+		if stats != nil {
+			existing, err := existingKeys(ctx, prepare, h, instance, chunkKeys)
+			if err != nil {
+				return err
+			}
+			for i, key := range chunkKeys {
+				if existing[key] || counted[key] {
+					continue
+				}
+				counted[key] = true
+				stats.newEvents++
+				stats.newOutputTokens = addOutput(stats.newOutputTokens, chunkOutput[i])
+				if stats.recent.eligible(chunkTime[i]) {
+					stats.newRecentOutputTokens = addOutput(stats.newRecentOutputTokens, chunkOutput[i])
+				}
+			}
+		}
+		query := `INSERT INTO event_data(` + factColumns + `) VALUES ` + strings.TrimSuffix(strings.Repeat(row+",", len(values)/17), ",") + suffix
 		stmt, e := prepare(query)
 		if e == nil {
 			_, e = stmt.ExecContext(ctx, values...)
 		}
 		values = values[:0]
+		chunkKeys = chunkKeys[:0]
+		chunkOutput = chunkOutput[:0]
+		chunkTime = chunkTime[:0]
 		return e
 	}
 	sessions, err := prepare(sessionSQL)
 	if err != nil {
 		return err
+	}
+	// The branch upsert is prepared lazily: a write whose events carry no usable
+	// branch evidence pays nothing for the table, and the statement is still
+	// bound to the same transaction as the facts it describes. Unusable or
+	// absent branch text records nothing, so a malformed metadata field can
+	// never drop a request or erase a branch a previous replay recorded.
+	var branchStmt *sql.Stmt
+	upsertBranch := func(harness, instance, key, branch string) error {
+		branch, ok := branchEvidence(branch)
+		if !ok {
+			return nil
+		}
+		if branchStmt == nil {
+			stmt, e := prepare(branchSQL)
+			if e != nil {
+				return e
+			}
+			branchStmt = stmt
+		}
+		_, e := branchStmt.ExecContext(ctx, harness, instance, key, branch)
+		return e
 	}
 	upsert := func(m model.SessionMeta) error {
 		if m.SessionID == "" {
@@ -278,7 +439,7 @@ func (s *Store) commit(ctx context.Context, h model.Harness, path string, b harn
 		if m.Harness == "" {
 			m.Harness = h
 		}
-		_, e := sessions.ExecContext(ctx, m.Harness, m.SessionID, m.ParentID, harness.Title(m.Title), s.projects.resolve(m.Project), stamp(m.StartedAt), stamp(m.UpdatedAt), m.Project)
+		_, e := sessions.ExecContext(ctx, m.Harness, instance, m.SessionID, m.ParentID, harness.Title(m.Title), s.projects.resolve(m.Project), stamp(m.StartedAt), stamp(m.UpdatedAt), m.Project)
 		return e
 	}
 	meta := make(map[string]model.SessionMeta)
@@ -289,7 +450,7 @@ func (s *Store) commit(ctx context.Context, h model.Harness, path string, b harn
 		if m.Harness == "" {
 			m.Harness = h
 		}
-		key := string(m.Harness) + "\x00" + m.SessionID
+		key := string(m.Harness) + "\x00" + instance + "\x00" + m.SessionID
 		old, ok := meta[key]
 		if !ok {
 			meta[key] = m
@@ -319,6 +480,9 @@ func (s *Store) commit(ctx context.Context, h model.Harness, path string, b harn
 		if e.DedupKey == "" || e.SessionID == "" || e.Harness != h {
 			return fmt.Errorf("invalid event: harness/session/dedup key")
 		}
+		if err := ensureEndpoint(e.BaseURL); err != nil {
+			return err
+		}
 		r := Resolution{Provider: e.Provider, Attrib: model.AttribLog}
 		if e.CostUSD != nil {
 			r.Cost = *e.CostUSD
@@ -332,7 +496,7 @@ func (s *Store) commit(ctx context.Context, h model.Harness, path string, b harn
 			r.Cost = *e.CostUSD
 			r.Priced = true
 		}
-		id, err := dimensionID([10]string{string(e.Harness), e.SessionID, e.ParentID, s.projects.resolve(e.ProjectPath), e.Model, e.Provider, e.BaseURL, r.Provider, string(r.Attrib), e.ProjectPath})
+		id, err := dimensionID([11]string{string(e.Harness), instance, e.SessionID, e.ParentID, s.projects.resolve(e.ProjectPath), e.Model, e.Provider, e.BaseURL, r.Provider, string(r.Attrib), e.ProjectPath})
 		if err != nil {
 			return err
 		}
@@ -342,8 +506,18 @@ func (s *Store) commit(ctx context.Context, h model.Harness, path string, b harn
 			billAmount = e.Bill.Amount
 			billUnit = e.Bill.Unit
 		}
-		values = append(values, e.Harness, e.DedupKey, id, stamp(e.Timestamp), e.Tokens.Input, e.Tokens.Output, e.Tokens.CacheRead, e.Tokens.CacheWrite, e.Tokens.Reasoning, e.CostUSD, r.Cost, r.Priced, e.RequestID, e.Boundary, billAmount, billUnit)
-		if len(values) == batchSize*16 {
+		values = append(values, e.Harness, instance, e.DedupKey, id, stamp(e.Timestamp), e.Tokens.Input, e.Tokens.Output, e.Tokens.CacheRead, e.Tokens.CacheWrite, e.Tokens.Reasoning, e.CostUSD, r.Cost, r.Priced, e.RequestID, e.Boundary, billAmount, billUnit)
+		// The branch a log stated rides in the same transaction as its fact, so
+		// metadata and usage commit or roll back together.
+		if err = upsertBranch(string(e.Harness), instance, e.DedupKey, e.GitBranch); err != nil {
+			return err
+		}
+		if stats != nil {
+			chunkKeys = append(chunkKeys, e.DedupKey)
+			chunkOutput = append(chunkOutput, e.Tokens.Output)
+			chunkTime = append(chunkTime, e.Timestamp)
+		}
+		if len(values) == batchSize*17 {
 			if err = flush(); err != nil {
 				return err
 			}
@@ -368,11 +542,11 @@ func (s *Store) commit(ctx context.Context, h model.Harness, path string, b harn
 	if err != nil {
 		return err
 	}
-	cursor, err := prepare("INSERT INTO cursors VALUES(?,?,?) ON CONFLICT(harness,path) DO UPDATE SET cursor=excluded.cursor")
+	cursor, err := prepare("INSERT INTO cursors(harness,instance_id,path,cursor) VALUES(?,?,?,?) ON CONFLICT(harness,instance_id,path) DO UPDATE SET cursor=excluded.cursor")
 	if err != nil {
 		return err
 	}
-	_, err = cursor.ExecContext(ctx, h, path, string(raw))
+	_, err = cursor.ExecContext(ctx, h, instance, path, string(raw))
 	return err
 }
 
@@ -387,6 +561,12 @@ func (s *Store) Rebuild(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	if _, e = tx.ExecContext(ctx, "DELETE FROM cursors;"); e != nil {
+		return e
+	}
+	// A full replay is the maintenance point for the additive branch metadata:
+	// rows whose request no longer exists are dropped before the rescan, which
+	// then rewrites the branch of every event it can still see.
+	if _, e = pruneEventBranches(ctx, tx); e != nil {
 		return e
 	}
 	if e = tx.Commit(); e == nil {

@@ -8,6 +8,21 @@ import (
 
 // DataDir returns the platform data directory and creates it with private permissions.
 func DataDir() (string, error) {
+	dir, err := ResolveDataDir()
+	if err != nil {
+		return "", err
+	}
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// ResolveDataDir returns the platform data directory without creating it.
+// A read-only caller — a snapshot in particular — must be able to learn where
+// the index lives without bringing a directory into existence, because a
+// missing database has to stay missing.
+func ResolveDataDir() (string, error) {
 	dir := os.Getenv("MYTOKEN_HOME")
 	if dir == "" {
 		home, err := os.UserHomeDir()
@@ -31,17 +46,21 @@ func DataDir() (string, error) {
 			dir = filepath.Join(base, "mytoken")
 		}
 	}
-	dir, err := filepath.Abs(dir)
+	return filepath.Abs(dir)
+}
+
+// DBPath returns the database path, creating the data directory first.
+func DBPath() (string, error) {
+	dir, err := DataDir()
 	if err != nil {
 		return "", err
 	}
-	if err = os.MkdirAll(dir, 0700); err != nil {
-		return "", err
-	}
-	return dir, nil
+	return filepath.Join(dir, "mytoken.db"), nil
 }
-func DBPath() (string, error) {
-	dir, err := DataDir()
+
+// ResolveDBPath returns the database path without creating the data directory.
+func ResolveDBPath() (string, error) {
+	dir, err := ResolveDataDir()
 	if err != nil {
 		return "", err
 	}

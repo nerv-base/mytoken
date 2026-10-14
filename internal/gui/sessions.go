@@ -10,11 +10,15 @@ import (
 
 func (s *State) sessionsPage(c *ui.Context, pal palette) {
 	rows := filterRows(s.sessions.Rows, s.search)
+	dups := ambiguousSessions(rows)
 	pageHeader(c, pal, "sessions", trf("sessionsN", s.sessions.Total), func() {
-		if segmented(c, pal, &s.sortIdx, tr("recent"), tr("mostTokens"), tr("mostCost")) {
+		if segmentedGroup(c, pal, &s.sortIdx, tr("sortBy"), tr("recent"), tr("mostTokens"), tr("mostCost")) {
 			s.loadSessions()
 		}
 	})
+	if s.provFilter.Key != "" {
+		s.providerFilterBanner(c, pal)
+	}
 	ui.Row(c).Grow(1).Basis(0).Padding(8, 8, 8, 8).Gap(12).Children(func() {
 		// The list.
 		pane(c, pal).Width(380).FillHeight().Shrink(0).Padding(10).Gap(8).Children(func() {
@@ -31,19 +35,31 @@ func (s *State) sessionsPage(c *ui.Context, pal palette) {
 			}
 			s.list.Key = func(i int) any {
 				if i < len(rows) {
-					return string(rows[i].Harness) + "/" + rows[i].SessionID
+					return refOf(rows[i]).key()
 				}
 				return i
 			}
+			// The rows are one focus group: Tab enters the list at the
+			// chosen row, the arrows move among the rows, Home and End take
+			// the focus to the first and the last of those shown, and Enter
+			// and Space open the row, which is also what a click does. The
+			// focus group is used rather than ListState.Selected because a
+			// chosen row of a List is painted in the theme accent, over the
+			// row's own raised background: the fader and the glass would
+			// change with it.
 			ui.List(c, &s.list, len(rows), func(i int) {
 				r := rows[i]
-				key := string(r.Harness) + "/" + r.SessionID
-				s.sessionRow(c, pal, r, s.sel == key, func() { s.Select(r.Harness, r.SessionID) })
-			}).Grow(1).Basis(0)
+				ref := refOf(r)
+				row := s.sessionRow(c, pal, r, showInstance(dups, r), s.sel == ref, func() { s.SelectRef(ref) })
+				row.Focusable()
+				if row.Focused() && s.sel != ref {
+					s.SelectRef(ref)
+				}
+			}).Grow(1).Basis(0).FocusGroup(ui.Vertical)
 		})
 		// The detail.
 		ui.Column(c).Grow(1).Basis(0).FillHeight().Children(func() {
-			if s.sel == "" {
+			if s.sel.SessionID == "" {
 				pane(c, pal).Fill().Center().Children(func() {
 					emptyState(c, pal, artStage, tr("pickSession"), tr("pickSub"))
 				})
@@ -55,8 +71,10 @@ func (s *State) sessionsPage(c *ui.Context, pal palette) {
 }
 
 // sessionRow is one session in a list: harness mark, title, tokens, and a
-// thin class bar.
-func (s *State) sessionRow(c *ui.Context, pal palette, r query.SessionRow, selected bool, onClick func()) {
+// thin class bar. showInstance marks the rows whose session id alone would
+// not say which instance they belong to. It returns the row, so that a
+// list can make it take the keyboard focus.
+func (s *State) sessionRow(c *ui.Context, pal palette, r query.SessionRow, showInstance, selected bool, onClick func()) ui.Element {
 	col := harnessColor(r.Harness)
 	row := ui.Row(c).Padding(9, 12, 9, 10).Gap(11).Radius(12).AlignItems(ui.Center).Cursor(ui.CursorPointer).Role(ui.RoleButton).Transition(hoverFade)
 	switch {
@@ -79,6 +97,11 @@ func (s *State) sessionRow(c *ui.Context, pal palette, r query.SessionRow, selec
 			ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…")
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, r.Harness.DisplayName()).FontSize(11).TextColor(col).FontWeight(600).SingleLine().Shrink(0)
+				if showInstance {
+					// The raw instance id, never a prettified guess: it is
+					// the only thing that tells the twins apart.
+					chip(c, refOf(r).instanceLabel(), Soyo)
+				}
 				if r.Project != "" {
 					ui.Text(c, "· "+baseName(r.Project)).FontSize(11).TextColor(pal.muted).SingleLine().Ellipsis("…").Shrink(1)
 				}
@@ -101,6 +124,7 @@ func (s *State) sessionRow(c *ui.Context, pal palette, r query.SessionRow, selec
 	if row.Clicked() && onClick != nil {
 		onClick()
 	}
+	return row
 }
 
 func (s *State) detailView(c *ui.Context, pal palette) {
@@ -118,6 +142,9 @@ func (s *State) detailView(c *ui.Context, pal palette) {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					harnessBadge(c, r.Harness, 24)
 					chip(c, r.Harness.DisplayName(), col)
+					if inst := refOf(r).instanceLabel(); inst != "" {
+						chip(c, tr("instance")+": "+inst, Soyo)
+					}
 					if r.Children > 0 {
 						chip(c, trf("childrenN", r.Children), Taki)
 					}
@@ -194,13 +221,13 @@ func (s *State) detailView(c *ui.Context, pal palette) {
 				card(c, pal, tr("timeline"), func() {
 					ui.Text(c, trf("requestsN", fmtInt(int64(len(d.Events))))).FontSize(11).TextColor(pal.muted)
 				}, func() {
-					timeline(c.Key("tl"+s.sel), pal, d.Events, models, 170)
+					timeline(c.Key("tl"+s.sel.key()), pal, d.Events, models, 170)
 				})
 			}
 			// Cache ledger.
 			if cacheJudged(d.Cache) > 1 {
 				card(c, pal, tr("cacheTimeline"), func() { cacheSummary(c, pal, d.Cache) }, func() {
-					cacheTimeline(c.Key("ctl"+s.sel), pal, d.Cache, 150)
+					cacheTimeline(c.Key("ctl"+s.sel.key()), pal, d.Cache, 150, tr("cacheTimeline"))
 				})
 			}
 			// Subagents.

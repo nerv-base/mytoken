@@ -11,6 +11,7 @@ import (
 	"github.com/zzstar101/mytoken/internal/model"
 	"github.com/zzstar101/mytoken/internal/pricing"
 	"github.com/zzstar101/mytoken/internal/query"
+	"github.com/zzstar101/mytoken/internal/store"
 )
 
 // demo is a deterministic query.Service of made-up usage, for screenshots,
@@ -152,7 +153,8 @@ func NewDemoService(now time.Time) query.Service {
 }
 
 func (d *demo) add(meta model.SessionMeta, evs []query.AttributedEvent) {
-	row := query.SessionRow{SessionMeta: meta}
+	// The demo is one instance: the reserved default one.
+	row := query.SessionRow{SessionMeta: meta, InstanceID: store.DefaultInstanceID}
 	var bd []query.ProviderModel
 	for _, e := range evs {
 		row.Tokens = row.Tokens.Add(e.Tokens)
@@ -191,13 +193,51 @@ func inRange(r query.Range, t time.Time) bool {
 	return (r.From.IsZero() || !t.Before(r.From)) && (r.To.IsZero() || t.Before(r.To))
 }
 
+// demoProviderID is the stable identity key the demo reports for an event's
+// resolved provider, the one ProviderGroups returns for it.
+func demoProviderID(e *query.AttributedEvent) string { return "demo:provider:" + e.ResolvedProvider }
+
+// demoWantsProvider reports whether an event is behind one of the wanted
+// provider ids. The demo has no endpoint identity, so its synthetic key is
+// the identity: a filter that matches nothing yields nothing, as the real
+// query does, and a name match never stands in for an id match.
+func demoWantsProvider(ids []string, e *query.AttributedEvent) bool {
+	if len(ids) == 0 {
+		return true
+	}
+	want := demoProviderID(e)
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}
+
+// demoWantsInstance reports whether the filter can be answered at all: the
+// demo has one instance, so any other instance has nothing in it.
+func demoWantsInstance(f query.Filter) bool {
+	if len(f.InstanceIDs) == 0 {
+		return true
+	}
+	for _, id := range f.InstanceIDs {
+		if store.NormalizeInstanceID(id) == store.DefaultInstanceID {
+			return true
+		}
+	}
+	return false
+}
+
 // each calls fn for every event (of every session) in f.
 func (d *demo) each(f query.Filter, fn func(s *query.SessionRow, e *query.AttributedEvent)) {
+	if !demoWantsInstance(f) {
+		return
+	}
 	for i := range d.sessions {
 		s := &d.sessions[i]
 		for j := range d.events[string(s.Harness)+"/"+s.SessionID] {
 			e := &d.events[string(s.Harness)+"/"+s.SessionID][j]
-			if inRange(f.Range, e.Timestamp) {
+			if inRange(f.Range, e.Timestamp) && demoWantsProvider(f.ProviderIDs, e) {
 				fn(s, e)
 			}
 		}
@@ -290,6 +330,58 @@ func (d *demo) ByProvider(_ context.Context, f query.Filter) ([]query.Bucket, er
 	}), nil
 }
 
+// ProviderGroups exposes the demo's synthetic providers. They stay labelled
+// unidentified on purpose: demo events carry no endpoint URL, so claiming a
+// stable endpoint identity would be a fake endpoint claim. The member
+// provenance and session counts are real to the demo data.
+func (d *demo) ProviderGroups(_ context.Context, f query.Filter) ([]query.ProviderGroup, error) {
+	type acc struct {
+		b       query.Bucket
+		sess    map[string]bool
+		members map[query.ProviderMember]bool
+	}
+	m := map[string]*acc{}
+	d.each(f, func(s *query.SessionRow, e *query.AttributedEvent) {
+		k := e.ResolvedProvider
+		a := m[k]
+		if a == nil {
+			a = &acc{
+				b:       query.Bucket{Key: demoProviderID(e), Label: k},
+				sess:    map[string]bool{},
+				members: map[query.ProviderMember]bool{},
+			}
+			m[k] = a
+		}
+		a.b.Tokens = a.b.Tokens.Add(e.Tokens)
+		a.b.CostUSD += e.Cost
+		a.b.Requests++
+		a.sess[s.SessionID] = true
+		a.members[query.ProviderMember{Harness: s.Harness, Provider: e.ResolvedProvider}] = true
+	})
+	out := make([]query.ProviderGroup, 0, len(m))
+	for _, a := range m {
+		a.b.Sessions = int64(len(a.sess))
+		g := query.ProviderGroup{Bucket: a.b, Identified: false}
+		for mem := range a.members {
+			g.Members = append(g.Members, mem)
+		}
+		sort.Slice(g.Members, func(i, j int) bool {
+			if g.Members[i].Harness != g.Members[j].Harness {
+				return g.Members[i].Harness < g.Members[j].Harness
+			}
+			return g.Members[i].Provider < g.Members[j].Provider
+		})
+		out = append(out, g)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Tokens.Total() != out[j].Tokens.Total() {
+			return out[i].Tokens.Total() > out[j].Tokens.Total()
+		}
+		return out[i].Key < out[j].Key
+	})
+	return out, nil
+}
+
 func (d *demo) ByModel(_ context.Context, f query.Filter) ([]query.Bucket, error) {
 	return d.by(f, func(_ *query.SessionRow, e *query.AttributedEvent) (string, string) {
 		return e.ResolvedProvider + "/" + e.Model, e.Model
@@ -309,11 +401,35 @@ func (d *demo) ByHarness(_ context.Context, f query.Filter) ([]query.Bucket, err
 }
 
 func (d *demo) Sessions(_ context.Context, f query.Filter, sortKey string, limit, offset int) ([]query.SessionRow, int, error) {
+	if !demoWantsInstance(f) {
+		return nil, 0, nil
+	}
+	// A provider drilldown lists the sessions that endpoint actually served:
+	// a session whose events are all behind another endpoint is not one of
+	// them, however it is named.
+	var behind map[string]bool
+	if len(f.ProviderIDs) > 0 {
+		behind = map[string]bool{}
+		for i := range d.sessions {
+			s := &d.sessions[i]
+			k := string(s.Harness) + "/" + s.SessionID
+			for j := range d.events[k] {
+				if demoWantsProvider(f.ProviderIDs, &d.events[k][j]) {
+					behind[k] = true
+					break
+				}
+			}
+		}
+	}
 	var rows []query.SessionRow
 	for _, s := range d.sessions {
-		if s.ParentID == "" && (f.Range.From.IsZero() || inRange(f.Range, s.UpdatedAt)) {
-			rows = append(rows, s)
+		if s.ParentID != "" || !(f.Range.From.IsZero() || inRange(f.Range, s.UpdatedAt)) {
+			continue
 		}
+		if behind != nil && !behind[string(s.Harness)+"/"+s.SessionID] {
+			continue
+		}
+		rows = append(rows, s)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		switch sortKey {
@@ -349,6 +465,25 @@ func (d *demo) Session(_ context.Context, h model.Harness, id string) (query.Ses
 		}
 	}
 	return row, kids, d.events[string(h)+"/"+id], nil
+}
+
+// SessionIn answers an instance-aware lookup. The demo has exactly one
+// instance, so only the reserved default one has anything to answer for.
+func (d *demo) SessionIn(ctx context.Context, h model.Harness, instance, id string) (query.SessionRow, []query.SessionRow, []query.AttributedEvent, error) {
+	if store.NormalizeInstanceID(instance) != store.DefaultInstanceID {
+		return query.SessionRow{}, nil, nil, fmt.Errorf("demo: no instance %q", instance)
+	}
+	row, kids, evs, err := d.Session(ctx, h, id)
+	row.InstanceID = store.DefaultInstanceID
+	return row, kids, evs, err
+}
+
+// SessionCacheIn is SessionCache of one instance's session.
+func (d *demo) SessionCacheIn(ctx context.Context, h model.Harness, instance, session string) ([]query.CacheStep, error) {
+	if store.NormalizeInstanceID(instance) != store.DefaultInstanceID {
+		return nil, fmt.Errorf("demo: no instance %q", instance)
+	}
+	return d.SessionCache(ctx, h, session)
 }
 
 // The cache-ledger reads live in demo_cache.go.

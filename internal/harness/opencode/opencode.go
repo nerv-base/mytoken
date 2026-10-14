@@ -99,6 +99,10 @@ const (
 // Parser reads OpenCode usage from one or more data directories.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 var _ harness.Parser = (*Parser)(nil)
@@ -106,7 +110,7 @@ var _ harness.Parser = (*Parser)(nil)
 func init() { harness.Register(New()) }
 
 // New returns a parser rooted at the default OpenCode data directory.
-func New() *Parser { return &Parser{roots: defaultRoots()} }
+func New() *Parser { return &Parser{roots: defaultRoots(), prov: rootProvenance} }
 
 // NewWithRoot returns a parser rooted at root.
 func NewWithRoot(root string) *Parser { return NewWithRoots(root) }
@@ -134,30 +138,62 @@ func NewWithRoots(roots ...string) *Parser {
 	return &Parser{roots: out}
 }
 
-// defaultRoots resolves the OpenCode data directory, honouring the env
-// overrides used by the harness and by OpenCode itself.
-func defaultRoots() []string {
-	if v := os.Getenv("MYTOKEN_OPENCODE_DIRS"); v != "" {
-		var out []string
-		for _, p := range filepath.SplitList(v) {
-			if p = strings.TrimSpace(p); p != "" {
-				out = append(out, p)
-			}
+// rootProvenance reports OpenCode's default roots and where each came from.
+// MYTOKEN_OPENCODE_DIRS replaces the whole set and OPENCODE_DATA_HOME is an
+// explicit harness-specific override; the XDG lookup is a generic default.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv("MYTOKEN_OPENCODE_DIRS"); ok {
+		dirs, err := harness.SplitEnvList("MYTOKEN_OPENCODE_DIRS", v)
+		if err != nil {
+			return nil, err
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return harness.EnvRoots("MYTOKEN_OPENCODE_DIRS", dirs...), nil
 	}
-	if v := os.Getenv("OPENCODE_DATA_HOME"); v != "" {
-		return []string{v}
+	if v, ok := harness.Getenv("OPENCODE_DATA_HOME"); ok {
+		return harness.EnvRoots("OPENCODE_DATA_HOME", v), nil
 	}
-	if v := os.Getenv("XDG_DATA_HOME"); v != "" {
+	return harness.BuiltinRoots(builtinRoots()...), nil
+}
+
+// builtinRoots is the generic platform data directory OpenCode falls back to.
+func builtinRoots() []string {
+	if v := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); v != "" {
 		return []string{filepath.Join(v, "opencode")}
 	}
-	return []string{harness.EnvOr("XDG_DATA_HOME", ".local", "share", "opencode")}
+	return []string{filepath.Join(harness.Home(), ".local", "share", "opencode")}
+}
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 func (p *Parser) Harness() model.Harness { return model.OpenCode }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }
 

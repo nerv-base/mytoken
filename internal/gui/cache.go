@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/chart"
 	"github.com/zzstar101/mytoken/internal/model"
 	"github.com/zzstar101/mytoken/internal/query"
+	"github.com/zzstar101/mytoken/internal/store"
 )
 
 // The cache page is the cache ledger (docs/CACHE.md): of the prompt that
@@ -48,12 +50,61 @@ type cacheState struct {
 // cacheSession is a costly session with its row, for the title.
 type cacheSession struct {
 	query.CacheBucket
+	// ref is the session the bucket's key names, instance included: the same
+	// session id in another instance is another session.
+	ref sessionRef
 	row query.SessionRow
+}
+
+// cacheSessionLimit caps the sessions list on the cache page.
+const cacheSessionLimit = 6
+
+// parseCacheSessionKey reads back the key query.CacheSessionKeyIn builds: the
+// reserved default instance keeps the historical "harness/session" shape, any
+// other instance is "instance:<id>:harness/session". The reverse is lossy for
+// ids that contain the separators themselves; nothing in the store forbids
+// that, so a key that does not parse is skipped rather than guessed at.
+func parseCacheSessionKey(key string) (sessionRef, bool) {
+	inst := store.DefaultInstanceID
+	if rest, ok := strings.CutPrefix(key, "instance:"); ok {
+		i, tail, ok := strings.Cut(rest, ":")
+		if !ok || i == "" {
+			return sessionRef{}, false
+		}
+		inst, key = i, tail
+	}
+	h, id, ok := strings.Cut(key, "/")
+	if !ok || h == "" || id == "" {
+		return sessionRef{}, false
+	}
+	return sessionRef{Harness: model.Harness(h), InstanceID: inst, SessionID: id}, true
+}
+
+// cacheSessionsFrom resolves the sessions behind the cache-by-session buckets:
+// the buckets are ordered by miss cost, and the list stops at the first
+// session that cost nothing.
+func cacheSessionsFrom(ctx context.Context, q query.Service, bs []query.CacheBucket) []cacheSession {
+	var out []cacheSession
+	for _, b := range bs {
+		if len(out) == cacheSessionLimit || b.USD <= 0 {
+			break
+		}
+		ref, ok := parseCacheSessionKey(b.Key)
+		if !ok {
+			continue
+		}
+		row, err := sessionRowIn(ctx, q, ref)
+		if err != nil {
+			row = query.SessionRow{SessionMeta: model.SessionMeta{Harness: ref.Harness, SessionID: ref.SessionID}}
+		}
+		out = append(out, cacheSession{CacheBucket: b, ref: ref, row: row})
+	}
+	return out
 }
 
 func (s *State) loadCache() {
 	want := s.ch.want
-	f := query.Filter{Range: rangeOf(Span(s.span), s.Hooks.Now())}
+	f := query.Filter{Range: rangeOf(Span(s.span), s.Hooks.Now(), s.location())}
 	q := s.Q
 	s.run("cache", func(ctx context.Context) func() {
 		var st cacheState
@@ -67,19 +118,8 @@ func (s *State) loadCache() {
 		if st.err == nil {
 			var bs []query.CacheBucket
 			bs, st.err = q.CacheBy(ctx, f, query.CacheBySession)
-			for _, b := range bs {
-				if len(st.sessions) == 6 || b.USD <= 0 {
-					break
-				}
-				h, id, ok := strings.Cut(b.Key, "/")
-				if !ok {
-					continue
-				}
-				row, _, _, err := q.Session(ctx, model.Harness(h), id)
-				if err != nil {
-					row = query.SessionRow{SessionMeta: model.SessionMeta{Harness: model.Harness(h), SessionID: id}}
-				}
-				st.sessions = append(st.sessions, cacheSession{b, row})
+			if st.err == nil {
+				st.sessions = cacheSessionsFrom(ctx, q, bs)
 			}
 		}
 		return func() {
@@ -154,7 +194,7 @@ func (s *State) cachePage(c *ui.Context, pal palette) {
 			if len(ch.daily) > 1 {
 				rise(c, 1, func() {
 					card(c, pal, tr("cacheByDay"), func() { causeLegend(c, pal) }, func() {
-						cacheDays(c.Key("cache-days-"+ch.have), pal, ch.daily, 170)
+						cacheDays(c.Key("cache-days-"+ch.have), pal, ch.daily, 170, tr("cacheByDay"))
 					})
 				})
 			}
@@ -237,65 +277,111 @@ func causeLegend(c *ui.Context, pal palette) {
 	})
 }
 
-// cacheDays stacks each day's expected prefix: read, then the misses by cause.
-func cacheDays(c *ui.Context, pal palette, days []query.CachePoint, height float32) ui.Element {
-	top := 0.0
-	for _, d := range days {
-		top = math.Max(top, float64(d.Expected))
-	}
-	top = niceMax(top)
+// cacheDays stacks each day's expected prefix on a band and a linear scale:
+// read, then the misses by cause, with a tip by the chosen day.
+func cacheDays(c *ui.Context, pal palette, days []query.CachePoint, height float32, name string) ui.Element {
 	el := ui.Box(c).FillWidth().Height(height)
 	g := entrance(el, 650*time.Millisecond)
-	hx, hy, hover := el.PointerPosition()
-	return el.Draw(func(p *ui.Painter, r ui.Rect) {
-		const labelH = 18
-		plot := ui.Rect{X: r.X, Y: r.Y, W: r.W, H: r.H - labelH}
-		slot := plot.W / float32(len(days))
-		bw := max(min(slot*0.62, 22), 2)
-		hi := -1
-		if hover {
-			hi = max(0, min(int((hx-plot.X)/slot), len(days)-1))
+	if len(days) == 0 {
+		return el
+	}
+	var mx float64
+	for _, d := range days {
+		mx = math.Max(mx, float64(d.Expected))
+	}
+	labels := make([]string, len(days))
+	step := max(1, len(days)/8)
+	for i, d := range days {
+		if i%step == 0 {
+			labels[i] = d.Day.Format("1/2")
 		}
-		step := max(1, len(days)/8)
+	}
+	x := chart.NewBand(labels...).Padding(0.38, 0)
+	y := chart.NewLinear(0, math.Max(mx, 1)).Nice(4)
+	series := [][]float64{make([]float64, len(days))}
+	colors := []ui.Color{cacheColor.Alpha(0.75)}
+	for i, d := range days {
+		series[0][i] = float64(hitTokens(d.CacheTotals))
+	}
+	for _, k := range causes {
+		row := make([]float64, len(days))
 		for i, d := range days {
-			x := plot.X + slot*float32(i) + (slot-bw)/2
-			y := plot.Y + plot.H
-			seg := func(v int64, col ui.Color) {
-				h := plot.H * g * float32(float64(v)/top)
-				if h <= 0 {
-					return
-				}
-				if hi >= 0 && hi != i {
-					col = col.Alpha(0.4)
-				}
-				p.Fill(ui.Rect{X: x, Y: y - h, W: bw, H: h}, col, 2)
-				y -= h
-			}
-			seg(hitTokens(d.CacheTotals), cacheColor.Alpha(0.75))
-			for _, k := range causes {
-				seg(causeOf(d.CacheTotals, k).Miss, causeColor(k))
-			}
-			if i%step == 0 {
-				lbl := d.Day.Format("1/2")
-				lw, _ := p.MeasureText(0, ui.Span{Text: lbl, Size: 10})
-				p.RichText(x+bw/2-lw/2, plot.Y+plot.H+4, 0, ui.Span{Text: lbl, Size: 10, Color: pal.muted})
-			}
+			row[i] = float64(causeOf(d.CacheTotals, k).Miss)
 		}
-		if hi >= 0 {
-			d := days[hi]
-			rows := [][2]string{{tr("cacheHitExp"), fmtPct(hitOf(d.CacheTotals))}, {tr("cause-read"), fmtTokens(d.Read)}}
-			cols := []ui.Color{pal.ink.Alpha(0.5), cacheColor}
-			for _, k := range causes {
-				if m := causeOf(d.CacheTotals, k).Miss; m > 0 {
-					rows = append(rows, [2]string{tr("cause-" + k), fmtTokens(m)})
-					cols = append(cols, causeColor(k))
-				}
+		series = append(series, row)
+		colors = append(colors, causeColor(k))
+	}
+	stacked := chart.Stack(series, chart.StackStandard)
+	xs := make([]float32, len(days))
+	for i := range days {
+		xs[i] = x.At(i)
+	}
+	el.Children(func() {
+		chart.Plot(c, chart.Axes{
+			Bottom: x.Ticks(),
+			Label:  func(side chart.Side, t chart.Tick) { tickLabel(c, pal, side, t) },
+		}, func(area ui.Element) {
+			area.Label(name)
+			sel := ui.Local(area, "chartSel", func() int { return -1 })
+			if sel == nil {
+				none := -1
+				sel = &none
 			}
-			rows = append(rows, [2]string{tr("cacheExtra"), fmtCost(d.USD)})
-			cols = append(cols, Anon)
-			tooltipBox(p, pal, r, plot.X+slot*float32(hi)+slot/2, hy, d.Day.Format("2006-01-02"), rows, cols)
-		}
+			chart.Select(c, area, sel, xs, func(i int) string {
+				return days[i].Day.Format("2006-01-02") + " · " + fmtPct(hitOf(days[i].CacheTotals))
+			})
+			area.Draw(func(p *ui.Painter, r ui.Rect) {
+				hi := *sel
+				if hi >= len(days) {
+					hi = -1
+				}
+				if hi >= 0 {
+					sp := x.Band(hi)
+					p.Fill(ui.Rect{X: r.X + sp.Lo*r.W, Y: r.Y, W: (sp.Hi - sp.Lo) * r.W, H: r.H}, pal.hover, 6)
+				}
+				for i := range days {
+					sp := x.Band(i)
+					bw := max(min((sp.Hi-sp.Lo)*r.W, 22), 2)
+					bx := r.X + sp.Mid()*r.W - bw/2
+					for si := range stacked {
+						seg := stacked[si][i]
+						if seg.Hi <= seg.Lo {
+							continue
+						}
+						col := colors[si]
+						if hi >= 0 && hi != i {
+							col = col.Alpha(0.4)
+						}
+						y0 := chart.Y(r, y.At(seg.Lo*float64(g)))
+						y1 := chart.Y(r, y.At(seg.Hi*float64(g)))
+						p.Fill(ui.Rect{X: bx, Y: y1, W: bw, H: y0 - y1}, col, 2)
+					}
+				}
+			})
+			if hi := *sel; hi >= 0 && hi < len(days) {
+				d := days[hi]
+				rows := [][2]string{{tr("cacheHitExp"), fmtPct(hitOf(d.CacheTotals))}, {tr("cause-read"), fmtTokens(d.Read)}}
+				cols := []ui.Color{pal.ink.Alpha(0.5), cacheColor}
+				for _, k := range causes {
+					if m := causeOf(d.CacheTotals, k).Miss; m > 0 {
+						rows = append(rows, [2]string{tr("cause-" + k), fmtTokens(m)})
+						cols = append(cols, causeColor(k))
+					}
+				}
+				rows = append(rows, [2]string{tr("cacheExtra"), fmtCost(d.USD)})
+				cols = append(cols, Anon)
+				total := 0.0
+				for si := range stacked {
+					total = math.Max(total, stacked[si][hi].Hi)
+				}
+				h, v := tipAlign(hi, len(days), y.At(total*float64(g)))
+				chart.Anchor(c, x.At(hi), max(y.At(total*float64(g)), 0.06), h, v, func() {
+					tipCard(c, pal, d.Day.Format("2006-01-02"), rows, cols)
+				})
+			}
+		}).FillWidth().Height(height)
 	})
+	return el
 }
 
 // causeTable explains each cause with its requests, tokens and money.
@@ -367,6 +453,9 @@ func (s *State) cacheSessions(c *ui.Context, pal palette, rows []cacheSession) {
 		}
 		row.Children(func() {
 			harnessBadge(c, r.row.Harness, 26)
+			if inst := r.ref.instanceLabel(); inst != "" {
+				chip(c, inst, Soyo)
+			}
 			ui.Column(c).Gap(2).Grow(1).Basis(0).Children(func() {
 				ui.Text(c, title).FontSize(13).FontWeight(620).TextColor(pal.ink).SingleLine().Ellipsis("…")
 				sub := fmtPct(hitOf(r.CacheTotals)) + " · " + trf("cacheMissTokens", fmtTokens(r.Miss))
@@ -379,7 +468,7 @@ func (s *State) cacheSessions(c *ui.Context, pal palette, rows []cacheSession) {
 		})
 		if row.Clicked() {
 			s.page = "sessions"
-			s.Select(r.row.Harness, r.row.SessionID)
+			s.SelectRef(r.ref)
 		}
 	}
 }
@@ -466,83 +555,137 @@ func cacheSummary(c *ui.Context, pal palette, steps []query.CacheStep) {
 	})
 }
 
-// cacheTimeline draws one bar per request: the prompt it sent, read back
-// from the cache (green), missed (the cause's color) or simply new (faint).
-// A compaction is a dashed line before the request it preceded.
-func cacheTimeline(c *ui.Context, pal palette, steps []query.CacheStep, height float32) ui.Element {
+// cacheTimeline draws one bar per request on a band and a linear scale: the
+// prompt it sent, read back from the cache (green), missed (the cause's
+// color) or simply new (faint), with a tip by the chosen request. A
+// compaction is a dashed line before the request it preceded.
+func cacheTimeline(c *ui.Context, pal palette, steps []query.CacheStep, height float32, name string) ui.Element {
+	el := ui.Box(c).FillWidth().Height(height)
+	g := entrance(el, 650*time.Millisecond)
+	if len(steps) == 0 {
+		return el
+	}
 	var top int64 = 1
 	for _, st := range steps {
 		top = max(top, st.Prompt+st.Read+st.Write)
 	}
-	el := ui.Box(c).FillWidth().Height(height)
-	g := entrance(el, 650*time.Millisecond)
-	hx, hy, hover := el.PointerPosition()
-	return el.Draw(func(p *ui.Painter, r ui.Rect) {
-		const labelH = 16
-		plot := ui.Rect{X: r.X, Y: r.Y, W: r.W, H: r.H - labelH}
-		slot := plot.W / float32(len(steps))
-		bw := max(min(slot*0.7, 10), 1)
-		hi := -1
-		if hover {
-			hi = max(0, min(int((hx-plot.X)/slot), len(steps)-1))
+	labels := make([]string, len(steps))
+	labels[0] = steps[0].At.Local().Format("15:04")
+	if len(steps) > 1 {
+		labels[len(steps)-1] = steps[len(steps)-1].At.Local().Format("15:04")
+	}
+	x := chart.NewBand(labels...).Padding(0.3, 0)
+	y := chart.NewLinear(0, float64(top))
+	// Read back, then the miss, then what was new plus what was written: an
+	// uncacheable request is one faint segment in the third series.
+	series := make([][]float64, 3)
+	for si := range series {
+		series[si] = make([]float64, len(steps))
+	}
+	for i, st := range steps {
+		if st.Expected < 0 {
+			series[2][i] = float64(st.Prompt + st.Read + st.Write)
+			continue
 		}
-		for i, st := range steps {
-			x := plot.X + slot*float32(i) + (slot-bw)/2
-			y := plot.Y + plot.H
-			fade := hi >= 0 && hi != i
-			seg := func(v int64, col ui.Color) {
-				h := plot.H * g * float32(float64(v)/float64(top))
-				if h <= 0 {
-					return
+		series[0][i] = float64(st.Read)
+		series[1][i] = float64(min(st.Miss, st.Prompt))
+		series[2][i] = float64(max(st.Prompt-st.Miss, 0) + st.Write)
+	}
+	stacked := chart.Stack(series, chart.StackStandard)
+	xs := make([]float32, len(steps))
+	for i := range steps {
+		xs[i] = x.At(i)
+	}
+	el.Children(func() {
+		chart.Plot(c, chart.Axes{
+			Bottom: x.Ticks(),
+			Label:  func(side chart.Side, t chart.Tick) { tickLabel(c, pal, side, t) },
+		}, func(area ui.Element) {
+			area.Label(name)
+			sel := ui.Local(area, "chartSel", func() int { return -1 })
+			if sel == nil {
+				none := -1
+				sel = &none
+			}
+			chart.Select(c, area, sel, xs, func(i int) string {
+				return steps[i].At.Local().Format("15:04:05") + " · " + steps[i].Model
+			})
+			area.Draw(func(p *ui.Painter, r ui.Rect) {
+				hi := *sel
+				if hi >= len(steps) {
+					hi = -1
 				}
-				if fade {
-					col = col.Alpha(0.35)
+				if hi >= 0 {
+					sp := x.Band(hi)
+					p.Fill(ui.Rect{X: r.X + sp.Lo*r.W, Y: r.Y, W: (sp.Hi - sp.Lo) * r.W, H: r.H}, pal.hover, 6)
 				}
-				p.Fill(ui.Rect{X: x, Y: y - h, W: bw, H: h}, col, 1.5)
-				y -= h
-			}
-			if st.Expected < 0 {
-				seg(st.Prompt+st.Read+st.Write, pal.ink.Alpha(0.12))
-			} else {
-				seg(st.Read, cacheColor)
-				seg(min(st.Miss, st.Prompt), causeColor(st.Cause))
-				seg(max(st.Prompt-st.Miss, 0)+st.Write, pal.ink.Alpha(0.18))
-			}
-			if st.Boundary != "" {
-				bx := plot.X + slot*float32(i)
-				for yy := plot.Y; yy < plot.Y+plot.H; yy += 6 {
-					p.Line(bx, yy, bx, min(yy+3, plot.Y+plot.H), 1, Soyo)
+				for i, st := range steps {
+					sp := x.Band(i)
+					bw := max(min((sp.Hi-sp.Lo)*r.W, 10), 1)
+					bx := r.X + sp.Mid()*r.W - bw/2
+					fade := hi >= 0 && hi != i
+					for si := range stacked {
+						seg := stacked[si][i]
+						if seg.Hi <= seg.Lo {
+							continue
+						}
+						var col ui.Color
+						switch {
+						case si == 0:
+							col = cacheColor
+						case si == 1:
+							col = causeColor(st.Cause)
+						case st.Expected < 0:
+							col = pal.ink.Alpha(0.12)
+						default:
+							col = pal.ink.Alpha(0.18)
+						}
+						if fade {
+							col = col.Alpha(0.35)
+						}
+						y0 := chart.Y(r, y.At(seg.Lo*float64(g)))
+						y1 := chart.Y(r, y.At(seg.Hi*float64(g)))
+						p.Fill(ui.Rect{X: bx, Y: y1, W: bw, H: y0 - y1}, col, 1.5)
+					}
+					if st.Boundary != "" {
+						bx := r.X + sp.Lo*r.W
+						for yy := r.Y; yy < r.Y+r.H; yy += 6 {
+							p.Line(bx, yy, bx, min(yy+3, r.Y+r.H), 1, Soyo)
+						}
+					}
 				}
-			}
-		}
-		p.Line(plot.X, plot.Y+plot.H, plot.X+plot.W, plot.Y+plot.H, 1, pal.faint)
-		if n := len(steps); n > 0 {
-			first, last := steps[0].At.Local().Format("15:04"), steps[n-1].At.Local().Format("15:04")
-			p.RichText(plot.X, plot.Y+plot.H+3, 0, ui.Span{Text: first, Size: 10, Color: pal.muted})
-			lw, _ := p.MeasureText(0, ui.Span{Text: last, Size: 10})
-			p.RichText(plot.X+plot.W-lw, plot.Y+plot.H+3, 0, ui.Span{Text: last, Size: 10, Color: pal.muted})
-		}
-		if hi >= 0 {
-			st := steps[hi]
-			rows := [][2]string{{tr("cachePrompt"), fmtTokens(st.Prompt + st.Read + st.Write)}, {tr("cause-read"), fmtTokens(st.Read)}}
-			cols := []ui.Color{pal.ink.Alpha(0.4), cacheColor}
-			switch {
-			case st.Expected < 0:
-				rows = append(rows, [2]string{tr("cacheExpected"), tr("cacheUncacheable")})
-				cols = append(cols, pal.ink.Alpha(0.3))
-			default:
-				rows = append(rows, [2]string{tr("cacheExpected"), fmtTokens(st.Expected)})
-				cols = append(cols, pal.ink.Alpha(0.4))
-				if st.Miss > 0 {
-					rows = append(rows, [2]string{tr("cause-" + st.Cause), fmtTokens(st.Miss)}, [2]string{tr("cacheExtra"), fmtCost(st.USD)})
-					cols = append(cols, causeColor(st.Cause), Anon)
+				p.Line(r.X, r.Y+r.H, r.X+r.W, r.Y+r.H, 1, pal.faint)
+			})
+			if hi := *sel; hi >= 0 && hi < len(steps) {
+				st := steps[hi]
+				rows := [][2]string{{tr("cachePrompt"), fmtTokens(st.Prompt + st.Read + st.Write)}, {tr("cause-read"), fmtTokens(st.Read)}}
+				cols := []ui.Color{pal.ink.Alpha(0.4), cacheColor}
+				switch {
+				case st.Expected < 0:
+					rows = append(rows, [2]string{tr("cacheExpected"), tr("cacheUncacheable")})
+					cols = append(cols, pal.ink.Alpha(0.3))
+				default:
+					rows = append(rows, [2]string{tr("cacheExpected"), fmtTokens(st.Expected)})
+					cols = append(cols, pal.ink.Alpha(0.4))
+					if st.Miss > 0 {
+						rows = append(rows, [2]string{tr("cause-" + st.Cause), fmtTokens(st.Miss)}, [2]string{tr("cacheExtra"), fmtCost(st.USD)})
+						cols = append(cols, causeColor(st.Cause), Anon)
+					}
 				}
+				title := st.At.Local().Format("15:04:05") + " · " + st.Model
+				if st.Boundary != "" {
+					title += " · " + tr("cause-compact")
+				}
+				total := 0.0
+				for si := range stacked {
+					total = math.Max(total, stacked[si][hi].Hi)
+				}
+				h, v := tipAlign(hi, len(steps), y.At(total*float64(g)))
+				chart.Anchor(c, x.At(hi), max(y.At(total*float64(g)), 0.06), h, v, func() {
+					tipCard(c, pal, title, rows, cols)
+				})
 			}
-			title := st.At.Local().Format("15:04:05") + " · " + st.Model
-			if st.Boundary != "" {
-				title += " · " + tr("cause-compact")
-			}
-			tooltipBox(p, pal, r, plot.X+slot*float32(hi)+slot/2, hy, title, rows, cols)
-		}
+		}).FillWidth().Height(height)
 	})
+	return el
 }

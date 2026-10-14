@@ -97,38 +97,73 @@ var slashCommandRE = regexp.MustCompile(`^/[A-Za-z][A-Za-z0-9_-]*(\s|$)`)
 // NewWithRoots.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 // New returns a parser for the default Hermes home.
-func New() *Parser { return &Parser{roots: DefaultRoots()} }
+func New() *Parser { return &Parser{roots: DefaultRoots(), prov: rootProvenance} }
 
 // NewWithRoots returns a parser reading the given Hermes homes.
 func NewWithRoots(roots ...string) *Parser {
 	if len(roots) == 0 {
 		roots = DefaultRoots()
 	}
-	return &Parser{roots: roots}
+	return &Parser{roots: append([]string(nil), roots...)}
 }
 
 func init() { harness.Register(New()) }
 
-// DefaultRoots returns $HERMES_HOME, else ~/.hermes.
-func DefaultRoots() []string {
-	if v := strings.TrimSpace(os.Getenv("HERMES_HOME")); v != "" {
-		return []string{v}
+// rootProvenance reports Hermes's default roots and where they came from.
+// HERMES_HOME is an explicit harness-specific base; the home-directory default
+// is used otherwise.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv("HERMES_HOME"); ok {
+		return harness.EnvRoots("HERMES_HOME", v), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
+		return nil, nil
+	}
+	return harness.BuiltinRoots(filepath.Join(home, ".hermes")), nil
+}
+
+// DefaultRoots returns $HERMES_HOME, else ~/.hermes.
+func DefaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
 		return nil
 	}
-	return []string{filepath.Join(home, ".hermes")}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // Harness identifies the parser.
 func (p *Parser) Harness() model.Harness { return model.Hermes }
 
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
+
 // Roots returns the configured Hermes homes.
-func (p *Parser) Roots() []string { return p.roots }
+func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }
 
 // Discover returns every state.db under the configured roots, the default
 // profile first (sorted by path).

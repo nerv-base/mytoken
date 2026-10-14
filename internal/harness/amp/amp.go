@@ -69,6 +69,10 @@ const (
 // Parser implements harness.Parser for Amp.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 var _ harness.Parser = (*Parser)(nil)
@@ -76,7 +80,11 @@ var _ harness.Parser = (*Parser)(nil)
 func init() { harness.Register(New()) }
 
 // New returns a parser over the default roots.
-func New() *Parser { return NewWithRoots(defaultRoots()...) }
+func New() *Parser {
+	p := NewWithRoots(defaultRoots()...)
+	p.prov = rootProvenance
+	return p
+}
 
 // NewWithRoot returns a parser over a single root.
 func NewWithRoot(root string) *Parser { return NewWithRoots(root) }
@@ -100,27 +108,68 @@ func NewWithRoots(roots ...string) *Parser {
 	return p
 }
 
-// defaultRoots resolves the Amp data directories.
-func defaultRoots() []string {
-	if dirs := strings.TrimSpace(os.Getenv("MYTOKEN_AMP_DIRS")); dirs != "" {
-		return filepath.SplitList(dirs)
+// rootProvenance reports Amp's default roots and where each came from. It reads
+// the environment on every call so an override set after startup is honoured.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv("MYTOKEN_AMP_DIRS"); ok {
+		dirs, err := harness.SplitEnvList("MYTOKEN_AMP_DIRS", v)
+		if err != nil {
+			return nil, err
+		}
+		return harness.EnvRoots("MYTOKEN_AMP_DIRS", dirs...), nil
 	}
-	if dirs := strings.TrimSpace(os.Getenv("AMP_DATA_DIR")); dirs != "" {
-		var out []string
-		for _, part := range strings.Split(dirs, ",") {
+	if v, ok := harness.Getenv("AMP_DATA_DIR"); ok {
+		var dirs []string
+		for _, part := range strings.Split(v, ",") {
 			if part = strings.TrimSpace(part); part != "" {
-				out = append(out, part)
+				dirs = append(dirs, filepath.Clean(part))
 			}
 		}
-		if len(out) > 0 {
-			return out
+		if len(dirs) == 0 {
+			return nil, &harness.EnvListError{Env: "AMP_DATA_DIR", Value: v}
 		}
+		return harness.EnvRoots("AMP_DATA_DIR", dirs...), nil
 	}
+	return harness.BuiltinRoots(builtinRoots()...), nil
+}
+
+// builtinRoots is Amp's platform default, used when no explicit override is set.
+func builtinRoots() []string {
 	return []string{filepath.Join(harness.Home(), ".local", "share", "amp")}
+}
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // Harness reports the harness this parser reads.
 func (p *Parser) Harness() model.Harness { return model.Amp }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots reports the configured roots.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }

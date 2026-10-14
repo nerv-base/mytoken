@@ -76,11 +76,12 @@ func TestDailyAggregateConsistency(t *testing.T) {
 func assertDailyRows(t *testing.T, st *Store) {
 	t.Helper()
 	type key struct {
-		day  int64
-		dims [6]string
+		day      int64
+		instance string
+		dims     [6]string
 	}
 	expected := map[key][10]float64{}
-	rows, err := st.DB().Query(`SELECT timestamp,harness,session_id,resolved_provider,model,project,attrib,input,output,cache_read,cache_write,reasoning,cost,log_cost,priced FROM events`)
+	rows, err := st.DB().Query(`SELECT timestamp,instance_id,harness,session_id,resolved_provider,model,project,attrib,input,output,cache_read,cache_write,reasoning,cost,log_cost,priced FROM events`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func assertDailyRows(t *testing.T, st *Store) {
 		var cost float64
 		var log sql.NullFloat64
 		var priced bool
-		if err = rows.Scan(&timestamp, &k.dims[0], &k.dims[1], &k.dims[2], &k.dims[3], &k.dims[4], &k.dims[5], &v[0], &v[1], &v[2], &v[3], &v[4], &cost, &log, &priced); err != nil {
+		if err = rows.Scan(&timestamp, &k.instance, &k.dims[0], &k.dims[1], &k.dims[2], &k.dims[3], &k.dims[4], &k.dims[5], &v[0], &v[1], &v[2], &v[3], &v[4], &cost, &log, &priced); err != nil {
 			t.Fatal(err)
 		}
 		local := time.Unix(0, timestamp).In(time.Local)
@@ -126,7 +127,7 @@ func assertDailyRows(t *testing.T, st *Store) {
 	for rows.Next() {
 		var k key
 		var actual [10]float64
-		if err = rows.Scan(&k.day, &k.dims[0], &k.dims[1], &k.dims[2], &k.dims[3], &k.dims[4], &k.dims[5], &actual[0], &actual[1], &actual[2], &actual[3], &actual[4], &actual[5], &actual[6], &actual[7], &actual[8], &actual[9]); err != nil {
+		if err = rows.Scan(&k.day, &k.dims[0], &k.instance, &k.dims[1], &k.dims[2], &k.dims[3], &k.dims[4], &k.dims[5], &actual[0], &actual[1], &actual[2], &actual[3], &actual[4], &actual[5], &actual[6], &actual[7], &actual[8], &actual[9]); err != nil {
 			t.Fatal(err)
 		}
 		want, ok := expected[k]

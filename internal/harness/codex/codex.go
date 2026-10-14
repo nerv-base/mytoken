@@ -44,6 +44,7 @@ import (
 
 	"github.com/zzstar101/mytoken/internal/harness"
 	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/zzstar101/mytoken/internal/quota"
 )
 
 const (
@@ -55,10 +56,14 @@ const (
 // Parser implements harness.Parser for Codex CLI.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 // New returns a parser for the standard Codex locations.
-func New() *Parser { return &Parser{roots: DefaultRoots()} }
+func New() *Parser { return &Parser{roots: DefaultRoots(), prov: rootProvenance} }
 
 // NewWithRoots returns a parser reading the given roots (tests).
 func NewWithRoots(roots ...string) *Parser {
@@ -67,14 +72,54 @@ func NewWithRoots(roots ...string) *Parser {
 
 func init() { harness.Register(New()) }
 
-// DefaultRoots returns $CODEX_HOME/sessions and .../archived_sessions.
-func DefaultRoots() []string {
-	base := harness.EnvOr("CODEX_HOME", ".codex")
+// rootProvenance reports Codex's default roots and where each came from.
+// CODEX_HOME is an explicit harness-specific base; otherwise the base is the
+// platform default.
+func rootProvenance() ([]harness.Root, error) {
+	if base, ok := harness.Getenv("CODEX_HOME"); ok {
+		return harness.EnvRoots("CODEX_HOME", sessionRoots(base)...), nil
+	}
+	return harness.BuiltinRoots(sessionRoots(filepath.Join(harness.Home(), ".codex"))...), nil
+}
+
+func sessionRoots(base string) []string {
 	return []string{filepath.Join(base, "sessions"), filepath.Join(base, "archived_sessions")}
+}
+
+// DefaultRoots returns $CODEX_HOME/sessions and .../archived_sessions.
+func DefaultRoots() []string { return defaultRoots() }
+
+// defaultRoots returns the paths of rootProvenance.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // Harness implements harness.Parser.
 func (p *Parser) Harness() model.Harness { return model.Codex }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots implements harness.Parser.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }
@@ -130,6 +175,18 @@ type state struct {
 	Updated  string                `json:"u,omitempty"`
 	Total    *model.Tokens         `json:"tot,omitempty"`
 	Boundary harness.BoundaryState `json:"boundary,omitzero"`
+	// Lines counts the complete rollout lines consumed so far, so a quota
+	// line number stays absolute across incremental batches.
+	Lines int64 `json:"ln,omitempty"`
+	// Quota is the bounded selection state of this rollout's rate_limits
+	// payloads (see quota.Collector). It is opaque to the store and stays empty
+	// for a rollout that carries no rate_limits.
+	Quota string `json:"q,omitempty"`
+	// Branch is the repository branch session_meta recorded. It is carried
+	// across an incremental cursor because the session_meta line lives in
+	// already-consumed bytes; it is only ever applied to records of the same
+	// rollout, never to an event from a different source.
+	Branch string `json:"b,omitempty"`
 }
 
 type rawLine struct {
@@ -165,6 +222,21 @@ type rawPayload struct {
 
 	Usage            *rawUsage `json:"usage"`
 	ThreadTokenUsage *rawUsage `json:"thread_token_usage"`
+
+	// RateLimits is the quota observation Codex attaches to some records. It is
+	// read from the payload object and never inferred from token counts.
+	RateLimits json.RawMessage `json:"rate_limits"`
+
+	// Git is the repository snapshot Codex writes on session_meta. Only the
+	// branch is retained: the remote URL and commit hash are not repository
+	// usage evidence and are deliberately never read or persisted.
+	Git *gitPayload `json:"git"`
+}
+
+// gitPayload is the subset of session_meta.git this parser keeps. Unknown
+// fields (repository_url, commit_hash, ...) are ignored by encoding/json.
+type gitPayload struct {
+	Branch string `json:"branch"`
 }
 
 type infoPayload struct {
@@ -234,6 +306,17 @@ func decodePayload(raw json.RawMessage) (rawPayload, bool) {
 	}
 	pl.Usage = usage("usage")
 	pl.ThreadTokenUsage = usage("thread_token_usage")
+	pl.RateLimits = fields["rate_limits"]
+	// A failed strict decode above can still have allocated pl.Git before it
+	// rejected the shape, so clear it first: a non-object git field must read as
+	// absent (unknown branch), never as an empty branch that looks recorded.
+	pl.Git = nil
+	if r, ok := fields["git"]; ok && string(r) != "null" {
+		var g gitPayload
+		if json.Unmarshal(r, &g) == nil {
+			pl.Git = &g
+		}
+	}
 	return pl, true
 }
 
@@ -298,6 +381,9 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 	var skipped int64
 	var skippedTime time.Time
 	off := start
+	// lineNo counts complete lines, continuing the count an earlier batch
+	// persisted so a quota observation's line number is absolute for the file.
+	lineNo := stt.Lines
 	for {
 		if err := ctx.Err(); err != nil {
 			return b, err
@@ -321,6 +407,7 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 		}
 		if skipped > 0 {
 			off += skipped + int64(len(line))
+			lineNo++
 			acc.observe(skippedTime)
 			skipped = 0
 			continue
@@ -333,6 +420,8 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 		if cap(pending) > 1<<20 {
 			pending = nil
 		}
+		lineNo++
+		acc.line = lineNo
 		line = trimEOL(line)
 		if len(line) == 0 {
 			continue
@@ -355,7 +444,11 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 		p.handleLine(&b, &rl, acc, ts)
 	}
 
+	acc.line = lineNo
 	b.Sessions = acc.sessionMeta()
+	// Quota is additive: a rollout with no rate_limits payload leaves it nil,
+	// and the token accounting above is unaffected either way.
+	b.Quota = acc.collector.Report(quota.CodexOptions{Source: src.Path})
 	b.Next = harness.Cursor{
 		Offset:      off,
 		Size:        st.Size(),
@@ -369,6 +462,9 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 var (
 	tsPrefix      = []byte(`{"timestamp":"`)
 	payloadPrefix = []byte(`"payload":{"type":"`)
+	// rateLimitsKey guards the fast skip path: a record mentioning it must be
+	// decoded, because it may be the only carrier of a quota observation.
+	rateLimitsKey = []byte(`"rate_limits"`)
 )
 
 // skippable recognises, without decoding, the rollout lines whose only effect is
@@ -435,6 +531,13 @@ func skippable(line []byte) (time.Time, bool) {
 	default:
 		return time.Time{}, false
 	}
+	// A record that carries a rate_limits payload is never skipped, whatever
+	// its type: quota is read from the payload and must be retained even when
+	// the record contributes no usage event. The scan is a cheap byte search
+	// over bytes this function already walked.
+	if bytes.Contains(head[end+1:], rateLimitsKey) {
+		return time.Time{}, false
+	}
 	ts, _ := parseTime(string(stamp))
 	return ts, true
 }
@@ -459,6 +562,11 @@ func (p *Parser) handleLine(b *harness.Batch, rl *rawLine, acc *accumulator, ts 
 }
 
 func handlePayload(b *harness.Batch, typ string, pl *rawPayload, acc *accumulator, ts time.Time) {
+	// Quota is captured before the record's own handling, so a quota-only
+	// record (a rate_limits payload with no usage, no info block, or a
+	// duplicate cumulative snapshot) still contributes its observation even
+	// when it emits no usage event.
+	acc.observeQuota(typ, pl.Type, ts, pl.RateLimits)
 	switch typ {
 	case "compacted":
 		acc.boundary.Pending = model.BoundaryCompact
@@ -478,6 +586,9 @@ func handlePayload(b *harness.Batch, typ string, pl *rawPayload, acc *accumulato
 		}
 		if pid := parentOf(pl); pid != "" {
 			acc.parent = pid
+		}
+		if pl.Git != nil {
+			acc.setBranch(b, pl.Git.Branch)
 		}
 		acc.observe(ts)
 		return
@@ -532,6 +643,17 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// recordLabel renders a record's static type path the way the quota package
+// names records (outer type, then the payload's own type when it differs).
+func recordLabel(typ, ptype string) string {
+	switch {
+	case typ == "" || ptype == "" || typ == ptype:
+		return firstNonEmpty(typ, ptype)
+	default:
+		return typ + "." + ptype
+	}
 }
 
 func parentOf(pl *rawPayload) string {
@@ -594,12 +716,21 @@ type accumulator struct {
 	provider string
 	cwd      string
 	title    string
+	// branch is the repository branch this rollout's session_meta recorded. It
+	// is rollout-wide evidence: Codex states it once, so it applies to every
+	// event of the rollout, including events already buffered in this batch.
+	branch string
 
 	started time.Time
 	updated time.Time
 
 	prevTotal *model.Tokens
 	boundary  harness.BoundaryState
+
+	// collector holds this rollout's quota selection state across incremental
+	// batches; line is the absolute 1-based line of the record being handled.
+	collector *quota.Collector
+	line      int64
 
 	index map[string]int
 	// unmodeled indexes events of the current batch that were written before a
@@ -616,8 +747,10 @@ func newAccumulator(st *state) *accumulator {
 		provider:  st.Provider,
 		cwd:       st.Cwd,
 		title:     st.Title,
+		branch:    st.Branch,
 		prevTotal: st.Total,
 		boundary:  st.Boundary,
+		collector: quota.LoadCollector(st.Quota),
 		index:     map[string]int{},
 	}
 	if t, err := time.Parse(time.RFC3339, st.Started); err == nil {
@@ -641,6 +774,24 @@ func (a *accumulator) observe(ts time.Time) {
 	}
 }
 
+// setBranch records the branch session_meta stated and backfills events of this
+// batch that were buffered before it. Codex writes session_meta once per
+// rollout, so it describes every event in that rollout — including the replayed
+// history a resumed rollout emits ahead of its own turn_context. It never
+// touches a different rollout, and an event whose branch is already known keeps
+// it.
+func (a *accumulator) setBranch(b *harness.Batch, branch string) {
+	if branch == "" || branch == a.branch {
+		return
+	}
+	a.branch = branch
+	for i := range b.Events {
+		if b.Events[i].GitBranch == "" {
+			b.Events[i].GitBranch = branch
+		}
+	}
+}
+
 // setModel records the current model and backfills events of this batch that
 // were emitted before the model was known.
 func (a *accumulator) setModel(b *harness.Batch, m string) {
@@ -659,6 +810,27 @@ func (a *accumulator) setTitle(text string) {
 		return
 	}
 	a.title = harness.Title(text)
+}
+
+// observeQuota records the quota observation a record carried. Nothing is
+// inferred from tokens: only a record that actually carries a rate_limits
+// payload contributes, and it is reduced by the same selector an offline read
+// of the whole rollout would use, so incremental batches agree with ReadCodex.
+func (a *accumulator) observeQuota(typ, ptype string, ts time.Time, raw json.RawMessage) {
+	if len(raw) == 0 {
+		return
+	}
+	if a.collector == nil {
+		a.collector = quota.NewCollector()
+	}
+	// The record's instant is re-rendered rather than forwarded raw: the
+	// parser and the quota reader accept the same RFC3339 form, and a record
+	// with no usable timestamp is reported as such instead of being dated.
+	stamp := ""
+	if !ts.IsZero() {
+		stamp = ts.UTC().Format(time.RFC3339)
+	}
+	a.collector.ObserveRateLimits(recordLabel(typ, ptype), stamp, int(a.line), raw)
 }
 
 // addUsage turns one token record into a UsageEvent. total is the
@@ -687,6 +859,7 @@ func (a *accumulator) addUsage(b *harness.Batch, total, last *rawUsage, ts time.
 		Model:       a.model,
 		Provider:    a.provider,
 		Tokens:      tk,
+		GitBranch:   a.branch,
 	}
 	if len(requestID) > 0 {
 		ev.RequestID = requestID[0]
@@ -697,6 +870,9 @@ func (a *accumulator) addUsage(b *harness.Batch, total, last *rawUsage, ts time.
 			b.Events[i].Tokens = maxTokens(b.Events[i].Tokens, ev.Tokens)
 			if ev.Timestamp.After(b.Events[i].Timestamp) {
 				b.Events[i].Timestamp = ev.Timestamp
+			}
+			if b.Events[i].GitBranch == "" {
+				b.Events[i].GitBranch = ev.GitBranch
 			}
 			return
 		}
@@ -771,8 +947,11 @@ func (a *accumulator) encodeState() string {
 		Provider: a.provider,
 		Cwd:      a.cwd,
 		Title:    a.title,
+		Branch:   a.branch,
 		Total:    a.prevTotal,
 		Boundary: a.boundary,
+		Lines:    a.line,
+		Quota:    a.collector.EncodeState(),
 	}
 	if !a.started.IsZero() {
 		st.Started = a.started.UTC().Format(time.RFC3339Nano)

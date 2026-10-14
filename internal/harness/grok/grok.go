@@ -118,6 +118,10 @@ const (
 // Parser implements harness.Parser for Grok CLI recordings.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 var _ harness.Parser = (*Parser)(nil)
@@ -125,7 +129,11 @@ var _ harness.Parser = (*Parser)(nil)
 func init() { harness.Register(New()) }
 
 // New returns a parser rooted at the default Grok home.
-func New() *Parser { return NewWithRoots() }
+func New() *Parser {
+	p := NewWithRoots()
+	p.prov = rootProvenance
+	return p
+}
 
 // NewWithRoot returns a parser rooted at one Grok home.
 func NewWithRoot(root string) *Parser { return NewWithRoots(root) }
@@ -152,28 +160,58 @@ func NewWithRoots(roots ...string) *Parser {
 	return p
 }
 
-// defaultRoots resolves the Grok home: $MYTOKEN_GROK_DIRS (a list) wins, then
-// $GROK_HOME, then ~/.grok.
-func defaultRoots() []string {
-	if v := os.Getenv("MYTOKEN_GROK_DIRS"); v != "" {
-		var out []string
-		for _, root := range filepath.SplitList(v) {
-			if root != "" {
-				out = append(out, filepath.Clean(root))
-			}
+// rootProvenance reports Grok's default roots and where each came from.
+// MYTOKEN_GROK_DIRS replaces the whole set and GROK_HOME is an explicit
+// harness-specific base; otherwise the root is the platform default.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv("MYTOKEN_GROK_DIRS"); ok {
+		dirs, err := harness.SplitEnvList("MYTOKEN_GROK_DIRS", v)
+		if err != nil {
+			return nil, err
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return harness.EnvRoots("MYTOKEN_GROK_DIRS", dirs...), nil
 	}
-	return []string{harness.EnvOr("GROK_HOME", ".grok")}
+	if home, ok := harness.Getenv("GROK_HOME"); ok {
+		return harness.EnvRoots("GROK_HOME", home), nil
+	}
+	return harness.BuiltinRoots(filepath.Join(harness.Home(), ".grok")), nil
+}
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // Harness identifies the recordings this parser understands.
 func (p *Parser) Harness() model.Harness { return model.Grok }
 
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
+
 // Roots returns the Grok homes this parser scans.
-func (p *Parser) Roots() []string { return p.roots }
+func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }
 
 // Discover lists the unified log and every session recording that is not
 // already covered by the unified log.

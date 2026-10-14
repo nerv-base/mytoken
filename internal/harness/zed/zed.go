@@ -58,10 +58,14 @@ const (
 // Parser implements harness.Parser for the Zed editor.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 // New returns a parser for the standard Zed locations.
-func New() *Parser { return &Parser{roots: DefaultRoots()} }
+func New() *Parser { return &Parser{roots: DefaultRoots(), prov: rootProvenance} }
 
 // NewWithRoots returns a parser reading the given roots (tests).
 func NewWithRoots(roots ...string) *Parser {
@@ -70,19 +74,22 @@ func NewWithRoots(roots ...string) *Parser {
 
 func init() { harness.Register(New()) }
 
-// DefaultRoots returns the Zed threads directories for this machine.
-func DefaultRoots() []string {
-	if v := os.Getenv("MYTOKEN_ZED_DIRS"); v != "" {
-		var out []string
-		for _, p := range filepath.SplitList(v) {
-			if p = strings.TrimSpace(p); p != "" {
-				out = append(out, filepath.Clean(p))
-			}
+// rootProvenance reports Zed's default roots and where each came from.
+// MYTOKEN_ZED_DIRS replaces the whole set; otherwise the root comes from the
+// platform's own data location.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv("MYTOKEN_ZED_DIRS"); ok {
+		dirs, err := harness.SplitEnvList("MYTOKEN_ZED_DIRS", v)
+		if err != nil {
+			return nil, err
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return harness.EnvRoots("MYTOKEN_ZED_DIRS", dirs...), nil
 	}
+	return harness.BuiltinRoots(builtinRoots()...), nil
+}
+
+// builtinRoots is the platform default used when no explicit override is set.
+func builtinRoots() []string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return nil
@@ -100,8 +107,37 @@ func DefaultRoots() []string {
 	}
 }
 
+// DefaultRoots returns the Zed threads directories for this machine.
+func DefaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
+}
+
 // Harness identifies this parser's logs.
 func (p *Parser) Harness() model.Harness { return model.Zed }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots returns the configured roots; missing ones are ignored.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }

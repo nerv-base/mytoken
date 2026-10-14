@@ -2,6 +2,7 @@ package gui
 
 import (
 	"context"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,13 +22,34 @@ type pricingState struct {
 	providers []string
 	err       error
 
-	open    string   // the unpriced model whose catalog search is open
-	needle  string   // its search text
-	lastQ   string   // the last search sent
-	hits    []string // its results
-	mult    map[string]string
+	open   string   // the unpriced model whose catalog search is open
+	needle string   // its search text
+	lastQ  string   // the last search sent
+	hits   []string // its results
+	mult   map[string]string
+	// multVal is the number each multiplier input edits, derived from the
+	// same rules as mult but as a value the number input can hold.
+	multVal map[string]float64
 	busy    bool
-	message string
+	// pending holds a value written for a provider until a reload shows it
+	// stored: while it is set the input keeps the number the user typed
+	// instead of being reset to the one the rules still carry.
+	pending map[string]float64
+	// typed holds the text of an edit the field has not lost: it keeps the
+	// field from falling back to the stored value before the explicit Apply
+	// that submits the text has been handled, and is dropped once the rules
+	// carry what was typed.
+	typed map[string]string
+	// parked holds edits made while a write was in flight, applied once the
+	// reload after that write lands, so a step is applied rather than
+	// dropped and from rules that include the write's own result.
+	parked map[string]float64
+	// gen counts pricing reloads and parkedGen is the reload a parked edit
+	// waits for, so an edit is not written from rules older than the write
+	// that pushed it aside.
+	gen       int
+	parkedGen int
+	message   string
 }
 
 func (s *State) settings() query.Settings { return s.Hooks.Settings }
@@ -51,6 +73,27 @@ func (s *State) loadPricing() {
 			p := &s.pr
 			p.rules, p.aliases, p.unpriced, p.providers, p.err, p.loaded = rules, aliases, unpriced, providers, err, true
 			p.mult = providerMultipliers(rules, providers)
+			p.multVal = providerMultiplierValues(rules, providers)
+			p.gen++
+			// A value the user just submitted is what the input shows until
+			// the rules that will carry it come back.
+			for prov, m := range p.pending {
+				if providerMultiplier(rules, prov) == m {
+					delete(p.pending, prov)
+					continue
+				}
+				p.multVal[prov] = m
+			}
+			for prov, m := range p.parked {
+				p.multVal[prov] = m
+			}
+			// An edit is no longer unsaved once the rules carry what was
+			// typed; until then the field keeps the text.
+			for prov, text := range p.typed {
+				if m, ok := parseMultiplier(text); ok && providerMultiplier(rules, prov) == m {
+					delete(p.typed, prov)
+				}
+			}
 		}
 	})
 }
@@ -89,16 +132,137 @@ func providerMultiplier(rules []query.PriceRule, provider string) float64 {
 	return 1
 }
 
+// formatMultiplier renders a multiplier so the text the card shows and the
+// number the rules store round-trip exactly. A multiplier is money: rounding
+// it to the input's step, or cutting it to a fixed number of decimals, would
+// change what is billed, which docs/ROADMAP.md forbids.
+func formatMultiplier(m float64) string {
+	return strconv.FormatFloat(m, 'f', -1, 64)
+}
+
+// parseMultiplier reads a typed multiplier: an optional trailing "x" is
+// accepted, and the value must be a positive finite number. Nothing is
+// clamped to a control's range and nothing is rounded to a step, so the text
+// a user typed is what gets stored.
+func parseMultiplier(text string) (float64, bool) {
+	m, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(text), "x")), 64)
+	if err != nil || m <= 0 || math.IsInf(m, 0) || math.IsNaN(m) {
+		return 0, false
+	}
+	return m, true
+}
+
 // providerMultipliers renders providerMultiplier for every provider, leaving
-// out the 1× default so the card's input keeps its "1" placeholder.
+// out the 1× default so the card's field keeps its "1" placeholder. The value
+// is exact: an arbitrary multiplier such as 0.0001234 and one above any
+// control's range must survive rendering unchanged.
 func providerMultipliers(rules []query.PriceRule, providers []string) map[string]string {
 	out := make(map[string]string, len(providers))
 	for _, prov := range providers {
 		if m := providerMultiplier(rules, prov); m != 1 {
-			out[prov] = trimNum(m, 3)
+			out[prov] = formatMultiplier(m)
 		}
 	}
 	return out
+}
+
+// providerMultiplierValues is providerMultiplier as the value a number input
+// holds: every provider gets its multiplier, the 1× default included.
+func providerMultiplierValues(rules []query.PriceRule, providers []string) map[string]float64 {
+	out := make(map[string]float64, len(providers))
+	for _, prov := range providers {
+		m := providerMultiplier(rules, prov)
+		if m <= 0 {
+			m = 1
+		}
+		out[prov] = m
+	}
+	return out
+}
+
+// holdMultiplier remembers the value submitted for a provider until a reload
+// confirms it, allocating the map the first time one is needed.
+func (s *State) holdMultiplier(provider string, m float64) {
+	if s.pr.pending == nil {
+		s.pr.pending = map[string]float64{}
+	}
+	s.pr.pending[provider] = m
+}
+
+// queueMultiplier applies a multiplier the user just set: straight away when
+// no write is running, or once the one in flight has landed.
+func (s *State) queueMultiplier(provider string, m float64) {
+	if m <= 0 || math.IsInf(m, 0) || math.IsNaN(m) {
+		s.pr.message = tr("badMultiplier")
+		return
+	}
+	if s.pr.busy {
+		if s.pr.parked == nil {
+			s.pr.parked = map[string]float64{}
+			s.pr.parkedGen = s.pr.gen
+		}
+		s.pr.parked[provider] = m
+		return
+	}
+	s.holdMultiplier(provider, m)
+	s.setMultiplier(provider, formatMultiplier(m))
+}
+
+// submitMultiplier applies the text a user typed into a provider's multiplier
+// field. The text is what is stored: no step rounding and no clamping.
+func (s *State) submitMultiplier(provider, text string) {
+	m, ok := parseMultiplier(text)
+	if !ok {
+		s.pr.message = tr("badMultiplier")
+		return
+	}
+	s.holdMultiplierText(provider, text)
+	s.queueMultiplier(provider, m)
+}
+
+// holdMultiplierText remembers the text a field holds until what it says is
+// stored, so a frame that rebuilds the card cannot fall back to the old rule
+// before the edit is submitted or confirmed.
+func (s *State) holdMultiplierText(provider, text string) {
+	if s.pr.typed == nil {
+		s.pr.typed = map[string]string{}
+	}
+	s.pr.typed[provider] = text
+}
+
+// flushMultipliers writes one parked edit, but only once the reload that
+// follows the write which parked it has landed: writing sooner would send the
+// rule list from before that write.
+//
+// A parked value the rules already carry is dropped without a write, because
+// there is nothing to write and no reload would follow. That drop must not
+// consume the reload the remaining parked edits wait for: dropping it used to
+// advance parkedGen anyway, so a same-value first edit stranded every edit
+// queued behind it.
+func (s *State) flushMultipliers() {
+	p := &s.pr
+	if p.busy || len(p.parked) == 0 || p.gen == p.parkedGen {
+		return
+	}
+	provs := make([]string, 0, len(p.parked))
+	for prov := range p.parked {
+		provs = append(provs, prov)
+	}
+	sort.Strings(provs)
+	for _, prov := range provs {
+		m, ok := p.parked[prov]
+		if !ok {
+			continue
+		}
+		delete(p.parked, prov)
+		if providerMultiplier(p.rules, prov) == m {
+			continue
+		}
+		p.parkedGen = p.gen
+		s.holdMultiplier(prov, m)
+		s.setMultiplier(prov, formatMultiplier(m))
+		return
+	}
 }
 
 // mutate runs a settings change off the UI thread, then reloads everything
@@ -116,6 +280,10 @@ func (s *State) mutate(fn func(ctx context.Context, st query.Settings) (string, 
 			s.pr.message = msg
 			if err != nil {
 				s.pr.message = tr("failed") + ": " + err.Error()
+				// Nothing carries the value the user typed, so let the input
+				// fall back to what the rules do say.
+				s.pr.pending = nil
+				s.pr.typed = nil
 			}
 			s.loadPricing()
 			s.Reload()
@@ -141,8 +309,8 @@ func (s *State) removeAlias(i int) {
 }
 
 func (s *State) setMultiplier(provider, text string) {
-	m, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(text), "x")), 64)
-	if err != nil || m <= 0 {
+	m, ok := parseMultiplier(text)
+	if !ok {
 		s.pr.message = tr("badMultiplier")
 		return
 	}
@@ -165,7 +333,7 @@ func (s *State) setMultiplier(provider, text string) {
 		rules = append(rules, query.PriceRule{Provider: provider, Multiplier: m, Source: "user"})
 	}
 	s.mutate(func(ctx context.Context, st query.Settings) (string, error) {
-		return trf("multiplierSet", provider, trimNum(m, 3)), st.SetPriceRules(ctx, rules)
+		return trf("multiplierSet", provider, formatMultiplier(m)), st.SetPriceRules(ctx, rules)
 	})
 }
 
@@ -250,23 +418,42 @@ func (s *State) pricingCards(c *ui.Context, pal palette) {
 
 	// Relays often bill a fraction of list price: one multiplier per provider.
 	if len(p.providers) > 0 {
+		s.flushMultipliers()
 		card(c, pal, tr("multipliersTitle"), nil, func() {
 			ui.Text(c, tr("multipliersSub")).FontSize(12).TextColor(pal.muted)
 			provs := append([]string(nil), p.providers...)
 			sort.Strings(provs)
 			for _, prov := range provs {
-				ui.Row(c.Key("m/"+prov)).Gap(10).Padding(3, 0).AlignItems(ui.Center).Children(func() {
+				row := ui.Row(c.Key("m/"+prov)).Gap(10).Padding(3, 0).AlignItems(ui.Center)
+				row.Children(func() {
 					dot(c, bandAt(len(prov)), 8)
 					ui.Text(c, prov).FontSize(13).FontWeight(600).TextColor(pal.ink).Grow(1).Basis(0).SingleLine().Ellipsis("…")
-					v, ok := p.mult[prov]
-					if !ok {
-						v = "1"
-						p.mult[prov] = v
+					stored := p.mult[prov]
+					if stored == "" {
+						stored = "1"
 					}
-					val := p.mult[prov]
-					in := ui.TextInput(c, &val).Width(72).Placeholder("1").OnSubmit(func() { s.setMultiplier(prov, p.mult[prov]) })
-					p.mult[prov] = val
-					_ = in
+					// A multiplier is money, so the field keeps the exact text
+					// the rules carry and an explicit Apply writes it. A
+					// number control was tried and rejected: its range clamps
+					// an out-of-range multiplier and its step rounds a typed
+					// one, either of which would change what is billed.
+					txt := ui.Local(row, "multiplier", func() string { return stored })
+					if txt == nil {
+						return
+					}
+					in := ui.TextInput(c, txt).Label(trf("multiplierLabel", prov)).Placeholder("1")
+					if in.Changed() {
+						s.holdMultiplierText(prov, *txt)
+					}
+					// Apply is checked before the fallback below, so the click
+					// that submits the text cannot be preceded by the field
+					// losing the focus and reverting to the stored value.
+					if ui.Button(c, tr("apply")).Label(trf("multiplierApply", prov)).Clicked() ||
+						in.Shortcut(0, ui.KeyEnter) {
+						s.submitMultiplier(prov, *txt)
+					} else if len(p.typed) == 0 && len(p.pending) == 0 && len(p.parked) == 0 && *txt != stored {
+						*txt = stored
+					}
 					ui.Text(c, "×").FontSize(13).TextColor(pal.muted)
 				})
 			}
@@ -325,15 +512,34 @@ func (s *State) unpricedRow(c *ui.Context, pal palette, m query.UnpricedModel) {
 			})
 		})
 		if p.open == key {
-			ui.SearchField(c, &p.needle).FillWidth().Label(tr("searchCatalog"))
-			s.searchCatalog()
-			if len(p.hits) > 0 {
-				ui.Row(c).Gap(6).Wrap().Children(func() {
+			// The catalog query stays ours; the box is the native combo so
+			// the list opens, highlights and chooses the way other pickers do.
+			cb := ui.ComboboxBase(c, &p.needle)
+			in := cb.Input.Label(tr("searchCatalog")).Placeholder(tr("searchCatalog"))
+			if th := c.Theme(); th != nil {
+				in.Padding(th.Space(1.5), th.Space(2.5)).Radius(th.Radius).Background(th.Surface).Border(1, th.Border)
+			}
+			in.FillWidth()
+			if cb.Filtering() {
+				s.searchCatalog()
+			}
+			cb.Popup(func(panel ui.Element) {
+				panel.Padding(4).Radius(10).Background(pal.raised).Border(1, pal.edge).Shadow(0, 8, 22, -6, pal.lift).Children(func() {
 					for _, h := range p.hits {
-						suggestion(c.Key("h/"+h), pal, h, func() { s.addAlias(m.Model, m.Provider, h) })
+						item := cb.Item(h).Padding(5, 8).Radius(6)
+						if item.Highlighted() {
+							item.Background(pal.hover)
+						}
+						item.Children(func() {
+							ui.Text(c, h).FontSize(12).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…")
+						})
 					}
 				})
-			} else if strings.TrimSpace(p.needle) != "" {
+			})
+			if h, ok := cb.Chosen(); ok {
+				p.open, p.needle, p.lastQ, p.hits = "", "", "", nil
+				s.addAlias(m.Model, m.Provider, h)
+			} else if len(p.hits) == 0 && strings.TrimSpace(p.needle) != "" {
 				ui.Text(c, tr("noMatch")).FontSize(12).TextColor(pal.muted)
 			}
 		}

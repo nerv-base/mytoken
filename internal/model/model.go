@@ -177,6 +177,13 @@ type UsageEvent struct {
 	RequestID   string    `json:"requestId,omitempty"` // upstream request/response ID, never a local fallback
 	Boundary    Boundary  `json:"boundary,omitempty"`
 	Bill        *Bill     `json:"bill,omitempty"`
+	// GitBranch is the git branch the source log itself recorded for this
+	// request: Claude Code writes a top-level `gitBranch` on a transcript line,
+	// Codex writes `session_meta.payload.git.branch` once per rollout. It is
+	// evidence carried by the record, never a read of the working tree or of
+	// the current session's HEAD; the branch a log did not state stays "" and
+	// readers report it as unknown rather than dropping the request.
+	GitBranch string `json:"gitBranch,omitempty"`
 }
 
 // SessionMeta describes a session. Title is the only conversation text stored.

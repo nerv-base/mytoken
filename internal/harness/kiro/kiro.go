@@ -118,6 +118,10 @@ var modernConversationKeys = []string{"messages", "conversation", "chat", "trans
 // Parser implements harness.Parser for Kiro.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 var _ harness.Parser = (*Parser)(nil)
@@ -125,7 +129,11 @@ var _ harness.Parser = (*Parser)(nil)
 func init() { harness.Register(New()) }
 
 // New returns a parser over the default roots.
-func New() *Parser { return NewWithRoots(defaultRoots()...) }
+func New() *Parser {
+	p := NewWithRoots(defaultRoots()...)
+	p.prov = rootProvenance
+	return p
+}
 
 // NewWithRoot returns a parser over a single root.
 func NewWithRoot(root string) *Parser { return NewWithRoots(root) }
@@ -150,13 +158,45 @@ func NewWithRoots(roots ...string) *Parser {
 	return p
 }
 
-// defaultRoots resolves the Kiro home plus the platform agent directories.
-func defaultRoots() []string {
-	if dirs := strings.TrimSpace(os.Getenv("MYTOKEN_KIRO_DIRS")); dirs != "" {
-		return filepath.SplitList(dirs)
+// rootProvenance reports Kiro's default roots and where each came from.
+// MYTOKEN_KIRO_DIRS replaces the whole set, KIRO_HOME is an explicit
+// harness-specific base, and the platform agent directories are defaults.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv("MYTOKEN_KIRO_DIRS"); ok {
+		dirs, err := harness.SplitEnvList("MYTOKEN_KIRO_DIRS", v)
+		if err != nil {
+			return nil, err
+		}
+		return harness.EnvRoots("MYTOKEN_KIRO_DIRS", dirs...), nil
 	}
-	roots := []string{harness.EnvOr("KIRO_HOME", ".kiro")}
-	return append(roots, defaultAgentDirs()...)
+	var out []harness.Root
+	if home, ok := harness.Getenv("KIRO_HOME"); ok {
+		out = append(out, harness.Root{Path: home, Origin: harness.OriginEnv, Env: "KIRO_HOME"})
+	} else {
+		out = append(out, harness.Root{
+			Path:   filepath.Join(harness.Home(), ".kiro"),
+			Origin: harness.OriginBuiltin,
+		})
+	}
+	return append(out, harness.BuiltinRoots(defaultAgentDirs()...)...), nil
+}
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // defaultAgentDirs returns the v1 IDE agent directories for this platform.
@@ -178,6 +218,18 @@ func defaultAgentDirs() []string {
 
 // Harness reports the harness this parser reads.
 func (p *Parser) Harness() model.Harness { return model.Kiro }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots reports the configured roots.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }

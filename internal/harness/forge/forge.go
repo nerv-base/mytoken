@@ -84,14 +84,24 @@ const (
 )
 
 // Parser reads Forge conversation databases.
-type Parser struct{ roots []string }
+type Parser struct {
+	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
+}
 
 var _ harness.Parser = (*Parser)(nil)
 
 func init() { harness.Register(New()) }
 
 // New returns a parser for the default Forge location.
-func New() *Parser { return NewWithRoots(defaultRoots()...) }
+func New() *Parser {
+	p := NewWithRoots(defaultRoots()...)
+	p.prov = rootProvenance
+	return p
+}
 
 // NewWithRoot returns a parser for one root.
 func NewWithRoot(root string) *Parser { return NewWithRoots(root) }
@@ -119,16 +129,54 @@ func NewWithRoots(roots ...string) *Parser {
 // Harness reports the harness these events belong to.
 func (p *Parser) Harness() model.Harness { return model.Forge }
 
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
+
 // Roots returns the configured search roots.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }
 
-// defaultRoots resolves the location Forge writes to. Forge puts its database
-// below the home directory on every platform.
-func defaultRoots() []string {
-	if dirs := strings.TrimSpace(os.Getenv(rootsEnv)); dirs != "" {
-		return filepath.SplitList(dirs)
+// rootProvenance reports Forge's default roots and where each came from.
+// MYTOKEN_FORGE_DIRS replaces the whole set; otherwise both roots are platform
+// defaults. Forge puts its database below the home directory on every platform.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv(rootsEnv); ok {
+		dirs, err := harness.SplitEnvList(rootsEnv, v)
+		if err != nil {
+			return nil, err
+		}
+		return harness.EnvRoots(rootsEnv, dirs...), nil
 	}
-	return []string{filepath.Join(harness.Home(), defaultDirName), filepath.Join(harness.Home(), legacyDirName)}
+	return harness.BuiltinRoots(
+		filepath.Join(harness.Home(), defaultDirName),
+		filepath.Join(harness.Home(), legacyDirName),
+	), nil
+}
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // Discover finds every conversation that has a context blob. Each conversation

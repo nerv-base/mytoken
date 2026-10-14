@@ -118,11 +118,21 @@ var sessionFileRE = regexp.MustCompile(`^session(?:\.v(\d+))?\.jsonl(?:\.zstd)?$
 
 // Parser reads DSH session logs. It holds no mutable state and is safe for
 // concurrent use.
-type Parser struct{ roots []string }
+type Parser struct {
+	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
+}
 
 // New returns the parser for the default root: $DSH_HOME/sessions, falling back
 // to ~/.dsh/sessions.
-func New() *Parser { return NewWithRoots() }
+func New() *Parser {
+	p := NewWithRoots()
+	p.prov = rootProvenance
+	return p
+}
 
 // NewWithRoot returns a parser rooted at root. It exists for tests and for
 // tools that keep logs outside the home directory.
@@ -138,12 +148,50 @@ func NewWithRoots(roots ...string) *Parser {
 		}
 	}
 	if len(cp) == 0 {
-		cp = []string{filepath.Join(harness.EnvOr("DSH_HOME", ".dsh"), "sessions")}
+		cp = defaultRoots()
 	}
 	return &Parser{roots: cp}
 }
 
+// rootProvenance reports DSH's default root and where it came from. DSH_HOME is
+// an explicit harness-specific base; otherwise the base is the platform default.
+func rootProvenance() ([]harness.Root, error) {
+	if home, ok := harness.Getenv("DSH_HOME"); ok {
+		return harness.EnvRoots("DSH_HOME", filepath.Join(home, "sessions")), nil
+	}
+	return harness.BuiltinRoots(filepath.Join(harness.Home(), ".dsh", "sessions")), nil
+}
+
+// defaultRoots returns the paths of rootProvenance.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
+}
+
 func (p *Parser) Harness() model.Harness { return model.DSH }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots returns the directories to watch.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }

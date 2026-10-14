@@ -36,7 +36,7 @@ func TestSnapshots(t *testing.T) {
 				if page == "sessions" && len(rows) > 0 {
 					for _, r := range rows {
 						if r.Children > 0 {
-							s.Select(r.Harness, r.SessionID)
+							s.SelectRow(r)
 							break
 						}
 					}

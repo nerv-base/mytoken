@@ -17,12 +17,17 @@ func (s *State) rankingPage(c *ui.Context, pal palette) {
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Padding(8, 8, 16, 8).Gap(12).Children(func() {
 			ui.Row(c).Children(func() {
-				segmented(c, pal, &s.rankTab, tr("byModel"), tr("byProvider"), tr("byHarness"))
+				segmentedGroup(c, pal, &s.rankTab, tr("rankingBy"), tr("byModel"), tr("byProvider"), tr("byHarness"))
 			})
+			if s.rankTab == 1 {
+				// Providers are endpoint identities, not attribution names:
+				// this tab renders query.ProviderGroup rows with their stable
+				// Key, their provenance members and a display-only alias.
+				s.providersTab(c, pal)
+				return
+			}
 			var bs []query.Bucket
 			switch s.rankTab {
-			case 1:
-				bs = ov.Providers
 			case 2:
 				bs = ov.Harnesses
 			default:
@@ -52,58 +57,78 @@ func (s *State) rankingPage(c *ui.Context, pal palette) {
 	})
 }
 
+// rankTable is the leaderboard, drawn as the native table so its rows scroll,
+// hover and name themselves for screen readers; sorting and the column order
+// stay in the page.
 func (s *State) rankTable(c *ui.Context, pal palette, bs []query.Bucket) {
 	var all int64
 	for _, b := range bs {
 		all += b.Tokens.Total()
 	}
-	head := func(t string, w float32) {
-		ui.Text(c, t).FontSize(11).FontWeight(650).TextColor(pal.muted).Width(w).TextAlign(ui.End)
+	holder := ui.Box(c).FillWidth().Height(min(float32(420), 34+44*float32(len(bs))))
+	ls := ui.Local(holder, "rankList", func() ui.ListState { return ui.ListState{} })
+	if ls == nil {
+		return
 	}
-	ui.Row(c).Gap(12).Padding(0, 4, 6, 4).Children(func() {
-		ui.Text(c, "#").FontSize(11).TextColor(pal.muted).Width(22)
-		ui.Text(c, "").Grow(1)
-		head(tr("share"), 54)
-		head(tr("requests"), 70)
-		head(tr("cost"), 74)
-		head(tr("tokens"), 80)
-	})
-	ui.Divider(c)
-	for i, b := range bs {
-		row := ui.Row(c.Key(b.Key)).Gap(12).Padding(8, 4).Radius(8).AlignItems(ui.Center).Transition(hoverFade)
-		if row.Hovered() {
-			row.Background(pal.hover)
+	ls.Key = func(row int) any { return bs[row].Key }
+	ls.Label = func(row int) string {
+		if row < 0 || row >= len(bs) {
+			return ""
 		}
-		row.Children(func() {
-			num := ui.Text(c, fmt.Sprint(i+1)).Font(display).FontSize(15).FontWeight(700).TextColor(pal.muted).Width(22).FontFeatures("tnum")
-			if i < 3 {
-				num.TextColor(bandAt(i))
-			}
-			ui.Column(c).Grow(1).Basis(0).Gap(5).Children(func() {
-				label := b.Label
-				if label == "" {
-					label = b.Key
-				}
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					if s.rankTab == 2 {
-						harnessMark(c, model.Harness(b.Key), 15)
-					} else {
-						dot(c, bandAt(i), 8)
-					}
-					ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…")
-				})
-				classBar(c, pal, b.Tokens, 4)
-			})
-			share := 0.0
-			if all > 0 {
-				share = float64(b.Tokens.Total()) / float64(all)
-			}
-			ui.Text(c, fmtPct(share)).FontSize(12).TextColor(pal.muted).FontFeatures("tnum").Width(54).TextAlign(ui.End)
-			ui.Text(c, fmtInt(b.Requests)).FontSize(12).TextColor(pal.muted).FontFeatures("tnum").Width(70).TextAlign(ui.End)
-			ui.Text(c, fmtCostOf(b.CostUSD, b.Requests, b.Unpriced)).FontSize(12).TextColor(pal.ink).FontFeatures("tnum").Width(74).TextAlign(ui.End)
-			ui.Text(c, fmtTokens(b.Tokens.Total())).FontSize(13).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum").Width(80).TextAlign(ui.End)
-		})
+		if bs[row].Label != "" {
+			return bs[row].Label
+		}
+		return bs[row].Key
 	}
+	ls.RoundRows = true
+	cols := []ui.TableColumn{
+		{Title: "#", ID: "rank", Width: 34, Align: ui.End, Fixed: true},
+		{Title: "", ID: "name", MinWidth: 140},
+		{Title: tr("share"), ID: "share", Width: 54, Align: ui.End, Fixed: true},
+		{Title: tr("requests"), ID: "requests", Width: 70, Align: ui.End, Fixed: true},
+		{Title: tr("cost"), ID: "cost", Width: 74, Align: ui.End, Fixed: true},
+		{Title: tr("tokens"), ID: "tokens", Width: 80, Align: ui.End, Fixed: true},
+	}
+	holder.Children(func() {
+		ui.Table(c, ls, cols, len(bs), func(row, col int) {
+			b := bs[row]
+			switch col {
+			case 0:
+				num := ui.Text(c, fmt.Sprint(row+1)).Font(display).FontSize(15).FontWeight(700).TextColor(pal.muted).FontFeatures("tnum")
+				if row < 3 {
+					num.TextColor(bandAt(row))
+				}
+			case 1:
+				ui.Column(c).Gap(5).Children(func() {
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+						if s.rankTab == 2 {
+							harnessMark(c, model.Harness(b.Key), 15)
+						} else {
+							dot(c, bandAt(row), 8)
+						}
+						label := b.Label
+						if label == "" {
+							label = b.Key
+						}
+						ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…")
+					})
+					classBar(c, pal, b.Tokens, 4)
+				})
+			case 2:
+				share := 0.0
+				if all > 0 {
+					share = float64(b.Tokens.Total()) / float64(all)
+				}
+				ui.Text(c, fmtPct(share)).FontSize(12).TextColor(pal.muted).FontFeatures("tnum")
+			case 3:
+				ui.Text(c, fmtInt(b.Requests)).FontSize(12).TextColor(pal.muted).FontFeatures("tnum")
+			case 4:
+				ui.Text(c, fmtCostOf(b.CostUSD, b.Requests, b.Unpriced)).FontSize(12).TextColor(pal.ink).FontFeatures("tnum")
+			case 5:
+				ui.Text(c, fmtTokens(b.Tokens.Total())).FontSize(13).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum")
+			}
+		})
+	})
 }
 
 // projectsPage shows usage per working directory.
@@ -206,8 +231,8 @@ func (s *State) settingsPage(c *ui.Context, pal palette) {
 					}
 					ui.Divider(c)
 					settingRow(c, pal, tr("rebuild"), tr("rebuildSub"), func() {
-						if ui.Button(c, tr("rebuild")).Clicked() && s.Hooks.Rebuild != nil {
-							go s.Hooks.Rebuild()
+						if ui.Button(c, tr("rebuild")).Clicked() {
+							s.rebuild()
 						}
 					})
 					if s.Hooks.DataDir != "" {
@@ -215,7 +240,11 @@ func (s *State) settingsPage(c *ui.Context, pal palette) {
 						settingRow(c, pal, tr("dataDir"), s.Hooks.DataDir, nil)
 					}
 				})
+				s.sourcesInstancesCard(c, pal)
+				s.claudeQuotaCard(c, pal)
+				s.offlineQuotaCard(c, pal)
 				s.pricingCards(c, pal)
+				s.budgetCard(c, pal)
 			})
 			ui.Column(c).Width(360).Shrink(0).Gap(14).Children(func() {
 				s.sourcesCard(c, pal)

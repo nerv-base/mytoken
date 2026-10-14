@@ -30,7 +30,6 @@ package kilo
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -41,11 +40,21 @@ import (
 
 // Parser reads Kilo Code task logs. It holds no mutable state and is safe for
 // concurrent use.
-type Parser struct{ roots []string }
+type Parser struct {
+	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
+}
 
 // New returns the parser for the default roots: every VS Code family
 // globalStorage tasks directory.
-func New() *Parser { return NewWithRoots() }
+func New() *Parser {
+	p := NewWithRoots()
+	p.prov = rootProvenance
+	return p
+}
 
 // NewWithRoot returns a parser rooted at root. It exists for tests and for
 // tools that keep logs outside the home directory.
@@ -68,22 +77,51 @@ func NewWithRoots(roots ...string) *Parser {
 	return &Parser{roots: cp}
 }
 
-func defaultRoots() []string {
-	if v := os.Getenv("MYTOKEN_KILO_DIRS"); v != "" {
-		var out []string
-		for _, p := range filepath.SplitList(v) {
-			if p = strings.TrimSpace(p); p != "" {
-				out = append(out, filepath.Clean(p))
-			}
+// rootProvenance reports Kilo's default roots and where each came from.
+// MYTOKEN_KILO_DIRS replaces the whole set; otherwise the VS Code globalStorage
+// directories are platform defaults.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv("MYTOKEN_KILO_DIRS"); ok {
+		dirs, err := harness.SplitEnvList("MYTOKEN_KILO_DIRS", v)
+		if err != nil {
+			return nil, err
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return harness.EnvRoots("MYTOKEN_KILO_DIRS", dirs...), nil
 	}
-	return clinetask.VSCodeTaskDirs(clinetask.ExtensionIDKilo)
+	return harness.BuiltinRoots(clinetask.VSCodeTaskDirs(clinetask.ExtensionIDKilo)...), nil
+}
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 func (p *Parser) Harness() model.Harness { return model.Kilo }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots returns the directories to watch.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }

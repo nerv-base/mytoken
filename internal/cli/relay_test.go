@@ -160,6 +160,8 @@ func TestRelayDispatchAndParsing(t *testing.T) {
 		{name: "sync rejects two targets", args: []string{"relay", "sync", "a", "b"}, code: 2, errHas: "Usage: mytoken relay sync"},
 		{name: "reconcile rejects unknown by", args: []string{"reconcile", "--by", "site"}, code: 2, errHas: "invalid --by value"},
 		{name: "reconcile rejects no-cost", args: []string{"reconcile", "--no-cost"}, code: 2, errHas: "--no-cost is not supported"},
+		{name: "reconcile rejects provider", args: []string{"reconcile", "--provider", "name-a"}, code: 2, errHas: "unsupported selector --provider"},
+		{name: "reconcile rejects provider-id after target", args: []string{"reconcile", "https://api.example.com", "--provider-id", "endpoint:v1:abc"}, code: 2, errHas: "unsupported selector --provider-id"},
 		{name: "reconcile rejects two targets", args: []string{"reconcile", "a", "b"}, code: 2, errHas: "Usage: mytoken reconcile"},
 		{name: "reconcile rejects last plus since", args: []string{"reconcile", "--last", "week", "--since", "7d"}, code: 2, errHas: "mutually exclusive"},
 		{name: "reconcile rejects empty range", args: []string{"reconcile", "--since", "2026-02-01", "--until", "2026-01-01"}, code: 2, errHas: "empty time range"},
@@ -248,6 +250,61 @@ func TestParseReconcileRange(t *testing.T) {
 	}
 	if !req.rng.To.IsZero() {
 		t.Fatalf("default range should be open ended, got to=%s", req.rng.To)
+	}
+}
+
+// TestParseReconcileRejectsProviderFilters pins that reconcile refuses the
+// ledger provider selectors. reconcile does not query the ledger: it compares
+// one relay site, chosen by the positional <origin|provider> argument plus
+// --key-id (the Origin+KeyID relay identity). There is no query.Filter to
+// narrow, so accepting --provider/--provider-id and dropping them would falsely
+// imply the comparison was filtered. parseReconcile is called directly, so this
+// proof opens neither the App nor the network.
+func TestParseReconcileRejectsProviderFilters(t *testing.T) {
+	cases := []struct {
+		name  string
+		args  []string
+		flags []string // selectors that must be named in the error
+	}{
+		{name: "provider separate value", args: []string{"--provider", "name-a"}, flags: []string{"--provider"}},
+		{name: "provider equals form", args: []string{"--provider=name-a"}, flags: []string{"--provider"}},
+		{name: "provider-id separate value", args: []string{"--provider-id", "endpoint:v1:abc"}, flags: []string{"--provider-id"}},
+		{name: "provider-id equals form", args: []string{"--provider-id=endpoint:v1:abc"}, flags: []string{"--provider-id"}},
+		{name: "target before provider", args: []string{"https://api.example.com", "--provider", "name-a"}, flags: []string{"--provider"}},
+		{name: "target after provider-id", args: []string{"--provider-id", "endpoint:v1:abc", "https://api.example.com"}, flags: []string{"--provider-id"}},
+		{name: "target between both filters", args: []string{"--provider", "name-a", "https://api.example.com", "--provider-id", "endpoint:v1:abc"}, flags: []string{"--provider", "--provider-id"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var errout bytes.Buffer
+			req, code := parseReconcile(tc.args, &errout)
+			if code != 2 {
+				t.Fatalf("code=%d want 2 (stderr=%q, req=%+v)", code, errout.String(), req)
+			}
+			if req != (reconcileReq{}) {
+				t.Fatalf("a rejected line must not return a half-built request: %+v", req)
+			}
+			msg := errout.String()
+			if !strings.Contains(msg, "unsupported selector") {
+				t.Fatalf("stderr %q should name the selector as unsupported", msg)
+			}
+			for _, flag := range tc.flags {
+				if !strings.Contains(msg, flag) {
+					t.Fatalf("stderr %q does not name %s", msg, flag)
+				}
+			}
+		})
+	}
+
+	// The Origin+KeyID selector itself keeps working, and a positional target
+	// placed after the flags is still read as the target (not swallowed).
+	req, code := parseReconcile([]string{"--by", "day", "https://api.example.com", "--key-id", "0123456789ab"}, &bytes.Buffer{})
+	if code != 0 {
+		t.Fatalf("valid line code=%d want 0", code)
+	}
+	if req.target != "https://api.example.com" || req.keyID != "0123456789ab" || req.by != "day" {
+		t.Fatalf("got target=%q keyID=%q by=%q, want the positional target, key id and by",
+			req.target, req.keyID, req.by)
 	}
 }
 

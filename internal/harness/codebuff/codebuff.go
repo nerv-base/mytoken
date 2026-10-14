@@ -89,6 +89,10 @@ var channelNames = []string{"manicode", "manicode-dev", "manicode-staging"}
 // Parser implements harness.Parser for Codebuff chat transcripts.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 var _ harness.Parser = (*Parser)(nil)
@@ -99,7 +103,9 @@ func init() {
 
 // New returns a parser watching Codebuff's default channel roots.
 func New() harness.Parser {
-	return NewWithRoots(defaultRoots()...)
+	p := NewWithRoots(defaultRoots()...).(*Parser)
+	p.prov = rootProvenance
+	return p
 }
 
 // NewWithRoot returns a parser for a single root.
@@ -130,33 +136,61 @@ func NewWithRoots(roots ...string) harness.Parser {
 	return &Parser{roots: out}
 }
 
-// defaultRoots returns $MYTOKEN_CODEBUFF_DIRS, else $CODEBUFF_DATA_DIR, else the
-// three channel directories under ~/.config.
-func defaultRoots() []string {
-	if dirs := os.Getenv(rootsEnv); dirs != "" {
-		var out []string
-		for _, dir := range filepath.SplitList(dirs) {
-			if dir = strings.TrimSpace(dir); dir != "" {
-				out = append(out, dir)
-			}
+// rootProvenance reports Codebuff's default roots and where each came from.
+// MYTOKEN_CODEBUFF_DIRS replaces the whole set, CODEBUFF_DATA_DIR is an explicit
+// harness-specific override, and the channel directories are platform defaults.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv(rootsEnv); ok {
+		dirs, err := harness.SplitEnvList(rootsEnv, v)
+		if err != nil {
+			return nil, err
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return harness.EnvRoots(rootsEnv, dirs...), nil
 	}
-	if dir := strings.TrimSpace(os.Getenv(dataDirEnv)); dir != "" {
-		return []string{dir}
+	if dir, ok := harness.Getenv(dataDirEnv); ok {
+		return harness.EnvRoots(dataDirEnv, dir), nil
 	}
 	config := filepath.Join(harness.Home(), ".config")
 	out := make([]string, 0, len(channelNames))
 	for _, name := range channelNames {
 		out = append(out, filepath.Join(config, name))
 	}
-	return out
+	return harness.BuiltinRoots(out...), nil
+}
+
+// defaultRoots returns $MYTOKEN_CODEBUFF_DIRS, else $CODEBUFF_DATA_DIR, else the
+// three channel directories under ~/.config. A malformed explicit override
+// yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // Harness identifies this parser.
 func (p *Parser) Harness() model.Harness { return model.Codebuff }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots returns the configured roots.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }

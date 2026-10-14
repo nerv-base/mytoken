@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/chart"
 	"github.com/zzstar101/mytoken/internal/model"
 	"github.com/zzstar101/mytoken/internal/query"
 )
@@ -90,203 +91,303 @@ func classRows(t model.Tokens) ([][2]string, []ui.Color) {
 	return rows, cols
 }
 
-// stackedBars draws one bar per point, stacked by token class, with a y
-// axis, sparse date labels and a hover tooltip.
-func stackedBars(c *ui.Context, pal palette, pts []query.Point, hourly bool, height float32) ui.Element {
+// tipCard is a chart tip: a glassy card with a title and label/value rows,
+// built as an element so chart.Anchor can place it by the point it
+// describes. The color column always takes its room, so the values line up
+// whether or not a row has a dot.
+func tipCard(c *ui.Context, pal palette, title string, rows [][2]string, colors []ui.Color) {
+	bg := ui.RGBA(255, 255, 255, 0.94)
+	if pal.dark {
+		bg = ui.RGBA(36, 32, 50, 0.94)
+	}
+	ui.Column(c).Padding(10).Radius(10).Gap(4).Background(bg).Border(1, pal.faint).
+		Shadow(0, 6, 18, 0, ui.RGBA(0, 0, 0, 0.18)).Children(func() {
+		ui.Text(c, title).FontSize(12).FontWeight(700).TextColor(pal.ink).NoWrap()
+		for i, row := range rows {
+			col := ui.Transparent
+			if i < len(colors) {
+				col = colors[i]
+			}
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Size(8, 8).Radius(4).Background(col).Shrink(0)
+				ui.Text(c, row[0]).FontSize(11.5).TextColor(pal.muted).NoWrap()
+				ui.Spacer(c)
+				ui.Text(c, row[1]).FontSize(11.5).FontWeight(650).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
+			})
+		}
+	})
+}
+
+// tickLabel draws one chart axis tick in the quiet tick type: the left axis
+// shows token counts, the bottom axis the band's own label.
+func tickLabel(c *ui.Context, pal palette, side chart.Side, t chart.Tick) {
+	s := t.Label
+	if side == chart.Left {
+		s = fmtTokens(int64(t.Value))
+	}
+	ui.Text(c, s).FontSize(10.5).TextColor(pal.muted).FontFeatures("tnum").NoWrap()
+}
+
+// tipAlign tells chart.Anchor which way to grow a tip from the point at y
+// of n, the i-th: by the first third of the points it grows right, by the
+// last left, and between them centered, so it stays inside the chart, and
+// it grows up from a high point and down from a low one.
+func tipAlign(i, n int, y float32) (ui.Align, ui.Align) {
+	h := ui.Center
+	switch {
+	case i*3 < n:
+		h = ui.Start
+	case i*3 >= n*2:
+		h = ui.End
+	}
+	if y > 0.5 {
+		return h, ui.End
+	}
+	return h, ui.Start
+}
+
+// stackedBars draws one bar per point, stacked by token class, on a band
+// and a linear scale with a y axis, sparse date labels and a tip by the
+// point the pointer or the keyboard chooses.
+func stackedBars(c *ui.Context, pal palette, pts []query.Point, hourly bool, height float32, name string) ui.Element {
 	el := ui.Box(c).FillWidth().Height(height)
-	hx, _, hover := el.PointerPosition()
 	grow := entrance(el, 700*time.Millisecond)
-	el.Draw(func(p *ui.Painter, r ui.Rect) {
-		if len(pts) == 0 {
-			return
-		}
-		var mx float64
-		for _, pt := range pts {
-			mx = math.Max(mx, float64(pt.Tokens.Total()))
-		}
-		top := niceMax(mx)
-		left, bottom := float32(44), float32(22)
-		if hourly {
-			left = 0
-		}
-		plot := ui.Rect{X: r.X + left, Y: r.Y + 6, W: r.W - left, H: r.H - bottom - 6}
-		// Grid and y labels.
-		for i := 0; i <= 4; i++ {
-			y := plot.Y + plot.H - plot.H*float32(i)/4
-			if i > 0 {
-				p.Line(plot.X, y, plot.X+plot.W, y, 1, pal.faint)
-			}
-			if !hourly && (mx > 0 || i == 0) {
-				s := fmtTokens(int64(top * float64(i) / 4))
-				w, _ := p.MeasureText(0, ui.Span{Text: s, Size: 10.5})
-				p.RichText(r.X+left-8-w, y-7, 0, ui.Span{Text: s, Size: 10.5, Color: pal.muted, Features: "tnum"})
+	if len(pts) == 0 {
+		return el
+	}
+	var mx float64
+	for _, pt := range pts {
+		mx = math.Max(mx, float64(pt.Tokens.Total()))
+	}
+	labels := make([]string, len(pts))
+	every := int(math.Ceil(float64(len(pts)) / 8))
+	for i, pt := range pts {
+		if i%every == 0 || i == len(pts)-1 && len(pts) <= 8 {
+			if hourly {
+				labels[i] = pt.Day.Format("15h")
+			} else {
+				labels[i] = pt.Day.Format("1/2")
 			}
 		}
-		p.Line(plot.X, plot.Y+plot.H, plot.X+plot.W, plot.Y+plot.H, 1, pal.faint.Alpha(0.16))
-		n := len(pts)
-		slot := plot.W / float32(n)
-		bw := slot * 0.5
-		if bw > 22 {
-			bw = 22
-		}
-		if bw < 2 {
-			bw = slot * 0.8
-		}
-		hi := -1
-		if hover {
-			hi = int((hx - left) / slot)
-			if hi < 0 || hi >= n {
-				hi = -1
-			}
-		}
-		// Label every k-th bar.
-		every := int(math.Ceil(float64(n) / 8))
+	}
+	x := chart.NewBand(labels...).Padding(0.5, 0)
+	y := chart.NewLinear(0, math.Max(mx, 1)).Nice(4)
+	series := make([][]float64, len(classes))
+	for ci, k := range classes {
+		row := make([]float64, len(pts))
 		for i, pt := range pts {
-			cx := plot.X + slot*(float32(i)+0.5)
-			if hi == i {
-				p.Fill(ui.Rect{X: cx - slot/2, Y: plot.Y, W: slot, H: plot.H}, pal.hover, 6)
+			row[i] = float64(k.get(pt.Tokens))
+		}
+		series[ci] = row
+	}
+	stacked := chart.Stack(series, chart.StackStandard)
+	ticks := y.Ticks(4)
+	xs := make([]float32, len(pts))
+	for i := range pts {
+		xs[i] = x.At(i)
+	}
+	axes := chart.Axes{
+		Bottom: x.Ticks(),
+		Label:  func(side chart.Side, t chart.Tick) { tickLabel(c, pal, side, t) },
+	}
+	// An all-zero span keeps the empty axis, as it drew no y labels before.
+	if !hourly && mx > 0 {
+		axes.Left = ticks
+	}
+	el.Children(func() {
+		chart.Plot(c, axes, func(area ui.Element) {
+			area.Label(name)
+			sel := ui.Local(area, "chartSel", func() int { return -1 })
+			if sel == nil {
+				none := -1
+				sel = &none
 			}
-			y := plot.Y + plot.H
-			total := float64(pt.Tokens.Total())
-			barH := float32(total/top) * plot.H * grow
-			if total > 0 && barH < 2 {
-				barH = 2
-			}
-			// Draw the whole bar rounded, clipping the stack inside it.
-			br := ui.Rect{X: cx - bw/2, Y: y - barH, W: bw, H: barH}
-			rad := float32(math.Min(float64(bw)/2, 5))
-			p.Clip(br, rad, func() {
-				yy := y
-				for _, k := range classes {
-					v := float64(k.get(pt.Tokens))
-					if v == 0 {
+			chart.Select(c, area, sel, xs, func(i int) string {
+				return pts[i].Day.Format("2006-01-02 Mon") + " · " + fmtTokens(pts[i].Tokens.Total())
+			})
+			area.Draw(func(p *ui.Painter, r ui.Rect) {
+				hi := *sel
+				if hi >= len(pts) {
+					hi = -1
+				}
+				if !hourly && mx > 0 {
+					for _, t := range ticks {
+						if t.Value <= 0 {
+							continue
+						}
+						yy := chart.Y(r, t.At)
+						p.Line(r.X, yy, r.X+r.W, yy, 1, pal.faint)
+					}
+				}
+				p.Line(r.X, r.Y+r.H, r.X+r.W, r.Y+r.H, 1, pal.faint.Alpha(0.16))
+				if hi >= 0 {
+					sp := x.Band(hi)
+					p.Fill(ui.Rect{X: r.X + sp.Lo*r.W, Y: r.Y, W: (sp.Hi - sp.Lo) * r.W, H: r.H}, pal.hover, 6)
+				}
+				for i, pt := range pts {
+					total := float64(pt.Tokens.Total())
+					if total <= 0 {
 						continue
 					}
-					h := float32(v/total) * barH
-					col := k.color
-					if hi >= 0 && hi != i {
-						col = col.Alpha(0.45)
+					sp := x.Band(i)
+					bw := max(min((sp.Hi-sp.Lo)*r.W, 22), 2)
+					bx := r.X + sp.Mid()*r.W - bw/2
+					top := chart.Y(r, y.At(total*float64(grow)))
+					if r.Y+r.H-top < 2 {
+						top = r.Y + r.H - 2
 					}
-					p.Fill(ui.Rect{X: br.X, Y: yy - h, W: bw, H: h + 0.5}, col, 0)
-					yy -= h
+					// Draw the whole bar rounded, clipping the stack inside it.
+					rad := float32(math.Min(float64(bw)/2, 5))
+					p.Clip(ui.Rect{X: bx, Y: top, W: bw, H: r.Y + r.H - top}, rad, func() {
+						for ci, k := range classes {
+							seg := stacked[ci][i]
+							if seg.Hi <= seg.Lo {
+								continue
+							}
+							y0 := chart.Y(r, y.At(seg.Lo*float64(grow)))
+							y1 := chart.Y(r, y.At(seg.Hi*float64(grow)))
+							col := k.color
+							if hi >= 0 && hi != i {
+								col = col.Alpha(0.45)
+							}
+							p.Fill(ui.Rect{X: bx, Y: y1, W: bw, H: y0 - y1 + 0.5}, col, 0)
+						}
+					})
 				}
 			})
-			if i%every == 0 || i == n-1 && n <= 8 {
-				lab := pt.Day.Format("1/2")
+			if hi := *sel; hi >= 0 && hi < len(pts) {
+				pt := pts[hi]
+				title := pt.Day.Format("2006-01-02 Mon")
 				if hourly {
-					lab = pt.Day.Format("15h")
+					title = pt.Day.Format("01-02 15:00")
 				}
-				w, _ := p.MeasureText(0, ui.Span{Text: lab, Size: 10.5})
-				p.RichText(cx-w/2, plot.Y+plot.H+6, 0, ui.Span{Text: lab, Size: 10.5, Color: pal.muted, Features: "tnum"})
+				rows, cols := classRows(pt.Tokens)
+				rows = append([][2]string{{tr("tokens"), fmtTokens(pt.Tokens.Total())}, {tr("cost"), fmtCost(pt.CostUSD)}}, rows...)
+				cols = append([]ui.Color{ui.Transparent, ui.Transparent}, cols...)
+				yf := y.At(float64(pt.Tokens.Total())) * grow
+				h, v := tipAlign(hi, len(pts), yf)
+				chart.Anchor(c, x.At(hi), max(yf, 0.06), h, v, func() { tipCard(c, pal, title, rows, cols) })
 			}
-		}
-		if hi >= 0 {
-			pt := pts[hi]
-			title := pt.Day.Format("2006-01-02 Mon")
-			if hourly {
-				title = pt.Day.Format("01-02 15:00")
-			}
-			rows, cols := classRows(pt.Tokens)
-			rows = append([][2]string{{tr("tokens"), fmtTokens(pt.Tokens.Total())}, {tr("cost"), fmtCost(pt.CostUSD)}}, rows...)
-			cols = append([]ui.Color{ui.Transparent, ui.Transparent}, cols...)
-			tooltipBox(p, pal, r, plot.X+slot*(float32(hi)+0.5), plot.Y+plot.H/2, title, rows, cols)
-		}
+		}).FillWidth().Height(height)
 	})
 	return el
 }
 
 // heroWave draws the days as one smooth melody across the hero's foot: a
 // line in the band's colors over five faint staff lines, rising in when the
-// page opens, with the day under the pointer called out.
-func heroWave(c *ui.Context, pal palette, pts []query.Point, height float32) ui.Element {
+// page opens, with the day the pointer or the keyboard chooses called out.
+func heroWave(c *ui.Context, pal palette, pts []query.Point, height float32, name string) ui.Element {
 	el := ui.Box(c).FillWidth().Height(height)
-	hx, _, hover := el.PointerPosition()
 	grow := entrance(el, 1000*time.Millisecond)
+	if len(pts) < 2 {
+		return el
+	}
+	var mx float64
+	for _, pt := range pts {
+		mx = math.Max(mx, float64(pt.Tokens.Total()))
+	}
+	if mx == 0 {
+		mx = 1
+	}
+	n := len(pts)
+	// The line runs from edge to edge; days sit at even steps, inset a
+	// little so the first and last dot stay inside the plot.
+	const padF, spanF = float32(0.032), float32(0.936)
+	vals := make([]float32, n)
+	xs := make([]float32, n)
+	for i, pt := range pts {
+		vals[i] = float32(float64(pt.Tokens.Total()) / mx)
+		xs[i] = padF + spanF*float32(i)/float32(n-1)
+	}
+	yf := func(v float32) float32 { return 0.05 + 0.78*v*grow }
+	el.Label(name)
+	sel := ui.Local(el, "chartSel", func() int { return -1 })
+	if sel == nil {
+		none := -1
+		sel = &none
+	}
+	chart.Select(c, el, sel, xs, func(i int) string {
+		return pts[i].Day.Format("2006-01-02 Mon") + " · " + fmtTokens(pts[i].Tokens.Total())
+	})
 	el.Draw(func(p *ui.Painter, r ui.Rect) {
 		for i := 0; i < 5; i++ {
 			y := r.Y + 14 + (r.H-18)*float32(i)/4
 			p.Line(r.X, y, r.X+r.W, y, 1, pal.faint.Alpha(0.6))
 		}
-		n := len(pts)
-		if n < 2 {
-			return
+		// Flat lead-in and lead-out, so the line reaches both edges.
+		lineX := make([]float32, 0, n+2)
+		lineY := make([]float32, 0, n+2)
+		lineX, lineY = append(lineX, 0), append(lineY, yf(vals[0]))
+		for i := range vals {
+			lineX, lineY = append(lineX, xs[i]), append(lineY, yf(vals[i]))
 		}
-		var mx float64
-		for _, pt := range pts {
-			mx = math.Max(mx, float64(pt.Tokens.Total()))
-		}
-		if mx == 0 {
-			mx = 1
-		}
-		// The line runs from edge to edge; days sit at even steps.
-		pad := float32(28)
-		at := func(i int) (float32, float32) {
-			v := float32(float64(pts[i].Tokens.Total())/mx) * grow
-			return r.X + pad + (r.W-2*pad)*float32(i)/float32(n-1), r.Y + r.H - 4 - (r.H-22)*v
-		}
-		line := new(ui.Path)
-		area := new(ui.Path)
-		x0, y0 := at(0)
-		line.MoveTo(r.X, y0).LineTo(x0, y0)
-		area.MoveTo(r.X, r.Y+r.H).LineTo(r.X, y0).LineTo(x0, y0)
-		for i := 1; i < n; i++ {
-			px, py := at(i - 1)
-			x, y := at(i)
-			m := (px + x) / 2
-			line.CubeTo(m, py, m, y, x, y)
-			area.CubeTo(m, py, m, y, x, y)
-		}
-		xe, ye := at(n - 1)
-		line.LineTo(r.X+r.W, ye)
-		area.LineTo(r.X+r.W, ye).LineTo(r.X+r.W, r.Y+r.H).Close()
+		lineX, lineY = append(lineX, 1), append(lineY, yf(vals[n-1]))
+		line := chart.Line(r, lineX, lineY, chart.CurveMonotone)
+		area := chart.Area(r, lineX, nil, lineY, chart.CurveMonotone)
 		p.FillPathGradient(area, ui.LinearGradient{From: Tomori.Alpha(0.16), To: Taki.Alpha(0.16), Angle: 90, Oklab: true})
 		p.FillPathGradient(area, ui.LinearGradient{From: pal.base.Alpha(0), To: pal.base.Alpha(0.35), Angle: 180})
 		p.StrokePathGradient(line, 2.2, ui.LinearGradient{From: Tomori, To: Anon, Angle: 90, Oklab: true})
 		hi := n - 1
-		if hover {
-			hi = int(math.Round(float64((hx - pad) / ((r.W - 2*pad) / float32(n-1)))))
-			hi = max(0, min(n-1, hi))
+		if *sel >= 0 && *sel < n {
+			hi = *sel
+			p.Line(chart.X(r, xs[hi]), r.Y+8, chart.X(r, xs[hi]), r.Y+r.H, 1, pal.ink.Alpha(0.18))
 		}
-		x, y := at(hi)
-		if hover {
-			p.Line(x, r.Y+8, x, r.Y+r.H, 1, pal.ink.Alpha(0.18))
-		}
+		x, y := chart.X(r, xs[hi]), chart.Y(r, yf(vals[hi]))
 		softGlow(p, x, y, 14, Anon.Alpha(0.35))
 		p.FillPath(new(ui.Path).Circle(x, y, 4.5), Anon)
 		p.FillPath(new(ui.Path).Circle(x, y, 2), ui.RGB(255, 255, 255))
-		if hover {
-			pt := pts[hi]
-			tooltipBox(p, pal, r, x, r.Y+r.H/2, pt.Day.Format("2006-01-02 Mon"),
-				[][2]string{{tr("tokens"), fmtTokens(pt.Tokens.Total())}, {tr("cost"), fmtCost(pt.CostUSD)}}, nil)
-		}
-		_ = xe
 	})
+	if hi := *sel; hi >= 0 && hi < n {
+		pt := pts[hi]
+		y := yf(vals[hi])
+		h, v := tipAlign(hi, n, y)
+		chart.Anchor(c, xs[hi], max(y, 0.06), h, v, func() {
+			tipCard(c, pal, pt.Day.Format("2006-01-02 Mon"),
+				[][2]string{{tr("tokens"), fmtTokens(pt.Tokens.Total())}, {tr("cost"), fmtCost(pt.CostUSD)}}, nil)
+		})
+	}
 	return el
 }
 
-// miniBars draws compact bars with no axes (the tray's 24 hours).
+// miniBars draws compact bars with no axes (the tray's 24 hours), with a tip
+// by the hour the pointer or the keyboard chooses.
 func miniBars(c *ui.Context, pal palette, pts []query.Point, height float32) ui.Element {
 	el := ui.Box(c).FillWidth().Height(height)
-	hx, _, hover := el.PointerPosition()
 	grow := entrance(el, 600*time.Millisecond)
+	n := len(pts)
+	if n == 0 {
+		return el
+	}
+	var mx float64
+	for _, pt := range pts {
+		mx = math.Max(mx, float64(pt.Tokens.Total()))
+	}
+	if mx == 0 {
+		mx = 1
+	}
+	// The hours are evenly spaced, so each one's share of the width is its
+	// selection: the same rule the pointer used to hit them by.
+	xs := make([]float32, n)
+	for i := range xs {
+		xs[i] = (float32(i) + 0.5) / float32(n)
+	}
+	el.Label(tr("last24h"))
+	sel := ui.Local(el, "chartSel", func() int { return -1 })
+	if sel == nil {
+		none := -1
+		sel = &none
+	}
+	chart.Select(c, el, sel, xs, func(i int) string {
+		return pts[i].Day.Format("15:00") + " · " + tr("tokens") + " " + fmtTokens(pts[i].Tokens.Total()) +
+			" · " + tr("cost") + " " + fmtCost(pts[i].CostUSD)
+	})
 	el.Draw(func(p *ui.Painter, r ui.Rect) {
-		n := len(pts)
-		if n == 0 {
-			return
-		}
-		var mx float64
-		for _, pt := range pts {
-			mx = math.Max(mx, float64(pt.Tokens.Total()))
-		}
-		if mx == 0 {
-			mx = 1
-		}
 		plotH := r.H - 16
 		slot := r.W / float32(n)
 		bw := slot * 0.56
-		hi := -1
-		if hover {
-			hi = int(hx / slot)
+		hi := *sel
+		if hi >= n {
+			hi = -1
 		}
 		// A quiet hour is a dot on the floor; a busy one rises as a level
 		// meter in the band's colors.
@@ -316,19 +417,30 @@ func miniBars(c *ui.Context, pal palette, pts []query.Point, height float32) ui.
 			x = float32(math.Max(float64(r.X), math.Min(float64(x), float64(r.X+r.W-w))))
 			p.RichText(x, r.Y+plotH+3, 0, ui.Span{Text: lab, Size: 10, Color: pal.muted, Features: "tnum"})
 		}
-		if hi >= 0 && hi < n {
-			pt := pts[hi]
-			tooltipBox(p, pal, r, r.X+slot*(float32(hi)+0.5), r.Y+plotH/2, pt.Day.Format("15:00"),
-				[][2]string{{tr("tokens"), fmtTokens(pt.Tokens.Total())}, {tr("cost"), fmtCost(pt.CostUSD)}}, nil)
-		}
 	})
+	if hi := *sel; hi >= 0 && hi < n {
+		pt := pts[hi]
+		plotH := max(height-16, 0)
+		yf := float32(0)
+		if height > 0 {
+			yf = float32(float64(pt.Tokens.Total())/mx) * plotH * grow / height
+		}
+		h, v := tipAlign(hi, n, yf)
+		el.Children(func() {
+			chart.Anchor(c, xs[hi], max(yf, 0.06), h, v, func() {
+				tipCard(c, pal, pt.Day.Format("15:00"),
+					[][2]string{{tr("tokens"), fmtTokens(pt.Tokens.Total())}, {tr("cost"), fmtCost(pt.CostUSD)}}, nil)
+			})
+		})
+	}
 	return el
 }
 
 // sparkline draws a smooth line with a fading fill.
 func sparkline(c *ui.Context, vals []float64, col ui.Color, height float32) ui.Element {
 	return ui.Box(c).FillWidth().Height(height).Draw(func(p *ui.Painter, r ui.Rect) {
-		if len(vals) < 2 {
+		n := len(vals)
+		if n < 2 {
 			return
 		}
 		mx := 0.0
@@ -338,49 +450,52 @@ func sparkline(c *ui.Context, vals []float64, col ui.Color, height float32) ui.E
 		if mx == 0 {
 			mx = 1
 		}
-		pt := func(i int) (float32, float32) {
-			return r.X + r.W*float32(i)/float32(len(vals)-1), r.Y + 2 + (r.H-4)*(1-float32(vals[i]/mx))
+		xs := make([]float32, n)
+		ys := make([]float32, n)
+		for i, v := range vals {
+			xs[i] = float32(i) / float32(n-1)
+			ys[i] = 0.05 + 0.9*float32(v/mx)
 		}
-		line := new(ui.Path)
-		area := new(ui.Path)
-		x0, y0 := pt(0)
-		line.MoveTo(x0, y0)
-		area.MoveTo(x0, r.Y+r.H).LineTo(x0, y0)
-		for i := 1; i < len(vals); i++ {
-			px, py := pt(i - 1)
-			x, y := pt(i)
-			mx := (px + x) / 2
-			line.CubeTo(mx, py, mx, y, x, y)
-			area.CubeTo(mx, py, mx, y, x, y)
-		}
-		xe, _ := pt(len(vals) - 1)
-		area.LineTo(xe, r.Y+r.H).Close()
+		line := chart.Line(r, xs, ys, chart.CurveMonotone)
+		area := chart.Area(r, xs, nil, ys, chart.CurveMonotone)
 		p.FillPathGradient(area, ui.LinearGradient{From: col.Alpha(0.35), To: col.Alpha(0), Angle: 180})
 		p.StrokePath(line, 2, col)
-		xl, yl := pt(len(vals) - 1)
+		xl, yl := chart.X(r, xs[n-1]), chart.Y(r, ys[n-1])
 		p.FillPath(new(ui.Path).Circle(xl, yl, 3.5), col)
 		p.FillPath(new(ui.Path).Circle(xl, yl, 1.6), ui.RGB(255, 255, 255))
 	})
 }
 
-// arc appends a ring segment from angle a0 to a1 (radians, 0 = up, clockwise).
-func arc(cx, cy, ro, ri float32, a0, a1 float64) *ui.Path {
-	steps := int(math.Max(4, math.Ceil((a1-a0)/(math.Pi/48))))
-	path := new(ui.Path)
-	at := func(rad float32, a float64) (float32, float32) {
-		return cx + rad*float32(math.Sin(a)), cy - rad*float32(math.Cos(a))
+// donutGap is the room the ring leaves between slices, in the chart
+// package's padRadius units (see chart.Sector).
+const donutGap = 0.025
+
+// donutSlices maps the token classes that have something to show onto the
+// slices chart.Pie hands back, together with the class index each slice
+// draws. Classes without tokens are left out: chart.Pie spends its pad on
+// every element it is given, so a zero class would take a gap out of the
+// ring and shift the classes after it.
+func donutSlices(t model.Tokens) ([]chart.Slice, []int) {
+	vals := make([]float64, 0, len(classes))
+	idx := make([]int, 0, len(classes))
+	for i, k := range classes {
+		if v := k.get(t); v > 0 {
+			vals = append(vals, float64(v))
+			idx = append(idx, i)
+		}
 	}
-	x, y := at(ro, a0)
-	path.MoveTo(x, y)
-	for i := 1; i <= steps; i++ {
-		x, y = at(ro, a0+(a1-a0)*float64(i)/float64(steps))
-		path.LineTo(x, y)
+	return chart.Pie(vals, donutGap), idx
+}
+
+// donutHover returns the class the point falls in, or -1 for the hole, the
+// outside of the ring and a ring with nothing to show.
+func donutHover(t model.Tokens, x, y, inner, outer float32) int {
+	slices, idx := donutSlices(t)
+	i, ok := chart.SliceAt(slices, x, y, inner, outer)
+	if !ok {
+		return -1
 	}
-	for i := steps; i >= 0; i-- {
-		x, y = at(ri, a0+(a1-a0)*float64(i)/float64(steps))
-		path.LineTo(x, y)
-	}
-	return path.Close()
+	return idx[i]
 }
 
 // donut draws the token-class mix with the total in the middle.
@@ -388,52 +503,29 @@ func donut(c *ui.Context, pal palette, t model.Tokens, size float32) ui.Element 
 	el := ui.Box(c).Size(size, size).Shrink(0)
 	hx, hy, hover := el.PointerPosition()
 	sweep := entrance(el, 900*time.Millisecond)
+	slices, idx := donutSlices(t)
 	el.Draw(func(p *ui.Painter, r ui.Rect) {
 		cx, cy := r.X+r.W/2, r.Y+r.H/2
 		ro := r.W / 2
 		ri := ro * 0.68
 		total := float64(t.Total())
-		p.FillPath(arc(cx, cy, ro, ri, 0, 2*math.Pi-0.0001), pal.well)
+		p.FillPath(chart.Sector(cx, cy, ri, ro, chart.Slice{Start: 0, End: 2 * math.Pi}), pal.well)
 		hi := -1
 		if hover {
-			dx, dy := float64(hx-r.W/2), float64(hy-r.H/2)
-			d := math.Hypot(dx, dy)
-			if d >= float64(ri) && d <= float64(ro) {
-				a := math.Atan2(dx, -dy)
-				if a < 0 {
-					a += 2 * math.Pi
-				}
-				acc := 0.0
-				for i, k := range classes {
-					f := float64(k.get(t)) / total
-					if a >= acc*2*math.Pi && a < (acc+f)*2*math.Pi {
-						hi = i
-					}
-					acc += f
-				}
-			}
+			hi = donutHover(t, hx-cx, hy-cy, ri, ro)
 		}
-		if total > 0 {
-			acc := 0.0
-			gap := 0.025
-			for i, k := range classes {
-				f := float64(k.get(t)) / total
-				if f <= 0 {
-					continue
-				}
-				a0 := acc * 2 * math.Pi * float64(sweep)
-				a1 := (acc + f) * 2 * math.Pi * float64(sweep)
-				acc += f
-				if a1-a0 > gap*2 {
-					a0 += gap / 2
-					a1 -= gap / 2
-				}
-				o := ro
-				if i == hi {
-					o += 4
-				}
-				p.FillPath(arc(cx, cy, o, ri, a0, a1), k.color)
+		for n, s := range slices {
+			outer := ro
+			if class := idx[n]; class == hi {
+				outer += 4
 			}
+			// The entrance sweep grows the ring clockwise from twelve
+			// o'clock; the gap keeps its width rather than its angle.
+			p.FillPath(chart.Sector(cx, cy, ri, outer, chart.Slice{
+				Start: s.Start * float64(sweep),
+				End:   s.End * float64(sweep),
+				Pad:   donutGap,
+			}), classes[idx[n]].color)
 		}
 		// Center label.
 		big, small := fmtTokens(t.Total()), tr("tokens")
@@ -587,104 +679,141 @@ func classBar(c *ui.Context, pal palette, t model.Tokens, height float32) ui.Ele
 	})
 }
 
-// timeline draws a session's requests as dots over time, sized by tokens.
+// timeline draws a session's requests as dots over time, sized by tokens,
+// with a tip by the request the pointer or the keyboard chooses.
 func timeline(c *ui.Context, pal palette, evs []query.AttributedEvent, models []string, height float32) ui.Element {
 	el := ui.Box(c).FillWidth().Height(height)
-	hx, hy, hover := el.PointerPosition()
-	el.Draw(func(p *ui.Painter, r ui.Rect) {
-		if len(evs) == 0 {
-			return
+	if len(evs) == 0 {
+		return el
+	}
+	t0, t1 := evs[0].Timestamp, evs[len(evs)-1].Timestamp
+	span := t1.Sub(t0).Seconds()
+	if span <= 0 {
+		span = 1
+	}
+	var mx float64
+	for _, e := range evs {
+		mx = math.Max(mx, float64(e.Tokens.Total()))
+	}
+	colOf := func(m string) ui.Color {
+		for i, x := range models {
+			if x == m {
+				return bandAt(i)
+			}
 		}
-		t0, t1 := evs[0].Timestamp, evs[len(evs)-1].Timestamp
-		span := t1.Sub(t0).Seconds()
-		if span <= 0 {
-			span = 1
+		return pal.muted
+	}
+	// Each request's place across the plot, as the fraction chart.Select
+	// reads from the pointer and chart.Anchor writes a tip back to.
+	xs := make([]float32, len(evs))
+	for i, e := range evs {
+		xs[i] = float32(e.Timestamp.Sub(t0).Seconds() / span)
+	}
+	el.Children(func() {
+		// The plot is inset in the element, so the selection area is exactly
+		// the plot and a tip anchored in it lands on its request.
+		hit := ui.Box(c).Absolute().Left(6).Top(6).Right(6).Bottom(26)
+		hit.Label(tr("timeline"))
+		sel := ui.Local(hit, "chartSel", func() int { return -1 })
+		if sel == nil {
+			none := -1
+			sel = &none
 		}
-		var mx float64
-		for _, e := range evs {
-			mx = math.Max(mx, float64(e.Tokens.Total()))
-		}
-		plot := ui.Rect{X: r.X + 6, Y: r.Y + 6, W: r.W - 12, H: r.H - 26}
-		for i := 0; i <= 2; i++ {
-			y := plot.Y + plot.H*float32(i)/2
-			p.Line(plot.X, y, plot.X+plot.W, y, 1, pal.faint)
-		}
-		colOf := func(m string) ui.Color {
-			for i, x := range models {
-				if x == m {
-					return bandAt(i)
+		chart.Select(c, hit, sel, xs, func(i int) string {
+			e := evs[i]
+			s := e.Timestamp.Local().Format("15:04:05") + " · " + e.Model
+			if e.ResolvedProvider != "" {
+				s += " · " + e.ResolvedProvider
+			}
+			return s + " · " + tr("tokens") + " " + fmtTokens(e.Tokens.Total()) + " · " + tr("cost") + " " + costOfEvent(e)
+		})
+		el.Draw(func(p *ui.Painter, r ui.Rect) {
+			plot := ui.Rect{X: r.X + 6, Y: r.Y + 6, W: r.W - 12, H: r.H - 26}
+			hi := *sel
+			if hi >= len(evs) {
+				hi = -1
+			}
+			// The pointer only calls out a request it is near, so a tip
+			// never hangs over empty time; the keyboard is not gated, so
+			// arrowing still names the request it selected.
+			show := hi >= 0
+			if show && plot.W > 0 {
+				if px, _, over := hit.PointerPosition(); over && chart.Nearest(xs, px/plot.W) == hi {
+					show = math.Abs(float64(xs[hi]*plot.W-px)) < 24
 				}
 			}
-			return pal.muted
-		}
-		// Cumulative line.
-		cum := new(ui.Path)
-		var acc, all float64
-		for _, e := range evs {
-			all += float64(e.Tokens.Total())
-		}
-		var best = -1
-		var bestD float32 = 1e9
-		for i, e := range evs {
-			acc += float64(e.Tokens.Total())
-			x := plot.X + plot.W*float32(e.Timestamp.Sub(t0).Seconds()/span)
-			y := plot.Y + plot.H*(1-float32(acc/all))
-			if i == 0 {
-				cum.MoveTo(x, y)
-			} else {
-				cum.LineTo(x, y)
+			for i := 0; i <= 2; i++ {
+				y := plot.Y + plot.H*float32(i)/2
+				p.Line(plot.X, y, plot.X+plot.W, y, 1, pal.faint)
 			}
-			if hover {
-				if d := float32(math.Abs(float64(x - (r.X + hx)))); d < bestD {
-					bestD, best = d, i
+			// Cumulative line.
+			cum := new(ui.Path)
+			var acc, all float64
+			for _, e := range evs {
+				all += float64(e.Tokens.Total())
+			}
+			for i, e := range evs {
+				acc += float64(e.Tokens.Total())
+				x := plot.X + plot.W*float32(e.Timestamp.Sub(t0).Seconds()/span)
+				y := plot.Y + plot.H*(1-float32(acc/all))
+				if i == 0 {
+					cum.MoveTo(x, y)
+				} else {
+					cum.LineTo(x, y)
 				}
 			}
-		}
-		// The running total as a soft wash behind the requests.
-		area := new(ui.Path)
-		acc = 0
-		for i, e := range evs {
-			acc += float64(e.Tokens.Total())
-			x := plot.X + plot.W*float32(e.Timestamp.Sub(t0).Seconds()/span)
-			y := plot.Y + plot.H*(1-float32(acc/all))
-			if i == 0 {
-				area.MoveTo(x, plot.Y+plot.H).LineTo(x, y)
-			} else {
-				area.LineTo(x, y)
+			// The running total as a soft wash behind the requests.
+			area := new(ui.Path)
+			acc = 0
+			for i, e := range evs {
+				acc += float64(e.Tokens.Total())
+				x := plot.X + plot.W*float32(e.Timestamp.Sub(t0).Seconds()/span)
+				y := plot.Y + plot.H*(1-float32(acc/all))
+				if i == 0 {
+					area.MoveTo(x, plot.Y+plot.H).LineTo(x, y)
+				} else {
+					area.LineTo(x, y)
+				}
 			}
-		}
-		area.LineTo(plot.X+plot.W, plot.Y+plot.H).Close()
-		p.FillPathGradient(area, ui.LinearGradient{From: Tomori.Alpha(0.10), To: Tomori.Alpha(0), Angle: 180})
-		p.StrokePath(cum, 1.25, Tomori.Alpha(0.45))
-		// Each request is a stem from the floor with a ringed head, like a
-		// note on a staff.
-		for i, e := range evs {
-			x := plot.X + plot.W*float32(e.Timestamp.Sub(t0).Seconds()/span)
-			v := float64(e.Tokens.Total())
-			y := plot.Y + plot.H*(1-float32(v/mx))
-			rad := float32(2 + 3.2*math.Sqrt(v/mx))
-			col := colOf(e.Model)
-			if best >= 0 && i != best && bestD < 24 {
-				col = col.Alpha(0.5)
+			area.LineTo(plot.X+plot.W, plot.Y+plot.H).Close()
+			p.FillPathGradient(area, ui.LinearGradient{From: Tomori.Alpha(0.10), To: Tomori.Alpha(0), Angle: 180})
+			p.StrokePath(cum, 1.25, Tomori.Alpha(0.45))
+			// Each request is a stem from the floor with a ringed head, like a
+			// note on a staff.
+			for i, e := range evs {
+				x := plot.X + plot.W*float32(e.Timestamp.Sub(t0).Seconds()/span)
+				v := float64(e.Tokens.Total())
+				y := plot.Y + plot.H*(1-float32(v/mx))
+				rad := float32(2 + 3.2*math.Sqrt(v/mx))
+				col := colOf(e.Model)
+				if show && i != hi {
+					col = col.Alpha(0.5)
+				}
+				p.Line(x, plot.Y+plot.H, x, y+rad, 1, col.Alpha(0.35))
+				if show && i == hi {
+					p.FillPath(new(ui.Path).Circle(x, y, rad+5), col.Alpha(0.18))
+				}
+				p.FillPath(new(ui.Path).Circle(x, y, rad+1.5), pal.raised)
+				p.FillPath(new(ui.Path).Circle(x, y, rad), col)
 			}
-			p.Line(x, plot.Y+plot.H, x, y+rad, 1, col.Alpha(0.35))
-			if i == best && bestD < 24 {
-				p.FillPath(new(ui.Path).Circle(x, y, rad+5), col.Alpha(0.18))
+			for _, lab := range []struct {
+				t time.Time
+				a float32
+			}{{t0, 0}, {t1, 1}} {
+				s := lab.t.Local().Format("15:04")
+				w, _ := p.MeasureText(0, ui.Span{Text: s, Size: 10.5})
+				p.RichText(plot.X+(plot.W-w)*lab.a, plot.Y+plot.H+6, 0, ui.Span{Text: s, Size: 10.5, Color: pal.muted, Features: "tnum"})
 			}
-			p.FillPath(new(ui.Path).Circle(x, y, rad+1.5), pal.raised)
-			p.FillPath(new(ui.Path).Circle(x, y, rad), col)
-		}
-		for _, lab := range []struct {
-			t time.Time
-			a float32
-		}{{t0, 0}, {t1, 1}} {
-			s := lab.t.Local().Format("15:04")
-			w, _ := p.MeasureText(0, ui.Span{Text: s, Size: 10.5})
-			p.RichText(plot.X+(plot.W-w)*lab.a, plot.Y+plot.H+6, 0, ui.Span{Text: s, Size: 10.5, Color: pal.muted, Features: "tnum"})
-		}
-		if best >= 0 && bestD < 24 {
-			e := evs[best]
-			x := plot.X + plot.W*float32(e.Timestamp.Sub(t0).Seconds()/span)
+		})
+		if hi := *sel; hi >= 0 && hi < len(evs) {
+			e := evs[hi]
+			// A tip stays finite when no request has tokens; the dots keep
+			// their own arithmetic.
+			yf := float32(1)
+			if mx > 0 {
+				yf = 1 - float32(float64(e.Tokens.Total())/mx)
+			}
+			h, v := tipAlign(hi, len(evs), yf)
 			rows, cols := classRows(e.Tokens)
 			prov := e.ResolvedProvider
 			if l := attribLabel(e.Attrib); l != "" {
@@ -692,8 +821,11 @@ func timeline(c *ui.Context, pal palette, evs []query.AttributedEvent, models []
 			}
 			rows = append([][2]string{{prov, e.Model}, {tr("cost"), costOfEvent(e)}}, rows...)
 			cols = append([]ui.Color{colOf(e.Model), ui.Transparent}, cols...)
-			_ = hy
-			tooltipBox(p, pal, r, x, plot.Y+plot.H/2, e.Timestamp.Local().Format("15:04:05"), rows, cols)
+			hit.Children(func() {
+				chart.Anchor(c, xs[hi], max(yf, 0.06), h, v, func() {
+					tipCard(c, pal, e.Timestamp.Local().Format("15:04:05"), rows, cols)
+				})
+			})
 		}
 	})
 	return el

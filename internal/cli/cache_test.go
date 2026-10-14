@@ -107,6 +107,13 @@ func TestCacheParseErrors(t *testing.T) {
 	}{
 		{"unknown by", []string{"--by", "nope"}, "invalid --by value"},
 		{"by with session", []string{"--by", "model", "sess-1"}, "--by cannot be combined with a session timeline"},
+		// A session timeline reads one session through SessionCache, which takes
+		// no query.Filter, so the ledger-only provider selectors must be
+		// rejected instead of accepted and dropped (same defect class as
+		// reconcile; these lock the existing rejection).
+		{"provider with session", []string{"--provider", "name-a", "sess-1"}, "--provider cannot be combined with a session timeline"},
+		{"provider-id with session", []string{"--provider-id", "endpoint:v1:abc", "sess-1"}, "--provider-id cannot be combined with a session timeline"},
+		{"both providers with session", []string{"--provider", "name-a", "--provider-id", "endpoint:v1:abc", "sess-1"}, "--provider and --provider-id cannot be combined with a session timeline"},
 		{"harness without session", []string{"--harness", "codex"}, "--harness is only valid with a session id"},
 		{"two positionals", []string{"a", "b"}, "Usage: mytoken cache"},
 		{"unknown harness", []string{"--harness", "nope", "s1"}, `invalid --harness "nope"`},

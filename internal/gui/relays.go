@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/chart"
 	"github.com/zzstar101/mytoken/internal/reconcile"
 	"github.com/zzstar101/mytoken/internal/relay"
 )
@@ -47,11 +48,10 @@ type relayState struct {
 func siteKey(origin, keyID string) string { return origin + "|" + keyID }
 
 // relayRange is the report's range for a span; "all" is everything to date.
-func relayRange(sp Span, now time.Time) (time.Time, time.Time) {
-	r := rangeOf(sp, now)
+func relayRange(sp Span, now time.Time, loc *time.Location) (time.Time, time.Time) {
+	r := rangeOf(sp, now, loc)
 	if r.From.IsZero() {
-		day := now.Local()
-		return time.Unix(0, 0), time.Date(day.Year(), day.Month(), day.Day()+1, 0, 0, 0, 0, time.Local)
+		return time.Unix(0, 0), dayBoundary(now, true, loc)
 	}
 	return r.From, r.To
 }
@@ -151,7 +151,7 @@ func (s *State) loadReport(st reconcile.SiteStatus) {
 		return
 	}
 	want := s.rl.want
-	from, to := relayRange(Span(s.span), s.Hooks.Now())
+	from, to := relayRange(Span(s.span), s.Hooks.Now(), s.location())
 	s.run("relay-report", func(ctx context.Context) func() {
 		rep, err := rs.Report(ctx, st.Origin, st.KeyID, from, to)
 		return func() {
@@ -587,7 +587,10 @@ func waterfall(c *ui.Context, pal palette, rep reconcile.Report, height float32)
 		bw := min(slot*0.56, 64)
 		hi := -1
 		if hover {
-			hi = int((hx - plot.X) / slot)
+			// hx is relative to this element's own box while plot.X is the
+			// element's window position (the plot starts at r.X), so the
+			// element-relative column is just hx/slot.
+			hi = int(hx / slot)
 		}
 		for i, s := range steps {
 			x := plot.X + slot*float32(i) + (slot-bw)/2
@@ -672,7 +675,8 @@ func modelTable(c *ui.Context, pal palette, rows []reconcile.ModelLine) {
 	}
 }
 
-// dayPairs draws each day's local estimate and charge side by side.
+// dayPairs draws each day's local estimate and charge side by side, with a
+// tip by the day the pointer or the keyboard chooses.
 func dayPairs(c *ui.Context, pal palette, days []reconcile.DayLine, height float32) ui.Element {
 	top := 0.0
 	for _, d := range days {
@@ -681,15 +685,33 @@ func dayPairs(c *ui.Context, pal palette, days []reconcile.DayLine, height float
 	top = niceMax(top)
 	el := ui.Box(c).FillWidth().Height(height)
 	g := entrance(el, 650*time.Millisecond)
-	hx, hy, hover := el.PointerPosition()
-	return el.Draw(func(p *ui.Painter, r ui.Rect) {
+	el.Label(tr("relayByDay"))
+	if len(days) == 0 {
+		return el
+	}
+	// One even slot per day, the same rule the pointer hits them by.
+	xs := make([]float32, len(days))
+	for i := range xs {
+		xs[i] = (float32(i) + 0.5) / float32(len(days))
+	}
+	sel := ui.Local(el, "chartSel", func() int { return -1 })
+	if sel == nil {
+		none := -1
+		sel = &none
+	}
+	chart.Select(c, el, sel, xs, func(i int) string {
+		d := days[i]
+		return d.Day.Format("2006-01-02") + " · " + tr("relayLocal") + " " + fmtCost(d.LocalUSD) +
+			" · " + tr("relayCharged") + " " + fmtCost(d.ChargedUSD)
+	})
+	el.Draw(func(p *ui.Painter, r ui.Rect) {
 		const labelH = 18
 		plot := ui.Rect{X: r.X, Y: r.Y, W: r.W, H: r.H - labelH}
 		slot := plot.W / float32(len(days))
 		bw := min(slot*0.32, 14)
-		hi := -1
-		if hover {
-			hi = max(0, min(int((hx-plot.X)/slot), len(days)-1))
+		hi := *sel
+		if hi >= len(days) {
+			hi = -1
 		}
 		bar := func(x float32, v float64, col ui.Color) {
 			h := plot.H * g * float32(v/top)
@@ -713,21 +735,32 @@ func dayPairs(c *ui.Context, pal palette, days []reconcile.DayLine, height float
 				p.RichText(x-lw/2, plot.Y+plot.H+4, 0, ui.Span{Text: lbl, Size: 10, Color: pal.muted})
 			}
 		}
-		if hi >= 0 {
-			d := days[hi]
-			rows := [][2]string{{tr("relayLocal"), fmtCost(d.LocalUSD)}, {tr("relayCharged"), fmtCost(d.ChargedUSD)}}
-			cols := []ui.Color{pal.ink.Alpha(0.45), relayColor}
-			if d.MultiplierDiffUSD != nil {
-				rows = append(rows, [2]string{tr("relayMultDiff"), fmtSigned(*d.MultiplierDiffUSD)})
-				cols = append(cols, Soyo)
-			}
-			if d.UsageDiffUSD != nil {
-				rows = append(rows, [2]string{tr("relayUsageDiff"), fmtSigned(*d.UsageDiffUSD)})
-				cols = append(cols, Taki)
-			}
-			tooltipBox(p, pal, r, plot.X+slot*float32(hi)+slot/2, hy, d.Day.Format("2006-01-02"), rows, cols)
-		}
 	})
+	if hi := *sel; hi >= 0 && hi < len(days) {
+		d := days[hi]
+		rows := [][2]string{{tr("relayLocal"), fmtCost(d.LocalUSD)}, {tr("relayCharged"), fmtCost(d.ChargedUSD)}}
+		cols := []ui.Color{pal.ink.Alpha(0.45), relayColor}
+		if d.MultiplierDiffUSD != nil {
+			rows = append(rows, [2]string{tr("relayMultDiff"), fmtSigned(*d.MultiplierDiffUSD)})
+			cols = append(cols, Soyo)
+		}
+		if d.UsageDiffUSD != nil {
+			rows = append(rows, [2]string{tr("relayUsageDiff"), fmtSigned(*d.UsageDiffUSD)})
+			cols = append(cols, Taki)
+		}
+		plotH := max(height-18, 0)
+		yf := float32(0)
+		if height > 0 && top > 0 {
+			yf = float32(math.Max(d.LocalUSD, d.ChargedUSD)/top) * g * plotH / height
+		}
+		h, v := tipAlign(hi, len(days), yf)
+		el.Children(func() {
+			chart.Anchor(c, xs[hi], max(yf, 0.06), h, v, func() {
+				tipCard(c, pal, d.Day.Format("2006-01-02"), rows, cols)
+			})
+		})
+	}
+	return el
 }
 
 var icScale = icon(`<path d="M12 3v18M7 21h10M5 7h14"/><path d="m5 7-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/>`)

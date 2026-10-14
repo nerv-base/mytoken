@@ -243,14 +243,32 @@ func countUp(c *ui.Context, pal palette, v float64, format func(float64) string,
 }
 
 // segmented is a pill switcher whose raised thumb slides to the choice.
+// The choices are one native radio group, so the arrow keys move the
+// choice and the keyboard focus together and assistive technology reads
+// the set as a whole. The choice is written while building: the framework
+// binding lands after the build, and the caller has to reload on the same
+// frame the switch happens.
 func segmented(c *ui.Context, pal palette, sel *int, labels ...string) bool {
+	return segmentedGroup(c, pal, sel, "", labels...)
+}
+
+// segmentedGroup is segmented with an accessible name for the group. The name
+// is what a screen reader announces for the set as a whole; the choice itself
+// is the labels. A name is accessibility only: it is not laid out and does not
+// paint, so naming a group changes no pixel.
+func segmentedGroup(c *ui.Context, pal palette, sel *int, group string, labels ...string) bool {
 	changed := false
-	box := ui.Row(c).Padding(3).Gap(2).Radius(99).Background(pal.well).Border(1, pal.faint)
+	parts := ui.SegmentedBase(c, sel, len(labels))
+	box := parts.Track.Padding(3).Gap(2).Radius(99).Background(pal.well).Border(1, pal.faint)
+	if group != "" {
+		box = box.Label(group)
+	}
 	box.Children(func() {
 		var segs []ui.Element
 		for i, l := range labels {
 			on := *sel == i
-			b := ui.Row(c.Key(l)).Padding(5, 13).Radius(99).Cursor(ui.CursorPointer).Label(l).Role(ui.RoleButton).Transition(hoverFade)
+			c.Key(l)
+			b := parts.Segment(i).Padding(5, 13).Radius(99).Cursor(ui.CursorPointer).Label(l).Transition(hoverFade)
 			if !on && b.Hovered() {
 				b.Background(pal.hover)
 			}
@@ -267,28 +285,37 @@ func segmented(c *ui.Context, pal palette, sel *int, labels ...string) bool {
 			}
 			segs = append(segs, b)
 		}
-		glider(box, segs, *sel, 99, pal.raised, ui.Transparent, ui.RGBA(0, 0, 0, 0.12))
+		glider(c, box, segs, *sel, 3, 3, 99, pal.raised, ui.Transparent, ui.RGBA(0, 0, 0, 0.12))
 	})
 	return changed
 }
 
-// glider paints a raised pill behind items[i], as laid out last frame, in
-// parent's own drawing (so under the items), easing it from choice to choice.
-func glider(parent ui.Element, items []ui.Element, i int, radius float32, fill, edge, shadow ui.Color) {
+// glider paints a raised pill behind items[i], in parent's own drawing (so
+// under the items), easing it from choice to choice. The pill is an
+// invisible element that takes the chosen item's box, so its place and its
+// size glide through the framework's own Transition instead of a value
+// computed here every frame. padX and padY are the parent's padding: an
+// absolute child is placed from the parent's padding box, one padding past
+// where the first item starts.
+func glider(c *ui.Context, parent ui.Element, items []ui.Element, i int, padX, padY, radius float32, fill, edge, shadow ui.Color) {
 	if i < 0 || i >= len(items) {
 		return
 	}
-	pb, b := parent.Bounds(), items[i].Bounds()
-	if b.W == 0 {
+	origin, b := items[0].Bounds(), items[i].Bounds()
+	if b.W == 0 || origin.W == 0 {
 		return
 	}
-	const d = 320 * time.Millisecond
-	x := parent.AnimateWith("gx", b.X-pb.X, d, ui.EaseOut)
-	y := parent.AnimateWith("gy", b.Y-pb.Y, d, ui.EaseOut)
-	w := parent.AnimateWith("gw", b.W, d, ui.EaseOut)
-	h := parent.AnimateWith("gh", b.H, d, ui.EaseOut)
+	pill := ui.Box(c).Key("gliderPill").Absolute().Invisible().
+		Left(b.X - origin.X + padX).
+		Top(b.Y - origin.Y + padY).
+		Width(b.W).
+		Height(b.H).
+		Transition(ui.ElementTransition{Duration: glide, Ease: ui.EaseOut, Position: true, Size: true})
 	parent.Draw(func(p *ui.Painter, r ui.Rect) {
-		rr := ui.Rect{X: r.X + x, Y: r.Y + y, W: w, H: h}
+		rr := pill.Bounds()
+		if rr.W == 0 || rr.H == 0 {
+			return
+		}
 		p.Shadow(rr, radius, 0, 2, 8, 0, shadow)
 		p.Fill(rr, fill, radius)
 		if edge != ui.Transparent {
@@ -296,6 +323,9 @@ func glider(parent ui.Element, items []ui.Element, i int, radius float32, fill, 
 		}
 	})
 }
+
+// glide is how long the pill takes to move and resize between choices.
+const glide = 320 * time.Millisecond
 
 // delta shows the change against the previous period.
 func delta(c *ui.Context, pal palette, cur, prev float64) {

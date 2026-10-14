@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/zzstar101/mytoken/internal/ingestrate"
 	"github.com/zzstar101/mytoken/internal/model"
 	"github.com/zzstar101/mytoken/internal/query"
+	"github.com/zzstar101/mytoken/internal/store"
 )
 
 // Hooks are what the GUI asks of the rest of the app; any may be nil.
@@ -35,8 +37,42 @@ type Hooks struct {
 	Quit     func()
 	// Settings edits pricing; nil hides the pricing cards.
 	Settings query.Settings
+	// SetProviderAlias sets or clears the display name of an identified
+	// endpoint (store.SetProviderAlias). It only changes presentation: the
+	// endpoint's identity, attribution and prices stay as they are. nil
+	// hides the alias editor.
+	SetProviderAlias func(ctx context.Context, id, label string) error
 	// Relays reconciles relays; nil hides the page's data.
 	Relays Relays
+	// Budget edits the persisted budget rules; nil hides the budget card.
+	Budget Budget
+	// Calendar reads and writes the stats timezone; nil hides that row.
+	Calendar Calendar
+	// Location is the stats timezone every calendar period is resolved in
+	// (app.App.Location). A nil hook, or a nil result, means no fixed calendar
+	// is configured: the machine's zone is then a display preview only, never
+	// the persisted choice a fixed calendar implies.
+	Location func() *time.Location
+	// Sources administers the instance configuration (sources.json): the
+	// settings page's add, move, remove and promote actions. nil hides the
+	// editor and shows the read-only summary only.
+	Sources SourceAdmin
+	// Diagnostics reads the collection evidence the store recorded for one
+	// harness instance (app.SourceDiagnostics). It is read in the background,
+	// in the same pass as the configuration, so a frame never touches the
+	// store; nil hides the evidence rather than showing zeros.
+	Diagnostics DiagnosticsReader
+	// ClaudeQuota is the opt-in Claude subscription-quota panel; nil hides
+	// the panel. Nothing is requested until the user enables a source.
+	ClaudeQuota ClaudeQuota
+	// QuotaStore reads the persisted provider-quota observations the offline
+	// quota cards show; nil hides those cards. It is a plain key/value read
+	// of the app's own store, never a network call.
+	QuotaStore QuotaStore
+	// IngestRate reports how many output tokens the scanner committed over
+	// the trailing ingestrate.Window ending at now (scan.Scanner.IngestRate).
+	// This is ingestion throughput, not generation speed; nil shows "—".
+	IngestRate func(now time.Time) ingestrate.Snapshot
 	// Now is the clock (tests pin it).
 	Now func() time.Time
 	// Visible reports whether a window shows the state; nil means always.
@@ -73,20 +109,30 @@ type State struct {
 	shared shared
 	gen    int
 
-	sessions   SessionPage
-	sortIdx    int
-	search     string
-	list       ui.ListState
-	sel        string // harness/id
+	sessions SessionPage
+	sortIdx  int
+	search   string
+	list     ui.ListState
+	// sel is the selected session, instance included: a session id alone
+	// cannot name one row when two instances hold the same id.
+	sel        sessionRef
 	detail     SessionDetail
 	openKids   bool
 	detailBusy bool
+	// provFilter narrows the sessions page to one endpoint's stable provider
+	// id. It is a drilldown state, not a pricing choice: the sessions it
+	// lists keep the provider they resolved to.
+	provFilter providerDrill
 
 	rankTab int
+	pv      providerView
 	pr      pricingState
+	bg      budgetState
 	rl      relayState
 	ch      cacheState
 	src     sourceState
+	cq      claudeQuotaState
+	oq      offlineQuotaState
 
 	// stale is set by data changes not reloaded yet; lastReload and
 	// waiting pace the reloads (see reloadGap).
@@ -184,6 +230,34 @@ func (s *State) Stop() {
 	}
 }
 
+// rebuild runs the explicit full rescan and reloads the views when it returns.
+// The rescan writes a fresh collection record, so the sources card must show
+// the new evidence without anything else being pressed. It reads no credential
+// and makes no request: the rescan is the app's own index over the sources the
+// user configured.
+func (s *State) rebuild() {
+	if s.Hooks.Rebuild == nil {
+		return
+	}
+	// Tests load inline: the reload is observable as soon as the rescan
+	// returns, with no goroutine and no clock.
+	if s.sync {
+		s.Hooks.Rebuild()
+		s.src.loaded = false
+		s.changed()
+		return
+	}
+	// The real rescan walks every source and can take a while: it must not
+	// block the frame that started it.
+	go func() {
+		s.Hooks.Rebuild()
+		s.post(func() {
+			s.src.loaded = false
+			s.changed()
+		})
+	}()
+}
+
 // Reload reloads the data of every view; cached spans count as stale.
 func (s *State) Reload() {
 	s.gen++
@@ -195,8 +269,8 @@ func (s *State) Reload() {
 	}
 	s.loadShared()
 	s.loadSessions()
-	if s.sel != "" {
-		s.loadDetail(s.detail.Row.Harness, s.detail.Row.SessionID)
+	if s.sel.SessionID != "" {
+		s.loadDetail(s.sel)
 	}
 	// Pricing is only on the settings page: elsewhere, load it when shown.
 	if s.Hooks.Settings != nil {
@@ -209,8 +283,27 @@ func (s *State) Reload() {
 	// The relay page loads when drawn; the report shown stays until replaced.
 	s.rl.loaded, s.rl.want = false, ""
 	s.src.loaded = false
+	// The quota cards and the source editor only exist on the settings page:
+	// reload them when shown, and drop the picked rows with the data.
+	s.cq.loaded = false
+	s.oq.loaded = false
+	// The budget card only exists on the settings page: reload it when shown.
+	s.bg.loaded = false
 	// The cache page reloads when drawn; what it shows stays until replaced.
 	s.ch.want = ""
+}
+
+// location is the stats timezone the dashboard and the tray resolve calendar
+// days and weeks in. It is read per load, so a timezone change takes effect on
+// the next reload without restarting the app.
+func (s *State) location() *time.Location {
+	if s.Hooks.Location == nil {
+		return time.Local
+	}
+	if loc := s.Hooks.Location(); loc != nil {
+		return loc
+	}
+	return time.Local
 }
 
 // run runs load off the UI thread (or inline) and applies its result. Loads
@@ -284,7 +377,7 @@ func (s *State) loadSpan(span Span) {
 		s.mu.Lock()
 		s.spanAt[span] = cancel
 		s.mu.Unlock()
-		ov, err := loadSpan(ctx, s.Q, span, now)
+		ov, err := loadSpan(ctx, s.Q, span, now, s.location())
 		s.mu.Lock()
 		s.spanAt[span] = nil
 		s.mu.Unlock()
@@ -306,7 +399,7 @@ func (s *State) loadSpan(span Span) {
 func (s *State) loadShared() {
 	now := s.Hooks.Now()
 	s.run("shared", func(ctx context.Context) func() {
-		sh := loadShared(ctx, s.Q, now)
+		sh := loadShared(ctx, s.Q, now, s.location())
 		return func() {
 			s.shared = sh
 			s.compose()
@@ -316,25 +409,38 @@ func (s *State) loadShared() {
 
 var sortKeys = []string{query.SortRecent, query.SortTokens, query.SortCost}
 
+// sessionFilter is the filter the sessions page lists with. A provider
+// drilldown narrows by the endpoint's stable id, never by its display name:
+// the name is an alias the user may reuse for several endpoints, and the
+// sessions themselves must keep the provider they were priced under.
+func (s *State) sessionFilter() query.Filter {
+	var f query.Filter
+	if s.provFilter.Key != "" {
+		f.ProviderIDs = []string{s.provFilter.Key}
+	}
+	return f
+}
+
 func (s *State) loadSessions() {
-	key := sortKeys[s.sortIdx]
+	key, want := sortKeys[s.sortIdx], s.provFilter.Key
+	f := s.sessionFilter()
 	s.run("sessions", func(ctx context.Context) func() {
-		page, err := loadSessions(ctx, s.Q, key)
+		page, err := loadSessions(ctx, s.Q, f, key)
 		return func() {
-			if err == nil && sortKeys[s.sortIdx] == key {
+			if err == nil && sortKeys[s.sortIdx] == key && s.provFilter.Key == want {
 				s.sessions = page
 			}
 		}
 	})
 }
 
-func (s *State) loadDetail(h model.Harness, id string) {
-	key := string(h) + "/" + id
+func (s *State) loadDetail(ref sessionRef) {
+	ref.InstanceID = store.NormalizeInstanceID(ref.InstanceID)
 	s.detailBusy = true
 	s.run("detail", func(ctx context.Context) func() {
-		d, err := loadSession(ctx, s.Q, h, id)
+		d, err := loadSession(ctx, s.Q, ref)
 		return func() {
-			if s.sel == key {
+			if s.sel == ref {
 				s.detailBusy = false
 				if err == nil {
 					s.detail = d
@@ -344,15 +450,35 @@ func (s *State) loadDetail(h model.Harness, id string) {
 	})
 }
 
-// Select opens a session in the sessions page.
-func (s *State) Select(h model.Harness, id string) {
-	key := string(h) + "/" + id
-	if s.sel == key {
+// SelectRef opens the session a reference names.
+func (s *State) SelectRef(ref sessionRef) {
+	ref.InstanceID = store.NormalizeInstanceID(ref.InstanceID)
+	if ref.SessionID == "" || s.sel == ref {
 		return
 	}
-	s.sel = key
+	s.sel = ref
 	s.openKids = false
-	s.loadDetail(h, id)
+	s.loadDetail(ref)
+}
+
+// SelectRow opens the session a listed row names, instance included.
+func (s *State) SelectRow(r query.SessionRow) { s.SelectRef(refOf(r)) }
+
+// Select opens a session by harness and id. Callers that hold a row should
+// use SelectRow: an id alone names the reserved default instance, which is
+// all this can safely mean.
+func (s *State) Select(h model.Harness, id string) {
+	s.SelectRef(sessionRef{Harness: h, InstanceID: store.DefaultInstanceID, SessionID: id})
+}
+
+// clearSelection drops the open session. The endpoint drilldown changes which
+// sessions the list holds, so a session that is no longer listed must not stay
+// behind in the detail pane, where it would look like the filter did not apply.
+func (s *State) clearSelection() {
+	s.sel = sessionRef{}
+	s.openKids = false
+	s.detailBusy = false
+	s.detail = SessionDetail{}
 }
 
 // SetPage switches the main window's page ("overview", "sessions", …).

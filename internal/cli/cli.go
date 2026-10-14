@@ -22,6 +22,14 @@ func run(args []string, out, errout io.Writer) int {
 		fmt.Fprint(errout, usage)
 		return 2
 	}
+	// A flag-first invocation is the one-shot versioned snapshot: `mytoken
+	// --json --once` is exactly `mytoken snapshot --json --once`, the same
+	// read-only envelope the statusline, tray and MCP consumers share. It never
+	// starts the GUI, a scan or a network call; an unknown option still fails as
+	// one, with status 2.
+	if strings.HasPrefix(args[0], "-") {
+		args = append([]string{"snapshot"}, args...)
+	}
 	ctx := context.Background()
 	switch args[0] {
 	case "version", "help":
@@ -47,10 +55,22 @@ func run(args []string, out, errout io.Writer) int {
 		return runStats(ctx, args[1:], out, errout)
 	case "cache":
 		return runCache(ctx, args[1:], out, errout)
+	case "provider":
+		return runProvider(ctx, args[1:], out, errout)
 	case "relay":
 		return runRelay(ctx, args[1:], out, errout)
 	case "reconcile":
 		return runReconcile(ctx, args[1:], out, errout)
+	case "sources":
+		return runSources(ctx, args[1:], out, errout)
+	case "snapshot":
+		return runSnapshot(ctx, args[1:], out, errout)
+	case "statusline":
+		return runStatusline(ctx, args[1:], out, errout)
+	case "report":
+		return runReport(ctx, args[1:], out, errout)
+	case "quota":
+		return runQuota(ctx, args[1:], out, errout)
 	default:
 		fmt.Fprintln(errout, "unknown command:", args[0])
 		return 2
@@ -67,13 +87,13 @@ func runStats(ctx context.Context, args []string, out, errout io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(errout, "usage: mytoken stats [--since DATE|DUR] [--until DATE|DUR] [--last WINDOW] [--by GROUP] [--timezone TZ] [--offline] [--no-cost] [--format table|json|csv]")
+		fmt.Fprintln(errout, "usage: mytoken stats [--since DATE|DUR] [--until DATE|DUR] [--last WINDOW] [--by GROUP] [--provider NAME] [--provider-id ID] [--timezone TZ] [--offline] [--no-cost] [--format table|json|csv]")
 		return 2
 	}
 	switch *by {
-	case "session", "provider", "model", "project", "harness", "day":
+	case "session", "provider", "model", "project", "harness", "day", "endpoint":
 	default:
-		fmt.Fprintln(errout, "invalid --by value:", *by, "(want session, provider, model, project, harness or day)")
+		fmt.Fprintln(errout, "invalid --by value:", *by, "(want session, provider, model, project, harness, day or endpoint)")
 		return 2
 	}
 	opts, e := cf.resolve(time.Now())
@@ -91,7 +111,7 @@ func statsCommand(ctx context.Context, opts options, by string, out, errout io.W
 		return 1
 	}
 	defer a.Close()
-	f := query.Filter{Range: opts.rng}
+	f := opts.filter()
 	total, e := a.Query.Totals(ctx, f)
 	if e != nil {
 		fmt.Fprintln(errout, e)
@@ -177,6 +197,12 @@ func statsRows(ctx context.Context, a *app.App, by string, f query.Filter) (any,
 		rows, e := a.Query.Daily(ctx, f)
 		if rows == nil {
 			rows = []query.Point{}
+		}
+		return rows, e
+	case "endpoint":
+		rows, e := a.Query.ProviderGroups(ctx, f)
+		if rows == nil {
+			rows = []query.ProviderGroup{}
 		}
 		return rows, e
 	}

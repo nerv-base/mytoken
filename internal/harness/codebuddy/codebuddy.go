@@ -22,7 +22,6 @@
 package codebuddy
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/zzstar101/mytoken/internal/harness"
@@ -38,17 +37,26 @@ const (
 func init() { harness.Register(New()) }
 
 // New returns a parser for the standard CodeBuddy locations.
-func New() *workbuddy.Parser { return NewWithRoots(DefaultRoots()...) }
+func New() *workbuddy.Parser { return workbuddy.NewDefault(model.CodeBuddy, rootProvenance) }
 
 // NewWithRoots returns a CodeBuddy parser reading the given project roots.
 func NewWithRoots(roots ...string) *workbuddy.Parser {
 	return workbuddy.NewForHarness(model.CodeBuddy, roots...)
 }
 
+// rootProvenance reports CodeBuddy's default roots and where they came from.
+func rootProvenance() ([]harness.Root, error) {
+	if dir, ok := harness.Getenv(envHome); ok {
+		return harness.EnvRoots(envHome, filepath.Join(dir, "projects")), nil
+	}
+	return harness.BuiltinRoots(filepath.Join(harness.Home(), homeDirName, "projects")), nil
+}
+
 // DefaultRoots returns the CodeBuddy project roots for this machine.
 func DefaultRoots() []string {
-	if dir := os.Getenv(envHome); dir != "" {
-		return []string{filepath.Join(dir, "projects")}
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
 	}
-	return []string{filepath.Join(harness.Home(), homeDirName, "projects")}
+	return harness.RootPaths(roots)
 }

@@ -42,10 +42,14 @@ const (
 // Parser implements harness.Parser for Qwen Code.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 // New returns a parser for the standard Qwen Code locations.
-func New() *Parser { return &Parser{roots: DefaultRoots()} }
+func New() *Parser { return &Parser{roots: DefaultRoots(), prov: rootProvenance} }
 
 // NewWithRoots returns a parser reading the given project roots (tests).
 func NewWithRoots(roots ...string) *Parser {
@@ -54,27 +58,54 @@ func NewWithRoots(roots ...string) *Parser {
 
 func init() { harness.Register(New()) }
 
+// rootProvenance reports Qwen Code's default roots and where each came from.
+// MYTOKEN_QWEN_DIRS replaces the whole set and QWEN_DATA_DIR is an explicit
+// harness-specific override; otherwise the root is a platform default.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv("MYTOKEN_QWEN_DIRS"); ok {
+		dirs, err := harness.SplitEnvList("MYTOKEN_QWEN_DIRS", v)
+		if err != nil {
+			return nil, err
+		}
+		return harness.EnvRoots("MYTOKEN_QWEN_DIRS", dirs...), nil
+	}
+	if v, ok := harness.Getenv("QWEN_DATA_DIR"); ok {
+		return harness.EnvRoots("QWEN_DATA_DIR", filepath.Clean(v)), nil
+	}
+	return harness.BuiltinRoots(filepath.Join(harness.Home(), ".qwen", "projects")), nil
+}
+
 // DefaultRoots returns the Qwen Code project roots for this machine.
 func DefaultRoots() []string {
-	if v := os.Getenv("MYTOKEN_QWEN_DIRS"); v != "" {
-		var out []string
-		for _, p := range filepath.SplitList(v) {
-			if p = strings.TrimSpace(p); p != "" {
-				out = append(out, filepath.Clean(p))
-			}
-		}
-		if len(out) > 0 {
-			return out
-		}
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
 	}
-	if v := strings.TrimSpace(os.Getenv("QWEN_DATA_DIR")); v != "" {
-		return []string{filepath.Clean(v)}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
 	}
-	return []string{filepath.Join(harness.Home(), ".qwen", "projects")}
+	return p.prov()
 }
 
 // Harness implements harness.Parser.
 func (p *Parser) Harness() model.Harness { return model.Qwen }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots implements harness.Parser.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }

@@ -76,10 +76,27 @@ const (
 type Parser struct {
 	harnessID model.Harness
 	roots     []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 // New returns a parser for the standard WorkBuddy locations.
-func New() *Parser { return NewForHarness(model.WorkBuddy, DefaultRoots()...) }
+func New() *Parser { return NewDefault(model.WorkBuddy, rootProvenance) }
+
+// NewDefault returns a parser for harnessID over the roots its provenance
+// reports right now. It is exported so CodeBuddy, which reuses this parser
+// under a different home directory, can supply its own provenance.
+func NewDefault(h model.Harness, prov func() ([]harness.Root, error)) *Parser {
+	p := &Parser{harnessID: h, prov: prov}
+	if prov != nil {
+		if roots, err := prov(); err == nil {
+			p.roots = harness.RootPaths(roots)
+		}
+	}
+	return p
+}
 
 // NewForHarness returns a parser reading roots for the given harness id.
 func NewForHarness(h model.Harness, roots ...string) *Parser {
@@ -93,16 +110,50 @@ func NewWithRoots(roots ...string) *Parser {
 
 func init() { harness.Register(New()) }
 
-// DefaultRoots returns the WorkBuddy project roots for this machine.
-func DefaultRoots() []string {
-	if dir := os.Getenv(envHome); dir != "" {
-		return []string{filepath.Join(dir, "projects")}
+// rootProvenance reports WorkBuddy's default roots and where each came from.
+func rootProvenance() ([]harness.Root, error) {
+	if dir, ok := harness.Getenv(envHome); ok {
+		return harness.EnvRoots(envHome, filepath.Join(dir, "projects")), nil
 	}
-	return []string{filepath.Join(harness.Home(), homeDirName, "projects")}
+	return harness.BuiltinRoots(filepath.Join(harness.Home(), homeDirName, "projects")), nil
+}
+
+// DefaultRoots returns the WorkBuddy project roots for this machine.
+func DefaultRoots() []string { return defaultRoots() }
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
+	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // Harness implements harness.Parser.
 func (p *Parser) Harness() model.Harness { return p.harnessID }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser for the same
+// harness id over exactly the given roots; an explicit empty list stays empty
+// instead of falling back to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	kept := make([]string, 0, len(roots))
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			kept = append(kept, r)
+		}
+	}
+	return NewForHarness(p.harnessID, kept...)
+}
 
 // Roots implements harness.Parser.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }

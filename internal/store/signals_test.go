@@ -53,19 +53,30 @@ func TestEventSignalsRoundTripAndReplay(t *testing.T) {
 
 func TestSignalsUpgradeExistingCompactDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.db")
-	st, err := Open(path)
+	// The pre-signal compact generation: the dictionary-backed event_data is
+	// keyed by (harness,dedup_key), the events view is the legacy read surface
+	// and the signal columns do not exist yet. This generation predates the
+	// instance dimension, so it carries no instance marker and no instance_id
+	// columns; it also predates raw_project on sessions, which the migration
+	// adds. Only event_data, event_dimensions and the view need to exist here,
+	// because Open's base DDL and the migrations create everything else.
+	raw, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = st.Commit(context.Background(), model.Codex, "old", harness.Batch{Events: []model.UsageEvent{{DedupKey: "old", SessionID: "s", Tokens: model.Tokens{Input: 7}}}}, nil); err != nil {
+	if _, err = raw.Exec(`
+CREATE TABLE event_dimensions(id INTEGER PRIMARY KEY,harness TEXT NOT NULL,session_id TEXT NOT NULL,parent_id TEXT NOT NULL,project TEXT NOT NULL,model TEXT NOT NULL,provider TEXT NOT NULL,base_url TEXT NOT NULL,resolved_provider TEXT NOT NULL,attrib TEXT NOT NULL,raw_project TEXT NOT NULL,UNIQUE(harness,session_id,parent_id,project,model,provider,base_url,resolved_provider,attrib,raw_project));
+CREATE TABLE event_data(harness TEXT NOT NULL,dedup_key TEXT NOT NULL,dimension_id INTEGER NOT NULL REFERENCES event_dimensions(id),timestamp INTEGER NOT NULL,input INTEGER NOT NULL,output INTEGER NOT NULL,cache_read INTEGER NOT NULL,cache_write INTEGER NOT NULL,reasoning INTEGER NOT NULL,log_cost REAL,cost REAL NOT NULL,priced INTEGER NOT NULL,PRIMARY KEY(harness,dedup_key));
+INSERT INTO event_dimensions(harness,session_id,parent_id,project,model,provider,base_url,resolved_provider,attrib,raw_project) VALUES('codex','s','','/p','m','prov','https://api.example.com','resolved','log','/p');
+INSERT INTO event_data(harness,dedup_key,dimension_id,timestamp,input,output,cache_read,cache_write,reasoning,log_cost,cost,priced) VALUES('codex','old',1,1700000000000000000,7,0,0,0,0,NULL,0,0);
+CREATE VIEW events AS SELECT e.rowid AS rowid,e.harness,e.dedup_key,d.session_id,d.parent_id,d.project,e.timestamp,d.model,d.provider,d.base_url,e.input,e.output,e.cache_read,e.cache_write,e.reasoning,e.log_cost,d.resolved_provider,d.attrib,e.cost,e.priced,d.raw_project FROM event_data e JOIN event_dimensions d ON d.id=e.dimension_id;`); err != nil {
+		raw.Close()
 		t.Fatal(err)
 	}
-	// Recreate the actual pre-signal compact shape while retaining facts and rollups.
-	if err = st.Exec(context.Background(), `DROP VIEW events; ALTER TABLE event_data DROP COLUMN request_id; ALTER TABLE event_data DROP COLUMN boundary; ALTER TABLE event_data DROP COLUMN bill_amount; ALTER TABLE event_data DROP COLUMN bill_unit; CREATE VIEW events AS SELECT e.rowid AS rowid,e.harness,e.dedup_key,d.session_id,d.parent_id,d.project,e.timestamp,d.model,d.provider,d.base_url,e.input,e.output,e.cache_read,e.cache_write,e.reasoning,e.log_cost,d.resolved_provider,d.attrib,e.cost,e.priced,d.raw_project FROM event_data e JOIN event_dimensions d ON d.id=e.dimension_id;`); err != nil {
+	if err = raw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	st.Close()
-	st, err = Open(path)
+	st, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}

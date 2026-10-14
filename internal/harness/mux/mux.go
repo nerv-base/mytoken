@@ -83,6 +83,10 @@ const (
 // Parser implements harness.Parser for mux chat transcripts.
 type Parser struct {
 	roots []string
+	// prov recomputes this parser's default-root provenance from the current
+	// environment. It is set only on the registry singleton; a parser built for
+	// explicit roots reports those roots instead.
+	prov func() ([]harness.Root, error)
 }
 
 var _ harness.Parser = (*Parser)(nil)
@@ -93,7 +97,9 @@ func init() {
 
 // New returns a parser watching mux's default roots.
 func New() harness.Parser {
-	return NewWithRoots(defaultRoots()...)
+	p := NewWithRoots(defaultRoots()...).(*Parser)
+	p.prov = rootProvenance
+	return p
 }
 
 // NewWithRoot returns a parser for a single root.
@@ -124,35 +130,62 @@ func NewWithRoots(roots ...string) harness.Parser {
 	return &Parser{roots: out}
 }
 
-// defaultRoots returns $MYTOKEN_MUX_DIRS, else $CODEBURN_MUX_DIR, else
-// $MUX_ROOT, else ~/.mux, ~/.mux-dev and ~/.cmux.
-func defaultRoots() []string {
-	if dirs := os.Getenv(rootsEnv); dirs != "" {
-		var out []string
-		for _, dir := range filepath.SplitList(dirs) {
-			if dir = strings.TrimSpace(dir); dir != "" {
-				out = append(out, dir)
-			}
+// rootProvenance reports mux's default roots and where each came from.
+// MYTOKEN_MUX_DIRS replaces the whole set and CODEBURN_MUX_DIR/MUX_ROOT are
+// explicit harness-specific bases; the ~/.mux* directories are defaults.
+func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv(rootsEnv); ok {
+		dirs, err := harness.SplitEnvList(rootsEnv, v)
+		if err != nil {
+			return nil, err
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return harness.EnvRoots(rootsEnv, dirs...), nil
 	}
 	for _, key := range []string{dirEnv, rootEnv} {
-		if dir := strings.TrimSpace(os.Getenv(key)); dir != "" {
-			return []string{dir}
+		if dir, ok := harness.Getenv(key); ok {
+			return harness.EnvRoots(key, expandHome(dir)), nil
 		}
 	}
 	home := harness.Home()
-	return []string{
+	return harness.BuiltinRoots(
 		filepath.Join(home, ".mux"),
 		filepath.Join(home, ".mux-dev"),
 		filepath.Join(home, ".cmux"),
+	), nil
+}
+
+// defaultRoots returns the paths of rootProvenance. A malformed explicit
+// override yields no roots: it is never replaced by the built-in default.
+func defaultRoots() []string {
+	roots, err := rootProvenance()
+	if err != nil {
+		return nil
 	}
+	return harness.RootPaths(roots)
+}
+
+// RootProvenance implements harness.Provenance.
+func (p *Parser) RootProvenance() ([]harness.Root, error) {
+	if p.prov == nil {
+		return harness.ExplicitRoots(p.roots...), nil
+	}
+	return p.prov()
 }
 
 // Harness identifies this parser.
 func (p *Parser) Harness() model.Harness { return model.Mux }
+
+// WithRoots implements harness.Rooted. It returns a fresh parser over exactly
+// the given roots; an explicit empty list stays empty instead of falling back
+// to this harness's default roots.
+func (p *Parser) WithRoots(roots ...string) harness.Parser {
+	for _, r := range roots {
+		if strings.TrimSpace(r) != "" {
+			return NewWithRoots(roots...)
+		}
+	}
+	return &Parser{}
+}
 
 // Roots returns the configured roots.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }

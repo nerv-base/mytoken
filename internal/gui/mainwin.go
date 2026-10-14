@@ -80,18 +80,35 @@ func (s *State) sidebar(c *ui.Context, pal palette) {
 			logo(c, pal, 22)
 			ui.Text(c, "token × harness × model").FontSize(10.5).TextColor(pal.muted).LetterSpacing(0.5)
 		})
-		nav := ui.Column(c).Gap(2)
+		// The pages are a tab list: one tab stop, the arrows move the focus
+		// among the rows, Home and End take it to the first and the last,
+		// and Enter and Space choose. The page follows the focused row, so
+		// the keyboard needs no key handling of its own here.
+		nav := ui.Column(c).Gap(2).Role(ui.RoleTabList).Label(tr("navigation")).FocusGroup(ui.Vertical)
 		nav.Children(func() {
-			// One raised pill glides behind the current page.
-			var rows []ui.Element
+			// One raised pill glides behind the current page. The rows are
+			// built first, unstyled, so that the page the keyboard moved to
+			// is known before anything is painted and before the page column
+			// is built: the pill, the accents and the page change together.
+			rows := make([]ui.Element, 0, len(navItems))
+			for _, it := range navItems {
+				rows = append(rows, ui.Row(c.Key(it.id)).Height(38).Focusable().
+					Padding(0, 12).Gap(11).Radius(12).AlignItems(ui.Center).
+					Cursor(ui.CursorPointer).Role(ui.RoleTab).Label(tr(it.id)).Transition(hoverFade))
+			}
+			for i, it := range navItems {
+				if rows[i].Focused() && s.page != it.id {
+					s.page = it.id
+				}
+			}
 			cur := -1
 			for i, it := range navItems {
 				on := s.page == it.id
+				row := rows[i]
 				if on {
 					cur = i
 				}
-				row := ui.Row(c.Key(it.id)).Height(38).Padding(0, 12).Gap(11).Radius(12).AlignItems(ui.Center).
-					Cursor(ui.CursorPointer).Role(ui.RoleTab).Label(tr(it.id)).Transition(hoverFade)
+				row.Checked(on)
 				if !on && row.Hovered() {
 					row.Background(pal.hover)
 				}
@@ -119,9 +136,8 @@ func (s *State) sidebar(c *ui.Context, pal palette) {
 				if row.Clicked() {
 					s.page = it.id
 				}
-				rows = append(rows, row)
 			}
-			glider(nav, rows, cur, 12, pal.raised, pal.edge, pal.lift)
+			glider(c, nav, rows, cur, 0, 0, 12, pal.raised, pal.edge, pal.lift)
 		})
 		ui.Spacer(c)
 		s.todayMini(c, pal)
@@ -190,7 +206,7 @@ func (s *State) spanSwitch(c *ui.Context, pal palette) {
 	for i, k := range spanKeys {
 		labels[i] = tr(k)
 	}
-	if segmented(c, pal, &s.span, labels...) {
+	if segmentedGroup(c, pal, &s.span, tr("span"), labels...) {
 		s.setSpan()
 	}
 }
@@ -217,7 +233,7 @@ func (s *State) overviewPage(c *ui.Context, pal palette) {
 			rise(c, 1, func() {
 				ui.Row(c).Gap(14).AlignItems(ui.Stretch).Children(func() {
 					card(c, pal, tr("trend"), func() { classLegend(c, pal) }, func() {
-						stackedBars(c.Key(fmt.Sprint("bars", ov.Span)), pal, ov.Daily, false, 230)
+						stackedBars(c.Key(fmt.Sprint("bars", ov.Span)), pal, ov.Daily, false, 230, tr("trend"))
 					}).Grow(1).Basis(0)
 					card(c, pal, tr("composition"), nil, func() {
 						ui.Column(c).Gap(16).AlignItems(ui.Center).Children(func() {
@@ -268,7 +284,7 @@ func (s *State) overviewPage(c *ui.Context, pal palette) {
 						s.bucketList(c, pal, ov.Harnesses, 6, false, true)
 					}).Grow(1).Basis(0)
 					card(c, pal, tr("byProvider"), nil, func() {
-						s.bucketList(c, pal, topN(ov.Providers, 5, "…"), 6, false, false)
+						s.providerList(c, pal, ov.Providers, ov.ProviderErr, 5)
 					}).Grow(1).Basis(0)
 				})
 			})
@@ -352,7 +368,7 @@ func (s *State) hero(c *ui.Context, pal palette, ov Overview) {
 			metric("requests", Rana, fmtTokens(t.Requests), float64(t.Requests), float64(pv.Requests), trf("sessionsN", t.Sessions))
 			metric("cacheHit", Taki, fmtPct(t.CacheHit), t.CacheHit, pv.CacheHit, tr("cacheRead")+" "+fmtTokens(t.Tokens.CacheRead))
 		})
-		heroWave(c.Key(fmt.Sprint("wave", ov.Span)), pal, ov.Daily, 92)
+		heroWave(c.Key(fmt.Sprint("wave", ov.Span)), pal, ov.Daily, 92, tr("trend"))
 	})
 }
 
@@ -420,10 +436,12 @@ func (s *State) recentCard(c *ui.Context, pal palette, rows []query.SessionRow) 
 			return
 		}
 		ui.Column(c).Gap(2).Children(func() {
+			dups := ambiguousSessions(rows)
 			for _, r := range rows {
-				s.sessionRow(c.Key(string(r.Harness)+r.SessionID), pal, r, false, func() {
+				ref := refOf(r)
+				s.sessionRow(c.Key(ref.key()), pal, r, showInstance(dups, r), false, func() {
 					s.page = "sessions"
-					s.Select(r.Harness, r.SessionID)
+					s.SelectRef(ref)
 				})
 			}
 		})

@@ -1,7 +1,10 @@
 package gui
 
 import (
+	"time"
+
 	"github.com/egoist/mygo/ui"
+	"github.com/zzstar101/mytoken/internal/ingestrate"
 )
 
 // TrayWidth and TrayHeight are the tray panel's size.
@@ -63,7 +66,7 @@ func (s *State) TrayView(c *ui.Context) {
 						if i >= 2 {
 							break
 						}
-						row := ui.Row(c.Key(string(r.Harness)+r.SessionID)).Gap(8).Padding(5, 6).Radius(8).AlignItems(ui.Center).Cursor(ui.CursorPointer).Role(ui.RoleButton).Transition(hoverFade)
+						row := ui.Row(c.Key(refOf(r).key())).Gap(8).Padding(5, 6).Radius(8).AlignItems(ui.Center).Cursor(ui.CursorPointer).Role(ui.RoleButton).Transition(hoverFade)
 						if row.Hovered() {
 							row.Background(pal.hover)
 						}
@@ -78,7 +81,7 @@ func (s *State) TrayView(c *ui.Context) {
 						})
 						if row.Clicked() {
 							s.page = "sessions"
-							s.Select(r.Harness, r.SessionID)
+							s.SelectRow(r)
 							if s.Hooks.OpenMain != nil {
 								s.Hooks.OpenMain()
 							}
@@ -87,6 +90,7 @@ func (s *State) TrayView(c *ui.Context) {
 				})
 			}
 			s.trayBalances(c, pal)
+			s.trayRate(c, pal)
 			ui.Row(c).Gap(8).Children(func() {
 				b := trayButton(c, pal, icWindow, tr("openMain"), true).Grow(1)
 				if b.Clicked() && s.Hooks.OpenMain != nil {
@@ -98,6 +102,32 @@ func (s *State) TrayView(c *ui.Context) {
 				}
 			})
 		})
+	})
+}
+
+// trayRate is the committed output-token rate of the last window: how fast
+// output tokens are actually landing in the log, not how fast a model
+// generates them. The scanner owns the counting; this only reads the last
+// committed snapshot, and anything it cannot vouch for reads "—".
+func (s *State) trayRate(c *ui.Context, pal palette) {
+	var snap ingestrate.Snapshot
+	if s.Hooks.IngestRate != nil {
+		snap = s.Hooks.IngestRate(s.Hooks.Now())
+	}
+	// The window rolls on its own: redraw so a live rate keeps moving.
+	c.After(time.Second)
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Tooltip(tr("ingestRateTip")).Children(func() {
+		kicker(c, pal, tr("ingestRate"))
+		ui.Spacer(c)
+		if !snap.Available {
+			ui.Text(c, "—").FontSize(13).FontWeight(700).TextColor(pal.muted)
+			ui.Text(c, tr("ingestRateUnknown")).FontSize(10.5).TextColor(pal.muted.Alpha(0.75))
+			return
+		}
+		ui.Text(c, trimNum(snap.Rate, 1)).FontSize(13).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum")
+		if snap.Window > 0 {
+			ui.Text(c, trf("ingestRateWindow", int(snap.Window/time.Second))).FontSize(10.5).TextColor(pal.muted)
+		}
 	})
 }
 

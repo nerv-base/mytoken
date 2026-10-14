@@ -601,6 +601,7 @@ func parseReconcile(args []string, errout io.Writer) (reconcileReq, int) {
 	var req reconcileReq
 	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	fs.SetOutput(errout)
+	fs.Usage = func() { fmt.Fprint(errout, reconcileUsage) }
 	var cf commonFlags
 	addCommonFlags(fs, &cf, "7d")
 	by := fs.String("by", "category", "grouping: category, model or day")
@@ -611,6 +612,17 @@ func parseReconcile(args []string, errout io.Writer) (reconcileReq, int) {
 		return req, 2
 	}
 	if e := cf.parseFlags(fs, flags); e != nil {
+		return req, 2
+	}
+	// addCommonFlags registers --provider, --provider-id and --instance-id for
+	// the ledger views, but reconcile does not query the ledger: it compares one
+	// relay site, chosen by the positional <origin|provider> argument plus
+	// --key-id (the Origin+KeyID identity). There is no query.Filter to narrow,
+	// so these selectors are rejected rather than accepted and dropped: a filter
+	// that silently does nothing is worse than no filter, and it would blur the
+	// positional Origin+KeyID identity with the endpoint identity keys.
+	if names := ledgerFilterFlags(&cf); names != "" {
+		fmt.Fprintf(errout, "reconcile: unsupported selector %s; select the site with the positional <origin|provider> argument and --key-id (ledger filters never narrow a relay comparison)\n", names)
 		return req, 2
 	}
 	if len(positional) > 1 {

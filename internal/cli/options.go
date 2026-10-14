@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/zzstar101/mytoken/internal/app"
 	"github.com/zzstar101/mytoken/internal/query"
+	"github.com/zzstar101/mytoken/internal/snapshot"
 )
 
 // outputFormat is the value of --format.
@@ -34,12 +36,32 @@ type commonFlags struct {
 	format   string
 	json     bool
 
+	// providers filters on the original pricing provider name (the pre-identity
+	// semantics); providerIDs filters on the stable endpoint identity key. They
+	// are independent and intersect.
+	providers   stringList
+	providerIDs stringList
+
+	// instanceIDs narrows the index to configured data sources. It is repeatable
+	// and intersecting, like the provider filters: an unknown id selects nothing.
+	instanceIDs stringList
+
 	set map[string]bool // flags the user actually passed
 }
 
 // addCommonFlags registers the shared flags on fs. defaultSince is the value
 // --since falls back to when the user passes neither --since nor --last
 // ("" means unbounded, i.e. all time).
+//
+// --provider and --provider-id are registered here too, so every caller must
+// either consume them (build a query.Filter via options.filter(), as stats,
+// sessions, cache and provider list do) or explicitly reject them when its
+// command has no ledger filter to apply (cache rejects them for a session
+// timeline; reconcile rejects them outright). Accepting them and dropping them
+// would report a filter that never ran. --instance-id follows the same rule:
+// commands with no ledger to narrow simply do not register it, so Go's flag
+// package rejects it instead of ignoring a selector the user asked for
+// (reconcile names it explicitly because it does take other ledger flags).
 func addCommonFlags(fs *flag.FlagSet, cf *commonFlags, defaultSince string) {
 	fs.StringVar(&cf.since, "since", defaultSince, "range start: YYYY-MM-DD, YYYYMMDD, RFC3339 or a duration")
 	fs.StringVar(&cf.until, "until", "", "range end, exclusive: YYYY-MM-DD, YYYYMMDD, RFC3339 or a duration")
@@ -49,6 +71,9 @@ func addCommonFlags(fs *flag.FlagSet, cf *commonFlags, defaultSince string) {
 	fs.BoolVar(&cf.noCost, "no-cost", false, "omit cost columns/fields")
 	fs.StringVar(&cf.format, "format", "table", "output format: table, json or csv")
 	fs.BoolVar(&cf.json, "json", false, "alias for --format json")
+	fs.Var(&cf.providers, "provider", "filter by original provider name (repeatable)")
+	fs.Var(&cf.providerIDs, "provider-id", "filter by stable endpoint identity key (repeatable)")
+	fs.Var(&cf.instanceIDs, "instance-id", "filter by instance id from sources.json (repeatable)")
 }
 
 // parse parses args and remembers which flags were set, so resolve can tell an
@@ -174,14 +199,36 @@ type options struct {
 	format  outputFormat
 	offline bool
 	noCost  bool
+
+	providers   []string // --provider: original pricing provider names
+	providerIDs []string // --provider-id: stable endpoint identity keys
+	instanceIDs []string // --instance-id: instance ids from sources.json
+}
+
+// filter builds the query filter for the resolved range and provider filters.
+// Providers and ProviderIDs are orthogonal: query intersects them, so an
+// unknown --provider-id selects nothing rather than falling back to everything.
+// InstanceIDs intersects the same way: an empty list means every instance.
+func (o options) filter() query.Filter {
+	return query.Filter{Range: o.rng, Providers: o.providers, ProviderIDs: o.providerIDs, InstanceIDs: o.instanceIDs}
 }
 
 // resolve validates the flags and turns them into a query range plus output
 // options. now is passed in so the resolution is testable.
 func (cf *commonFlags) resolve(now time.Time) (options, error) {
-	o := options{loc: time.Local, offline: cf.offline, noCost: cf.noCost}
+	o := options{
+		loc:         time.Local,
+		offline:     cf.offline,
+		noCost:      cf.noCost,
+		providers:   cf.providers.values(),
+		providerIDs: cf.providerIDs.values(),
+		instanceIDs: cf.instanceIDs.values(),
+	}
 	if cf.timezone != "" {
-		loc, e := time.LoadLocation(cf.timezone)
+		// An explicit --timezone is a one-invocation override, so it may also
+		// name "Local" (the process zone). It is never persisted, and an
+		// unknown zone is still refused.
+		loc, e := app.ParseTimezoneOverride(cf.timezone)
 		if e != nil {
 			return o, fmt.Errorf("invalid --timezone %q: %w", cf.timezone, e)
 		}
@@ -346,4 +393,65 @@ func runInLocation(loc *time.Location, fn func() int) int {
 	time.Local = loc
 	defer func() { time.Local = prev }()
 	return fn()
+}
+
+// zoneChoice is the reporting zone a read-only command resolved, together with
+// what may be said about it. NeedsSelection is set when no fixed calendar can
+// be resolved: the numbers then ran in the process zone as a preview, and
+// Name/Source must not present it as the persisted choice.
+type zoneChoice struct {
+	Loc            *time.Location
+	Name           string
+	Source         string
+	NeedsSelection bool
+	Problem        string
+	Preview        string
+}
+
+// reportingZone resolves the zone a read-only command computes in and names its
+// source: an explicit --timezone wins (including an explicit "Local", which is
+// a one-invocation override and never persisted), then the persisted
+// stats_timezone when one is recorded and loadable, then the zone the app
+// itself would have discovered. The returned zone is the one the queries really
+// run in, so no envelope or report labels numbers with a zone it did not
+// compute in.
+//
+// A recorded value that cannot be used is never silently replaced by the
+// process zone: the choice is reported as needs-selection, with the process
+// zone as a preview. A machine whose zone cannot be identified is reported the
+// same way rather than as a "Local" calendar that would follow the OS.
+func reportingZone(ctx context.Context, explicit, dbOverride string) zoneChoice {
+	if explicit != "" {
+		if loc, err := app.ParseTimezoneOverride(explicit); err == nil {
+			return zoneChoice{Loc: loc, Name: explicit, Source: "override"}
+		}
+		return zoneChoice{Loc: time.Local, Name: time.Local.String(), Source: "system"}
+	}
+	if tz, recorded := snapshot.PersistedStatsTimezone(ctx, dbOverride); recorded {
+		if loc, err := app.ParseStatsTimezone(tz); err == nil {
+			return zoneChoice{Loc: loc, Name: tz, Source: "stats_timezone"}
+		}
+		return unresolvedZone(fmt.Sprintf("stats_timezone %q is not a usable IANA zone; choose one", tz))
+	}
+	// Nothing is recorded. Mirror the app's read-only discovery so the report
+	// runs in the same stable zone the app would adopt, without writing it.
+	if name := app.DefaultStatsTimezone(); name != "" {
+		if loc, err := app.ParseStatsTimezone(name); err == nil {
+			return zoneChoice{Loc: loc, Name: loc.String(), Source: "system"}
+		}
+	}
+	return unresolvedZone("no stable IANA timezone could be identified for this machine; choose one")
+}
+
+// unresolvedZone previews the process zone without adopting it. The name is a
+// label, not a zone: no fixed calendar exists in this state.
+func unresolvedZone(problem string) zoneChoice {
+	return zoneChoice{
+		Loc:            time.Local,
+		Name:           "unconfigured",
+		Source:         "needs_selection",
+		NeedsSelection: true,
+		Problem:        problem,
+		Preview:        time.Local.String(),
+	}
 }

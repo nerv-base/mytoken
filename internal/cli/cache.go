@@ -24,13 +24,24 @@ type cacheService interface {
 	SessionCache(ctx context.Context, h model.Harness, session string) ([]query.CacheStep, error)
 }
 
+// instanceCacheService is the instance-aware extension of cacheService:
+// *query.service implements it, so a session timeline scoped to exactly one
+// --instance-id reads that instance's steps instead of the whole index (a
+// session id can repeat across instances).
+type instanceCacheService interface {
+	SessionCacheIn(ctx context.Context, h model.Harness, instance, session string) ([]query.CacheStep, error)
+}
+
 // cacheEnv is everything a cache run needs once the flags are parsed.
 type cacheEnv struct {
-	rng     query.Range
-	format  outputFormat
-	noCost  bool
-	harness string
-	service cacheService
+	rng         query.Range
+	format      outputFormat
+	noCost      bool
+	harness     string
+	providers   []string // --provider: original pricing provider names
+	providerIDs []string // --provider-id: stable endpoint identity keys
+	instanceIDs []string // --instance-id: instance ids from sources.json
+	service     cacheService
 }
 
 // cacheDims maps the --by values that select a CacheBy dimension. "cause" and
@@ -91,6 +102,20 @@ func parseCache(args []string, errout io.Writer) (cacheArgs, int) {
 			fmt.Fprintln(errout, "cache: --by cannot be combined with a session timeline")
 			return req, 2
 		}
+		// A session timeline reads one session's steps through SessionCache,
+		// which takes no Filter: there is nothing for an identity filter to
+		// narrow, so accepting one silently would falsely imply it applied.
+		if flags := providerFilterFlags(&cf); flags != "" {
+			fmt.Fprintf(errout, "cache: %s cannot be combined with a session timeline\n", flags)
+			return req, 2
+		}
+		// --instance-id is different: a timeline can read one instance's copy of
+		// the session (SessionCacheIn), but it cannot intersect several copies,
+		// so more than one id is a usage error rather than a silent union.
+		if len(cf.instanceIDs) > 1 {
+			fmt.Fprintln(errout, "cache: a session timeline reads one instance; pass at most one --instance-id")
+			return req, 2
+		}
 		req.session = positional[0]
 		req.harness = harnessName
 	} else {
@@ -144,11 +169,14 @@ func runCache(ctx context.Context, args []string, out, errout io.Writer) int {
 		}
 		defer a.Close()
 		env := cacheEnv{
-			rng:     req.opts.rng,
-			format:  req.opts.format,
-			noCost:  req.opts.noCost,
-			harness: req.harness,
-			service: a.Query,
+			rng:         req.opts.rng,
+			format:      req.opts.format,
+			noCost:      req.opts.noCost,
+			harness:     req.harness,
+			providers:   req.opts.providers,
+			providerIDs: req.opts.providerIDs,
+			instanceIDs: req.opts.instanceIDs,
+			service:     a.Query,
 		}
 		return cacheRun(ctx, env, req.by, req.session, out, errout)
 	})
@@ -164,7 +192,7 @@ func cacheRun(ctx context.Context, env cacheEnv, by, session string, out, errout
 	if session != "" {
 		return cacheTimeline(ctx, env, session, out, errout)
 	}
-	f := query.Filter{Range: env.rng}
+	f := query.Filter{Range: env.rng, Providers: env.providers, ProviderIDs: env.providerIDs, InstanceIDs: env.instanceIDs}
 	var payload any
 	var err error
 	switch by {
@@ -212,7 +240,7 @@ func cacheRun(ctx context.Context, env cacheEnv, by, session string, out, errout
 func cacheTimeline(ctx context.Context, env cacheEnv, session string, out, errout io.Writer) int {
 	h := model.Harness(env.harness)
 	if h == "" {
-		buckets, e := env.service.CacheBy(ctx, query.Filter{}, query.CacheBySession)
+		buckets, e := env.service.CacheBy(ctx, query.Filter{InstanceIDs: env.instanceIDs}, query.CacheBySession)
 		if e != nil {
 			fmt.Fprintln(errout, e)
 			return 1
@@ -238,7 +266,18 @@ func cacheTimeline(ctx context.Context, env cacheEnv, session string, out, errou
 			return 1
 		}
 	}
-	steps, e := env.service.SessionCache(ctx, h, session)
+	var steps []query.CacheStep
+	var e error
+	if len(env.instanceIDs) == 1 {
+		scoped, ok := env.service.(instanceCacheService)
+		if !ok {
+			fmt.Fprintf(errout, "cache: %T does not support instance-aware cache lookups\n", env.service)
+			return 1
+		}
+		steps, e = scoped.SessionCacheIn(ctx, h, env.instanceIDs[0], session)
+	} else {
+		steps, e = env.service.SessionCache(ctx, h, session)
+	}
 	if e != nil {
 		fmt.Fprintln(errout, e)
 		return 1

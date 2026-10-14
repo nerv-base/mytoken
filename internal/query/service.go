@@ -19,18 +19,35 @@ func NewService(st *store.Store) Service { return &service{st: st} }
 
 var _ Service = (*service)(nil)
 
+// The SQL-backed service is the instance-aware implementation.
+var _ InstanceService = (*service)(nil)
+
+// sessionKey identifies a session inside one data source instance. The instance
+// is part of the identity: the same harness and session id in two instances are
+// two independent sessions, and dropping the instance here would merge them.
 type sessionKey struct {
-	h  model.Harness
-	id string
+	h        model.Harness
+	instance string
+	id       string
 }
 type data struct {
-	events []AttributedEvent
-	meta   map[sessionKey]model.SessionMeta
+	events          []AttributedEvent
+	meta            map[sessionKey]model.SessionMeta
+	providerAliases map[string]string
 }
 
 type loadMode struct {
 	hourly    bool
+	identity  bool
 	sessionID string
+	// instance scopes a session detail read to one explicit data source when
+	// scoped is set. The legacy Session call leaves scoped false so it can
+	// detect an id that exists in several instances.
+	instance string
+	scoped   bool
+	// branch reads the per-request branch metadata alongside the facts. Branch
+	// is metadata, not a rollup dimension, so this mode always scans facts.
+	branch bool
 }
 
 func (s *service) load(ctx context.Context, f Filter, mode ...loadMode) (data, error) {
@@ -40,14 +57,27 @@ func (s *service) load(ctx context.Context, f Filter, mode ...loadMode) (data, e
 		return d, e
 	}
 	defer tx.Rollback()
-	rows, e := tx.QueryContext(ctx, "SELECT harness,session_id,parent_id,title,project,started_at,updated_at FROM sessions")
+	d, e = s.loadTx(ctx, tx, f, mode...)
+	if e != nil {
+		return d, e
+	}
+	return d, tx.Commit()
+}
+
+// loadTx does the read work inside a caller-owned transaction. ReadEnvelope
+// uses it so the totals, cache and freshness fields of one envelope come from a
+// single consistent read snapshot instead of three separate transactions.
+func (s *service) loadTx(ctx context.Context, tx *sql.Tx, f Filter, mode ...loadMode) (data, error) {
+	d := data{meta: map[sessionKey]model.SessionMeta{}}
+	rows, e := tx.QueryContext(ctx, "SELECT harness,instance_id,session_id,parent_id,title,project,started_at,updated_at FROM sessions")
 	if e != nil {
 		return d, e
 	}
 	for rows.Next() {
 		var m model.SessionMeta
+		var instance string
 		var start, end int64
-		if e = rows.Scan(&m.Harness, &m.SessionID, &m.ParentID, &m.Title, &m.Project, &start, &end); e != nil {
+		if e = rows.Scan(&m.Harness, &instance, &m.SessionID, &m.ParentID, &m.Title, &m.Project, &start, &end); e != nil {
 			rows.Close()
 			return d, e
 		}
@@ -57,7 +87,7 @@ func (s *service) load(ctx context.Context, f Filter, mode ...loadMode) (data, e
 		if end != 0 {
 			m.UpdatedAt = time.Unix(0, end).UTC()
 		}
-		d.meta[sessionKey{m.Harness, m.SessionID}] = m
+		d.meta[sessionKey{m.Harness, store.NormalizeInstanceID(instance), m.SessionID}] = m
 	}
 	e = rows.Err()
 	rows.Close()
@@ -75,23 +105,68 @@ func (s *service) load(ctx context.Context, f Filter, mode ...loadMode) (data, e
 			return d, e
 		}
 	}
+	if len(mode) > 0 && mode[0].identity {
+		d.providerAliases = map[string]string{}
+		rows, e = tx.QueryContext(ctx, "SELECT key,value FROM settings WHERE key LIKE 'provider.alias.%'")
+		if e != nil {
+			return d, e
+		}
+		for rows.Next() {
+			var key, value string
+			if e = rows.Scan(&key, &value); e != nil {
+				rows.Close()
+				return d, e
+			}
+			d.providerAliases[strings.TrimPrefix(key, "provider.alias.")] = value
+		}
+		e = rows.Err()
+		rows.Close()
+		if e != nil {
+			return d, e
+		}
+	}
 	aliasLookup := aliasMap(aliases)
 	models := f.Models
 	f.Models = nil
+	// Endpoint identity is hashed in Go, so an ID filter cannot be pushed into
+	// SQL. Select base_url and filter here; this also forces the facts-based
+	// aggregate because the legacy daily rollup has no endpoint column.
+	selector := newProviderIDSelector(f.ProviderIDs)
+	branchDim := len(mode) > 0 && mode[0].branch
+	withEndpoint := selector != nil || (len(mode) > 0 && mode[0].identity) || branchDim
 	var loaded []AttributedEvent
-	if len(mode) == 0 || mode[0].hourly {
+	if len(mode) == 0 || mode[0].hourly || mode[0].identity || branchDim {
 		var err error
-		loaded, err = scanUsage(ctx, tx, f, len(mode) > 0)
+		loaded, err = scanUsageMode(ctx, tx, f, len(mode) > 0 && mode[0].hourly, withEndpoint, branchDim)
 		if err != nil {
 			return d, err
 		}
 	} else {
+		root := mode[0].sessionID
+		// The legacy instance-less call resolves the instance from the session
+		// rows. When the same id exists in more than one instance there is no
+		// correct answer, so it reports ErrAmbiguousInstance instead of reading
+		// another data source's requests into this session.
+		scope := mode[0].instance
+		if !mode[0].scoped {
+			scope = ""
+			for k := range d.meta {
+				if k.h != f.Harnesses[0] || k.id != root {
+					continue
+				}
+				if scope == "" {
+					scope = k.instance
+				} else if scope != k.instance {
+					return d, ErrAmbiguousInstance
+				}
+			}
+		}
 		// Limit detail I/O to this session and descendants (including grandchildren).
-		ids := []string{mode[0].sessionID}
-		seen := map[string]bool{mode[0].sessionID: true}
+		ids := []string{root}
+		seen := map[string]bool{root: true}
 		for i := 0; i < len(ids); i++ {
 			for k, m := range d.meta {
-				if m.ParentID == ids[i] && k.h == f.Harnesses[0] && !seen[k.id] {
+				if m.ParentID == ids[i] && k.h == f.Harnesses[0] && (scope == "" || k.instance == scope) && !seen[k.id] {
 					ids = append(ids, k.id)
 					seen[k.id] = true
 				}
@@ -99,24 +174,32 @@ func (s *service) load(ctx context.Context, f Filter, mode ...loadMode) (data, e
 		}
 		// Drive the fact lookup through dimension IDs. A view predicate on
 		// harness alone otherwise tempts SQLite into scanning its dedup index.
-		where := " WHERE rowid IN (SELECT rowid FROM event_data WHERE dimension_id IN (SELECT id FROM event_dimensions WHERE harness=? AND session_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + ")))"
+		where := " WHERE rowid IN (SELECT rowid FROM event_data WHERE dimension_id IN (SELECT id FROM event_dimensions WHERE harness=?"
 		args := []any{f.Harnesses[0]}
+		if scope != "" {
+			where += " AND instance_id=?"
+			args = append(args, scope)
+		}
+		where += " AND session_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + ")))"
 		for _, id := range ids {
 			args = append(args, id)
 		}
-		rows, e = tx.QueryContext(ctx, `SELECT harness,dedup_key,session_id,parent_id,project,timestamp,model,provider,base_url,input,output,cache_read,cache_write,reasoning,log_cost,resolved_provider,attrib,cost,priced,request_id,boundary,bill_amount,bill_unit FROM events`+where+" ORDER BY timestamp,harness,dedup_key", args...)
+		rows, e = tx.QueryContext(ctx, `SELECT harness,instance_id,dedup_key,session_id,parent_id,project,timestamp,model,provider,base_url,input,output,cache_read,cache_write,reasoning,log_cost,resolved_provider,attrib,cost,priced,request_id,boundary,bill_amount,bill_unit FROM events`+where+" ORDER BY timestamp,harness,dedup_key", args...)
 		if e != nil {
 			return d, e
 		}
+		loadedInstances := map[string]bool{}
 		for rows.Next() {
 			var v AttributedEvent
+			var instance string
 			var at int64
 			var cost, billAmount sql.NullFloat64
 			var billUnit string
-			if e = rows.Scan(&v.Harness, &v.DedupKey, &v.SessionID, &v.ParentID, &v.ProjectPath, &at, &v.Model, &v.Provider, &v.BaseURL, &v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.Tokens.Reasoning, &cost, &v.ResolvedProvider, &v.Attrib, &v.Cost, &v.Priced, &v.RequestID, &v.Boundary, &billAmount, &billUnit); e != nil {
+			if e = rows.Scan(&v.Harness, &instance, &v.DedupKey, &v.SessionID, &v.ParentID, &v.ProjectPath, &at, &v.Model, &v.Provider, &v.BaseURL, &v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.Tokens.Reasoning, &cost, &v.ResolvedProvider, &v.Attrib, &v.Cost, &v.Priced, &v.RequestID, &v.Boundary, &billAmount, &billUnit); e != nil {
 				rows.Close()
 				return d, e
 			}
+			v.InstanceID = store.NormalizeInstanceID(instance)
 			v.Timestamp = time.Unix(0, at).UTC()
 			if cost.Valid {
 				x := cost.Float64
@@ -126,12 +209,17 @@ func (s *service) load(ctx context.Context, f Filter, mode ...loadMode) (data, e
 				v.Bill = &model.Bill{Amount: billAmount.Float64, Unit: billUnit}
 			}
 			eventSource(&v)
+			loadedInstances[v.InstanceID] = true
 			loaded = append(loaded, v)
 		}
 		e = rows.Err()
 		rows.Close()
 		if e != nil {
 			return d, e
+		}
+		// Without a known instance the facts themselves must agree on one.
+		if scope == "" && len(loadedInstances) > 1 {
+			return d, ErrAmbiguousInstance
 		}
 	}
 	for _, v := range loaded {
@@ -152,9 +240,14 @@ func (s *service) load(ctx context.Context, f Filter, mode ...loadMode) (data, e
 				continue
 			}
 		}
+		// ProviderIDs is exact and orthogonal to Providers: an ID that no
+		// event carries removes every event rather than disabling the filter.
+		if !selector.match(v) {
+			continue
+		}
 		d.events = append(d.events, v)
 	}
-	return d, tx.Commit()
+	return d, nil
 }
 func filterSQL(f Filter) (string, []any) {
 	var clauses []string
@@ -181,6 +274,7 @@ func filterSQL(f Filter) (string, []any) {
 		hs[i] = string(h)
 	}
 	add("harness", hs)
+	add("instance_id", f.InstanceIDs)
 	add("resolved_provider", f.Providers)
 	add("model", f.Models)
 	if f.Project != "" {
@@ -200,16 +294,22 @@ func (d data) root(k sessionKey) sessionKey {
 		if !ok || m.ParentID == "" {
 			return k
 		}
-		k = sessionKey{k.h, m.ParentID}
+		k = sessionKey{k.h, k.instance, m.ParentID}
 	}
 	return k
 }
 func (s *service) Totals(ctx context.Context, f Filter) (Totals, error) {
 	d, e := s.load(ctx, f)
-	var out Totals
 	if e != nil {
-		return out, e
+		return Totals{}, e
 	}
+	return totalsOf(d), nil
+}
+
+// totalsOf folds loaded events into the aggregate. It is shared with
+// ReadEnvelope so a snapshot's totals and a `stats` run cannot drift apart.
+func totalsOf(d data) Totals {
+	var out Totals
 	sessions := map[sessionKey]bool{}
 	for _, v := range d.events {
 		out.Tokens = out.Tokens.Add(v.Tokens)
@@ -218,14 +318,14 @@ func (s *service) Totals(ctx context.Context, f Filter) (Totals, error) {
 		out.CostEstimateUSD += v.costEstimate
 		out.Unpriced += v.unpriced
 		out.Requests += v.requests
-		sessions[d.root(sessionKey{v.Harness, v.SessionID})] = true
+		sessions[d.root(sessionKey{v.Harness, v.InstanceID, v.SessionID})] = true
 	}
 	out.Sessions = int64(len(sessions))
 	denom := out.Tokens.Input + out.Tokens.CacheRead + out.Tokens.CacheWrite
 	if denom > 0 {
 		out.CacheHit = float64(out.Tokens.CacheRead) / float64(denom)
 	}
-	return out, nil
+	return out
 }
 func (s *service) Daily(ctx context.Context, f Filter) ([]Point, error) {
 	return s.series(ctx, f, false)
@@ -303,10 +403,18 @@ func (s *service) buckets(ctx context.Context, f Filter, kind string) ([]Bucket,
 	if e != nil {
 		return nil, e
 	}
+	return bucketsOf(d, kind), nil
+}
+
+// bucketsOf ranks one dimension of an already-loaded data set. It is shared by
+// Service.buckets and Envelope grouping so a snapshot can rank the same
+// dimension inside the transaction that produced its totals.
+func bucketsOf(d data, kind string) []Bucket {
 	groups := map[string]*Bucket{}
 	seen := map[string]map[sessionKey]bool{}
 	for _, v := range d.events {
 		var key, label string
+		labelFallback := true
 		switch kind {
 		case "provider":
 			key = v.ResolvedProvider
@@ -317,8 +425,17 @@ func (s *service) buckets(ctx context.Context, f Filter, kind string) ([]Bucket,
 		case "harness":
 			key = string(v.Harness)
 			label = v.Harness.DisplayName()
+		case "branch":
+			// A branch name alone is not a group: two repositories can both sit
+			// on "main". The key is the pair, so the ranking separates them, and
+			// the label stays the bare branch. An empty branch means the log
+			// stated none and is kept as its own explicit bucket rather than
+			// being folded into another one, so no request is dropped.
+			key = BranchKey(v.ProjectPath, v.GitBranch)
+			label = v.GitBranch
+			labelFallback = false
 		}
-		if label == "" {
+		if labelFallback && label == "" {
 			label = key
 		}
 		b := groups[key]
@@ -333,7 +450,7 @@ func (s *service) buckets(ctx context.Context, f Filter, kind string) ([]Bucket,
 		b.CostEstimateUSD += v.costEstimate
 		b.Unpriced += v.unpriced
 		b.Requests += v.requests
-		seen[key][d.root(sessionKey{v.Harness, v.SessionID})] = true
+		seen[key][d.root(sessionKey{v.Harness, v.InstanceID, v.SessionID})] = true
 	}
 	out := make([]Bucket, 0, len(groups))
 	for k, b := range groups {
@@ -346,24 +463,24 @@ func (s *service) buckets(ctx context.Context, f Filter, kind string) ([]Bucket,
 		}
 		return out[i].Tokens.Total() > out[j].Tokens.Total()
 	})
-	return out, nil
+	return out
 }
 func (d data) rows() map[sessionKey]*SessionRow {
 	rows := map[sessionKey]*SessionRow{}
 	breakdowns := map[sessionKey]map[[2]string]*ProviderModel{}
 	for k, m := range d.meta {
-		rows[k] = &SessionRow{SessionMeta: m, Breakdown: []ProviderModel{}}
+		rows[k] = &SessionRow{SessionMeta: m, InstanceID: k.instance, Breakdown: []ProviderModel{}}
 		breakdowns[k] = map[[2]string]*ProviderModel{}
 	}
 	for k, m := range d.meta {
 		if m.ParentID != "" {
-			if p := rows[sessionKey{k.h, m.ParentID}]; p != nil {
+			if p := rows[sessionKey{k.h, k.instance, m.ParentID}]; p != nil {
 				p.Children++
 			}
 		}
 	}
 	for _, e := range d.events {
-		k := sessionKey{e.Harness, e.SessionID}
+		k := sessionKey{e.Harness, e.InstanceID, e.SessionID}
 		seen := map[sessionKey]bool{}
 		for !seen[k] {
 			seen[k] = true
@@ -394,7 +511,7 @@ func (d data) rows() map[sessionKey]*SessionRow {
 			if r.ParentID == "" {
 				break
 			}
-			k = sessionKey{k.h, r.ParentID}
+			k = sessionKey{k.h, k.instance, r.ParentID}
 		}
 	}
 	for k, r := range rows {
@@ -419,6 +536,13 @@ func (s *service) Sessions(ctx context.Context, f Filter, order string, limit, o
 	if e != nil {
 		return nil, 0, e
 	}
+	rows, total := sessionsOf(d, order, limit, offset)
+	return rows, total, nil
+}
+
+// sessionsOf ranks and paginates the root sessions of an already-loaded data
+// set. It is shared by Service.Sessions and Envelope grouping.
+func sessionsOf(d data, order string, limit, offset int) ([]SessionRow, int) {
 	out := []SessionRow{}
 	for _, r := range d.rows() {
 		if r.ParentID == "" && r.Requests > 0 {
@@ -431,13 +555,13 @@ func (s *service) Sessions(ctx context.Context, f Filter, order string, limit, o
 		offset = 0
 	}
 	if offset >= total {
-		return []SessionRow{}, total, nil
+		return []SessionRow{}, total
 	}
 	out = out[offset:]
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
-	return out, total, nil
+	return out, total
 }
 func sortRows(rows []SessionRow, order string) {
 	sort.Slice(rows, func(i, j int) bool {
@@ -467,21 +591,68 @@ func (s *service) Session(ctx context.Context, h model.Harness, id string) (Sess
 	if e != nil {
 		return SessionRow{}, nil, nil, e
 	}
+	instance, e := sessionInstance(d, h, id)
+	if e != nil {
+		return SessionRow{}, nil, nil, e
+	}
+	return s.sessionIn(d, h, instance, id)
+}
+
+// SessionIn is Session for one explicit data source instance.
+func (s *service) SessionIn(ctx context.Context, h model.Harness, instance, id string) (SessionRow, []SessionRow, []AttributedEvent, error) {
+	instance = store.NormalizeInstanceID(instance)
+	d, e := s.load(ctx, Filter{Harnesses: []model.Harness{h}, InstanceIDs: []string{instance}}, loadMode{sessionID: id, instance: instance, scoped: true})
+	if e != nil {
+		return SessionRow{}, nil, nil, e
+	}
+	return s.sessionIn(d, h, instance, id)
+}
+
+// sessionInstance resolves the one instance a legacy, instance-less lookup
+// refers to. Zero instances is reported as the empty string (the caller then
+// returns sql.ErrNoRows, as before); more than one is ErrAmbiguousInstance,
+// never an arbitrary first match.
+func sessionInstance(d data, h model.Harness, id string) (string, error) {
+	found := ""
+	for k := range d.meta {
+		if k.h != h || k.id != id {
+			continue
+		}
+		if found == "" {
+			found = k.instance
+		} else if found != k.instance {
+			return "", ErrAmbiguousInstance
+		}
+	}
+	for _, v := range d.events {
+		if v.SessionID != id {
+			continue
+		}
+		if found == "" {
+			found = v.InstanceID
+		} else if found != v.InstanceID {
+			return "", ErrAmbiguousInstance
+		}
+	}
+	return found, nil
+}
+
+func (s *service) sessionIn(d data, h model.Harness, instance, id string) (SessionRow, []SessionRow, []AttributedEvent, error) {
 	rows := d.rows()
-	r := rows[sessionKey{h, id}]
+	r := rows[sessionKey{h, instance, id}]
 	if r == nil {
 		return SessionRow{}, nil, nil, sql.ErrNoRows
 	}
 	children := []SessionRow{}
 	for _, v := range rows {
-		if v.Harness == h && v.ParentID == id {
+		if v.Harness == h && v.InstanceID == instance && v.ParentID == id {
 			children = append(children, *v)
 		}
 	}
 	sortRows(children, SortRecent)
 	events := []AttributedEvent{}
 	for _, v := range d.events {
-		if v.SessionID == id {
+		if v.SessionID == id && v.InstanceID == instance {
 			events = append(events, v)
 		}
 	}

@@ -6,11 +6,62 @@ import (
 )
 
 func (s *Store) migrate() error {
+	identityMigration, err := s.prepareProviderMigration(context.Background())
+	if err != nil {
+		return err
+	}
+	// The endpoint-aware rollups are derived from event_dimensions and the cache
+	// columns, so they are only correct once the rest of the schema exists. They
+	// ride along in this transaction when the identity migration runs here, and
+	// get their own backed-up transaction on an index that already carries the
+	// identity marker.
+	rollupMigration, err := s.prepareProviderRollup(context.Background(), identityMigration)
+	if err != nil {
+		return err
+	}
+	// The instance dimension rebuilds primary keys, the dictionary uniqueness key,
+	// sessions, cursors and every derived rollup, so it runs last: it needs the
+	// base schema and both endpoint rollups to exist. It takes its own fixed
+	// pre-migration backup when the index already holds history.
+	instanceMigration, err := s.prepareInstanceMigration(context.Background())
+	if err != nil {
+		return err
+	}
+	// An index that already carries the instance dimension can still be missing
+	// one of the incremental steps (signals, cache ledger, endpoint rollups). The
+	// repair has to reproduce that index's own generation, otherwise it would
+	// recreate the compatibility view or a rollup without instance_id and leave
+	// the file internally inconsistent. A genuine legacy index reports false, so
+	// the byte-for-byte legacy generation is preserved.
+	instanceAware, err := s.hasInstanceColumn(context.Background(), "event_data")
+	if err != nil {
+		return err
+	}
+	sc := legacyRollupSchema
+	if instanceAware {
+		sc = instanceRollupSchema
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	// The baseline is captured before the additive columns are initialized. On a
+	// genuine legacy index those UPDATE statements are the first writes to the
+	// history table, so a trigger attached to events can rewrite historical
+	// tokens or cost while raw_project/priced are filled in. A baseline taken
+	// after them would already contain the rewritten values and could not prove
+	// that the original history survived. historyDigest normalizes the absent
+	// priced column to the value the additive step is about to initialize it to,
+	// so this ordering does not mistake that legitimate step for a rewrite. The
+	// instance migration re-keys the same facts, so it is covered by the same
+	// per-request digest.
+	var before [32]byte
+	if identityMigration || rollupMigration || instanceMigration {
+		if before, err = historyDigest(tx); err != nil {
+			return err
+		}
+	}
 	for _, table := range []string{"events", "sessions"} {
 		rows, err := tx.Query("PRAGMA table_info(" + table + ")")
 		if err != nil {
@@ -57,20 +108,31 @@ func (s *Store) migrate() error {
 			}
 		}
 	}
+	// The baseline was taken before the additive columns existed (see above), so
+	// the digest below compares the pre-migration history with the migrated one.
 	compacted, err := migrateCompact(tx)
 	if err != nil {
 		return err
 	}
-	if err = migrateSignals(tx); err != nil {
+	// The per-request branch metadata is additive and starts empty: it carries
+	// no history and no pricing, so it is created here without a backup, a
+	// digest or a reprice. A request whose log never stated a usable branch
+	// simply has no row, and readers report that as unknown; a request whose
+	// replays stated contradictory branches keeps a row with an empty branch,
+	// which readers also report as unknown.
+	if err = migrateEventBranches(tx); err != nil {
 		return err
 	}
-	if err = migrateCache(tx); err != nil {
+	if err = migrateSignals(tx, sc); err != nil {
+		return err
+	}
+	if err = migrateCache(tx, sc); err != nil {
 		return err
 	}
 	if err = migrateEventIndexes(tx); err != nil {
 		return err
 	}
-	if err = migrateDaily(tx); err != nil {
+	if err = migrateDaily(tx, sc); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(relaySchema); err != nil {
@@ -98,6 +160,41 @@ func (s *Store) migrate() error {
 		}
 		if _, err = tx.Exec(relaySchema); err != nil {
 			return err
+		}
+	}
+	if identityMigration {
+		if err = migrateProviderEndpoints(tx); err != nil {
+			return err
+		}
+	}
+	if rollupMigration {
+		if err = migrateProviderRollup(tx, sc); err != nil {
+			return err
+		}
+	}
+	// The instance dimension is introduced last, after every derived table exists,
+	// so one transaction re-keys facts, dictionary, sessions, cursors and all four
+	// rollups together.
+	if instanceMigration {
+		if err = s.migrateInstance(context.Background(), tx); err != nil {
+			return err
+		}
+	}
+	// A history-rebuilding migration re-keys the fact rows, which can strand the
+	// branch metadata written against the old keys. Pruning here (and only here)
+	// keeps the table bounded without paying for it on an ordinary open.
+	if identityMigration || rollupMigration || instanceMigration {
+		if _, err = pruneEventBranches(context.Background(), tx); err != nil {
+			return err
+		}
+	}
+	if identityMigration || rollupMigration || instanceMigration {
+		after, err := historyDigest(tx)
+		if err != nil {
+			return err
+		}
+		if before != after {
+			return fmt.Errorf("migration history invariant failed; transaction rolled back")
 		}
 	}
 	if err = tx.Commit(); err != nil {
