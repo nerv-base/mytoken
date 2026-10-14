@@ -88,7 +88,14 @@ type Source struct {
 	Ref string
 	// Profile is the profile directory (file source) or the keychain account.
 	Profile string
-	Read    func(ctx context.Context) (Credential, error)
+	// FileMissing reports that a file source's credentials file does not exist
+	// right now. It is a hint for a UI that wants to say so before an enable;
+	// it is never a claim that the source is unusable, because the CLI may
+	// create the file later. It is always false for a keychain source: whether
+	// the login keychain holds an entry can only be learned by asking it, which
+	// needs consent. Checking it reads no credential.
+	FileMissing bool
+	Read        func(ctx context.Context) (Credential, error)
 }
 
 // ConfigDirFromRoots derives the Claude CLI config directory from an instance's

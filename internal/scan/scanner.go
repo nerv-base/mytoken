@@ -70,6 +70,12 @@ type Scanner struct {
 	// completes, and it never holds file contents or parser errors.
 	diagMu sync.Mutex
 	diag   map[string]*diagInstance
+	// tailSeen memoizes the stat of every Codex rollout whose quota tail was
+	// read, so an unchanged file is not read again. Guarded by scanMu, like
+	// tailOutcomes, which is what the last scan's bounded tail read did: one
+	// entry per Codex instance, with the reason nothing was published.
+	tailSeen     map[string]fileStamp
+	tailOutcomes []QuotaTailOutcome
 }
 
 // fileStamp is a source file's size and modification time, with those of
@@ -126,7 +132,18 @@ func (s *Scanner) Progress() (done, total int) {
 	defer s.mu.Unlock()
 	return s.done, s.total
 }
-func (s *Scanner) LastError() error                     { s.mu.Lock(); defer s.mu.Unlock(); return s.lastError }
+func (s *Scanner) LastError() error { s.mu.Lock(); defer s.mu.Unlock(); return s.lastError }
+
+// QuotaTailOutcomes reports what the last completed scan's bounded Codex quota
+// tail read did, one entry per Codex instance discovery saw. It is empty when
+// the scan found no Codex source, and an entry with Published false says in
+// Status and Reason why nothing was published.
+func (s *Scanner) QuotaTailOutcomes() []QuotaTailOutcome {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	return append([]QuotaTailOutcome(nil), s.tailOutcomes...)
+}
+
 func (s *Scanner) Subscribe() (<-chan struct{}, func()) { return s.st.Subscribe() }
 
 type source struct {
@@ -169,6 +186,9 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 	defer func() { err = errors.Join(err, restoreIndexes()) }()
 	var work []source
 	var errs []error
+	// tail collects the Codex rollout files discovery saw, so the bounded quota
+	// tail read below needs no second walk of the log tree.
+	var tail []quotaTailSource
 	// liveCandidate records that this scan includes at least one source whose
 	// appended output is live ingestion, so the scan may report a rate.
 	liveCandidate := false
@@ -209,6 +229,9 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 				}
 			}
 			s.diagDiscover(p.Harness(), inst.ID, src, isDir, statErr)
+			if p.Harness() == model.Codex && statErr == nil && !isDir {
+				tail = append(tail, quotaTailSource{instance: inst.ID, path: src.Path, size: size, mod: info.ModTime()})
+			}
 			key := string(p.Harness()) + "\x00" + inst.ID + "\x00" + src.Path
 			if quick && stamp != nil {
 				s.mu.Lock()
@@ -381,6 +404,17 @@ func (s *Scanner) scan(ctx context.Context, quick bool) (err error) {
 		}
 	}
 	flush()
+	// Codex quota state is carried in the cursor a parse pass advances, so a
+	// source already at EOF never publishes one, and a pass that produced no
+	// write never publishes at all. A bounded tail read of the newest rollout
+	// files fills that gap: it reads no cursor and writes no event.
+	if s.st != nil {
+		outcomes, e := s.publishQuotaTail(ctx, tail)
+		s.tailOutcomes = outcomes
+		if e != nil {
+			errs = append(errs, e)
+		}
+	}
 	// A watched scan that read its live sources cleanly reports the rate even
 	// when nothing was appended: zero new output over a live window is a real
 	// zero, and the heartbeat keeps the signal fresh. A scanner that only ever

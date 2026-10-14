@@ -323,3 +323,32 @@ func TestOpenLocalUnknownCredentialRootStaysUnavailable(t *testing.T) {
 		t.Fatalf("unknown credential root must be unavailable: %+v", info)
 	}
 }
+
+// TestClaudeQuotaFileSourceReportsAMissingCredentialsFile pins the hint a card
+// renders before an enable: a file source whose credentials file is absent says
+// so, and an existing one does not. Deciding it reads no credential.
+func TestClaudeQuotaFileSourceReportsAMissingCredentialsFile(t *testing.T) {
+	cfgDir := t.TempDir()
+	projects := filepath.Join(cfgDir, "projects")
+	if err := os.MkdirAll(projects, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srcs := []Source{{Resolved: instance.Resolved{ID: "cc", Label: "Claude Code",
+		Harness: model.ClaudeCode, Roots: []string{projects}, Source: instance.PathUser,
+		Kind: instance.KindInstance}}}
+	got := claudeQuotaSources(srcs)
+	if len(got) != 1 || got[0].Kind != claudequota.SourceFile {
+		t.Fatalf("want exactly the credentials file source, got %+v", got)
+	}
+	if !got[0].FileMissing {
+		t.Fatalf("a missing credentials file was not reported: %+v", got[0])
+	}
+	path := filepath.Join(cfgDir, claudequota.CredentialsFileName)
+	if err := os.WriteFile(path, []byte(`{"claudeAiOauth":{"accessToken":"sentinel"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = claudeQuotaSources(srcs)
+	if len(got) != 1 || got[0].FileMissing {
+		t.Fatalf("an existing credentials file was reported missing: %+v", got)
+	}
+}

@@ -52,6 +52,10 @@ func TestProviderGroupAliasChangesOnlyLabel(t *testing.T) {
 	}
 }
 
+// An unknown endpoint cannot establish equivalence, so it stays isolated by its
+// (harness, instance, pricing name, base URL) tuple - but not by session: two
+// sessions that logged the same unknown endpoint are one provider identity, not
+// one row per session.
 func TestProviderGroupsUnknownIsolationAndCostProvenance(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -78,13 +82,22 @@ func TestProviderGroupsUnknownIsolationAndCostProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(groups) != 3 {
-		t.Fatalf("unknown sessions must stay separate: %+v", groups)
+	if len(groups) != 2 {
+		t.Fatalf("the recognized endpoint and the one unknown tuple must stay apart: %+v", groups)
 	}
-	for _, g := range groups {
-		if g.Identified && (g.Requests != 3 || g.CostUSD != 9 || g.CostLogUSD != 7 || g.CostEstimateUSD != 2 || g.Unpriced != 1) {
-			t.Fatalf("cost provenance changed: %+v", g)
+	var unknown *ProviderGroup
+	for i := range groups {
+		g := groups[i]
+		if g.Identified {
+			if g.Requests != 3 || g.CostUSD != 9 || g.CostLogUSD != 7 || g.CostEstimateUSD != 2 || g.Unpriced != 1 {
+				t.Fatalf("cost provenance changed: %+v", g)
+			}
+			continue
 		}
+		unknown = &groups[i]
+	}
+	if unknown == nil || unknown.Requests != 2 || unknown.Sessions != 2 {
+		t.Fatalf("two sessions of one unknown endpoint must merge into 2 requests over 2 sessions: %+v", unknown)
 	}
 	raw, err := json.Marshal(groups)
 	if err != nil {

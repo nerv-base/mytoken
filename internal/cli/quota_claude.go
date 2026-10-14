@@ -472,6 +472,13 @@ func claudeQuotaInfoStatus(entries []claudeQuotaInstanceReport) snapshot.Status 
 func writeClaudeQuotaText(out io.Writer, r claudeQuotaReport) error {
 	fmt.Fprintf(out, "CLAUDE QUOTA  generated %s  target %s  %s\n",
 		r.GeneratedAt.Format(time.RFC3339), r.Target, statusText(r.Status))
+	// Off is the default, not a fault: say plainly that nothing is authorized
+	// and therefore nothing was read, rather than leaving the reader to decode
+	// a status word.
+	if !r.Status.Available && (r.Status.Reason == snapshot.ReasonClaudeQuotaNoConsent || r.Status.Reason == snapshot.ReasonClaudeQuotaNotEnabled) {
+		fmt.Fprintln(out, "no consent is recorded: no credential source is read and no request is made")
+		fmt.Fprintln(out, "enable it with: mytoken quota claude enable --instance-id ID --source REF --yes")
+	}
 	if len(r.Instances) == 0 {
 		fmt.Fprintln(out, "no Claude Code instance is configured and no consent is stored")
 		fmt.Fprintln(out, "Claude quota is off by default: mytoken quota claude enable --instance-id ID --source REF --yes")
@@ -506,6 +513,8 @@ func writeClaudeQuotaInstanceText(out io.Writer, e claudeQuotaInstanceReport) er
 	fmt.Fprintf(out, "target     %s\n", e.Target)
 	if e.ConsentVer != 0 {
 		fmt.Fprintf(out, "consent    version=%d granted=%s\n", e.ConsentVer, timeText(e.GrantedAt))
+	} else if !e.Enabled {
+		fmt.Fprintln(out, "consent    none recorded")
 	}
 	if e.SourceKind != "" || e.SourceRef != "" {
 		fmt.Fprintf(out, "source     kind=%s ref=%s available=%s\n",
@@ -515,7 +524,13 @@ func writeClaudeQuotaInstanceText(out io.Writer, e claudeQuotaInstanceReport) er
 		fmt.Fprintf(out, "label      %s\n", e.SourceLabel)
 	}
 	fmt.Fprintf(out, "candidates %s\n", claudeCandidateText(e.Candidates))
-	fmt.Fprintf(out, "cached     %s\n", statusText(e.Quota.Status))
+	cached := statusText(e.Quota.Status)
+	if e.Quota.Status.Detail != "" {
+		// The stored reading's own verdict, in the words the snapshot built it
+		// with: an enabled instance that is failing must say why.
+		cached += ": " + e.Quota.Status.Detail
+	}
+	fmt.Fprintf(out, "cached     %s\n", cached)
 	if e.Quota.ReadingStatus != "" {
 		line := "reading    " + e.Quota.ReadingStatus
 		if e.Quota.ReadingReason != "" {

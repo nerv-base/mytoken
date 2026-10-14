@@ -18,7 +18,8 @@ const (
 	idEndpointMain = "https://api.example.com/v1"
 	idEndpointAlt  = "https://api.example.com/v1/alt"
 	// A raw URL with a query string cannot establish endpoint equivalence, so it
-	// must produce an unresolved per-session identity instead of a shared one.
+	// must produce an unresolved (harness, instance, pricing name, base URL)
+	// identity instead of a shared endpoint one.
 	idEndpointRaw = "https://api.example.com/v1?key=secret"
 )
 
@@ -46,7 +47,7 @@ func idDay(n int) time.Time { return time.Date(2026, 3, 2+n, 9, 0, 0, 0, time.Lo
 func idProject(elem string) string { return filepath.FromSlash("/p/" + elem) }
 
 // idFixtureEvents crosses pricing names, harnesses and paths over one endpoint,
-// keeps a second path separate, and splits unknown URLs by session.
+// keeps a second path separate, and splits unknown URLs by pricing name.
 func idFixtureEvents() []idEvent {
 	return []idEvent{
 		{h: model.Codex, source: "src-a", session: "s-main", model: "gpt-5", provider: "name-a", base: idEndpointMain, project: idProject("one"), at: idDay(0).Add(time.Hour), input: 100, read: 50, write: 10},
@@ -168,7 +169,7 @@ func TestProviderIDsSelectEndpointAcrossPricingNames(t *testing.T) {
 func TestProviderIDsUnknownExactSelectionAndInvalidIDs(t *testing.T) {
 	ctx := context.Background()
 	q, _ := idStore(t, idFixtureEvents())
-	// Unknown URLs stay per-session; each returned key must select exactly its
+	// Unknown URLs stay unresolved; each returned key must select exactly its
 	// own events.
 	unknownTwo := idKeyByRequests(t, q, false, 2)
 	unknownOne := idKeyByRequests(t, q, false, 1)

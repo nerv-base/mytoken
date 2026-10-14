@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 
 	"github.com/zzstar101/mytoken/internal/claudequota"
@@ -58,7 +60,7 @@ func claudeQuotaSources(sources []Source) []claudequota.Source {
 				continue
 			}
 			cfgDir := claudequota.DefaultConfigDir(home)
-			out = append(out, claudequota.FileSource(src.ID, src.Label,
+			out = append(out, claudeFileSource(src.ID, src.Label,
 				filepath.Join(cfgDir, claudequota.CredentialsFileName)))
 			if run := claudequota.DefaultKeychainRunner(); run != nil {
 				out = append(out, claudequota.KeychainSource(
@@ -70,10 +72,22 @@ func claudeQuotaSources(sources []Source) []claudequota.Source {
 		if !ok || !filepath.IsAbs(cfgDir) {
 			continue
 		}
-		out = append(out, claudequota.FileSource(src.ID, src.Label,
+		out = append(out, claudeFileSource(src.ID, src.Label,
 			filepath.Join(cfgDir, claudequota.CredentialsFileName)))
 	}
 	return out
+}
+
+// claudeFileSource builds a file source and records whether its credentials
+// file exists right now, so a card can say so before an enable instead of only
+// after a failed read. It stats the path and reads nothing; a path that exists
+// but cannot be read is left to the read path, which reports its own reason.
+func claudeFileSource(id, label, path string) claudequota.Source {
+	src := claudequota.FileSource(id, label, path)
+	if _, err := os.Stat(path); err != nil && errors.Is(err, fs.ErrNotExist) {
+		src.FileMissing = true
+	}
+	return src
 }
 
 // newClaudeQuota builds the quota service for this app. refresh mirrors the

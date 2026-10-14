@@ -25,7 +25,8 @@ import (
 //   - one endpoint reached under two different pricing provider names
 //   - a path-distinct endpoint and a host-distinct (tenant) endpoint
 //   - a raw endpoint whose query string would leak a secret if printed, which
-//     NormalizeEndpoint rejects, yielding per-session unresolved identities
+//     NormalizeEndpoint rejects, yielding one unresolved identity per endpoint
+//     instance (never one per session)
 //   - a provider name carrying CSV-hostile characters
 const (
 	idMainEndpoint    = "https://api.example.com/v1"
@@ -177,8 +178,8 @@ func idMemberNames(g idGroupJSON) []string {
 
 // TestProviderListEndpointIdentity is the core contract: `provider list` groups
 // requests by stable endpoint identity, keeps two original names on one endpoint
-// in a single group, separates tenant/path endpoints, exposes unresolved
-// identities as unidentified per-session entries, and never prints the raw
+// in a single group, separates tenant/path endpoints, merges every session of an
+// unresolved endpoint into one unidentified entry, and never prints the raw
 // endpoint query string.
 func TestProviderListEndpointIdentity(t *testing.T) {
 	seedIdentities(t, identityFixture()...)
@@ -194,8 +195,8 @@ func TestProviderListEndpointIdentity(t *testing.T) {
 	if data.By != "endpoint" {
 		t.Errorf("by = %q, want endpoint", data.By)
 	}
-	if len(data.Groups) != 6 {
-		t.Fatalf("want 6 identities (main, alt path, tenant, 2 raw, 1 weird), got %d: %+v", len(data.Groups), data.Groups)
+	if len(data.Groups) != 5 {
+		t.Fatalf("want 5 identities (main, alt path, tenant, 1 raw endpoint, 1 weird), got %d: %+v", len(data.Groups), data.Groups)
 	}
 
 	main := idGroup(t, data.Groups, idEndpointID(t, idMainEndpoint))
@@ -217,6 +218,8 @@ func TestProviderListEndpointIdentity(t *testing.T) {
 	}
 
 	byLabel := map[string]int{}
+	byLabelRequests := map[string]int64{}
+	byLabelSessions := map[string]int64{}
 	unresolved := 0
 	for _, g := range data.Groups {
 		if g.Identified {
@@ -224,18 +227,24 @@ func TestProviderListEndpointIdentity(t *testing.T) {
 		}
 		unresolved++
 		byLabel[g.Label]++
+		byLabelRequests[g.Label] += g.Requests
+		byLabelSessions[g.Label] += g.Sessions
 		if !strings.HasPrefix(g.Key, "unresolved:v1:") {
 			t.Errorf("unresolved key = %q, want unresolved:v1: prefix", g.Key)
 		}
-		if g.Requests != 1 {
-			t.Errorf("unresolved group %q requests = %d, want 1", g.Key, g.Requests)
+		if g.Label == idWeirdLabelProbe && g.Requests != 1 {
+			t.Errorf("unresolved escaped-label group requests = %d, want 1", g.Requests)
 		}
 	}
-	if unresolved != 3 {
-		t.Errorf("unresolved groups = %d, want 3 (one per raw-endpoint session)", unresolved)
+	if unresolved != 2 {
+		t.Errorf("unresolved groups = %d, want 2 (one raw endpoint, one escaped label)", unresolved)
 	}
-	if byLabel["name-d"] != 2 {
-		t.Errorf("unresolved name-d groups = %d, want 2", byLabel["name-d"])
+	if byLabel["name-d"] != 1 {
+		t.Errorf("unresolved name-d groups = %d, want 1 (both sessions share one endpoint)", byLabel["name-d"])
+	}
+	if byLabelRequests["name-d"] != 2 || byLabelSessions["name-d"] != 2 {
+		t.Errorf("unresolved name-d requests/sessions = %d/%d, want 2/2 (two sessions merged)",
+			byLabelRequests["name-d"], byLabelSessions["name-d"])
 	}
 	if byLabel[idWeirdLabelProbe] != 1 {
 		t.Errorf("unresolved escaped label groups = %d, want 1", byLabel[idWeirdLabelProbe])
@@ -272,7 +281,7 @@ func TestProviderListFormats(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("code=%d stderr=%s", code, errout)
 		}
-		for _, want := range []string{"Identities: 6", "ID", "LABEL", "IDENTIFIED", "MEMBERS", mainID, "claude-code/name-b, codex/name-a"} {
+		for _, want := range []string{"Identities: 5", "ID", "LABEL", "IDENTIFIED", "MEMBERS", mainID, "claude-code/name-b, codex/name-a"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("table missing %q:\n%s", want, out)
 			}
@@ -288,8 +297,8 @@ func TestProviderListFormats(t *testing.T) {
 			t.Fatalf("code=%d stderr=%s", code, errout)
 		}
 		recs := parseCSV(t, out)
-		if len(recs) != 1+6 {
-			t.Fatalf("want header + 6 rows, got %v", recs)
+		if len(recs) != 1+5 {
+			t.Fatalf("want header + 5 rows, got %v", recs)
 		}
 		if got := recs[0]; len(got) != len(providerCSVHeader) {
 			t.Fatalf("header width = %d, want %d: %v", len(got), len(providerCSVHeader), got)

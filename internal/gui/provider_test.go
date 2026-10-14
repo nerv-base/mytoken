@@ -130,14 +130,19 @@ func TestProviderTabShowsMemberProvenance(t *testing.T) {
 }
 
 // TestProviderTabLabelsUnknownsHonestly pins that endpoints without a stable
-// identity stay separate and are labelled as unidentified, not merged and not
-// dressed up as identified ones.
+// identity are labelled as unidentified rather than dressed up as identified
+// ones, and that the identity of an unknown endpoint is the raw endpoint — its
+// harness, instance, resolved provider and base URL — so the sessions behind
+// one loopback URL are one unknown endpoint, not one row per session, while a
+// different loopback URL stays its own unknown endpoint.
 func TestProviderTabLabelsUnknownsHonestly(t *testing.T) {
 	defer SetLang(Lang())
 	SetLang("en")
 	f := newProviderFixture(t)
-	f.commit(t, model.Codex, model.UsageEvent{DedupKey: "a", SessionID: "s1", Model: "m", BaseURL: "http://127.0.0.1:8080/v1", Tokens: model.Tokens{Input: 4}}, store.Resolution{Provider: "local"})
-	f.commit(t, model.Codex, model.UsageEvent{DedupKey: "b", SessionID: "s2", Model: "m", BaseURL: "http://127.0.0.1:8080/v1", Tokens: model.Tokens{Input: 6}}, store.Resolution{Provider: "local"})
+	const loopback = "http://127.0.0.1:8080/v1"
+	f.commit(t, model.Codex, model.UsageEvent{DedupKey: "a", SessionID: "s1", Model: "m", BaseURL: loopback, Tokens: model.Tokens{Input: 4}}, store.Resolution{Provider: "local"})
+	f.commit(t, model.Codex, model.UsageEvent{DedupKey: "b", SessionID: "s2", Model: "m", BaseURL: loopback, Tokens: model.Tokens{Input: 6}}, store.Resolution{Provider: "local"})
+	f.commit(t, model.Codex, model.UsageEvent{DedupKey: "c", SessionID: "s3", Model: "m", BaseURL: "http://127.0.0.1:8081/v1", Tokens: model.Tokens{Input: 2}}, store.Resolution{Provider: "local"})
 
 	var unknown []query.ProviderGroup
 	for _, g := range fixtureGroups(t, f) {
@@ -146,10 +151,19 @@ func TestProviderTabLabelsUnknownsHonestly(t *testing.T) {
 		}
 	}
 	if len(unknown) != 2 {
-		t.Fatalf("two sessions behind one loopback URL must stay two groups: %+v", unknown)
+		t.Fatalf("two loopback endpoints must stay two unidentified groups: %+v", unknown)
 	}
 	if unknown[0].Key == unknown[1].Key {
 		t.Fatal("two unresolved identities collided")
+	}
+	var merged *query.ProviderGroup
+	for i := range unknown {
+		if unknown[i].Sessions == 2 {
+			merged = &unknown[i]
+		}
+	}
+	if merged == nil || merged.Requests != 2 {
+		t.Fatalf("the sessions behind one loopback URL did not merge into one endpoint: %+v", unknown)
 	}
 	tt := renderProviderTab(t, providerGUI(t, f.q, Hooks{}))
 	if !tt.HasText("Unidentified") {

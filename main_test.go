@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo/ui"
 
 	"github.com/zzstar101/mytoken/internal/app"
 	"github.com/zzstar101/mytoken/internal/gui"
@@ -234,6 +237,71 @@ func TestSourceAdminKeepsIdentitiesAndRefusesInvalidRoots(t *testing.T) {
 	for _, in := range final.Sources {
 		if in.ID == b.ID {
 			t.Errorf("the removed entry is still listed: %+v", in)
+		}
+	}
+}
+
+// The fatal-startup window is the fix for the silent exit: it must really carry
+// the error, the database path, the recovery guidance and both buttons, and its
+// buttons must be wired.
+func TestStartupFailureViewShowsErrorAndRecovery(t *testing.T) {
+	dbPath := filepath.Join("home", "user", "MyToken", "mytoken.db")
+	cause := errors.New("provider migration stopped before any history was migrated: could not write a consistent pre-migration backup")
+	failure := app.DescribeStartupFailure("en", dbPath, cause)
+
+	var revealed, quit int
+	tt := ui.NewTester(startupFailureView(failure, func() { revealed++ }, func() { quit++ }), 760, 640)
+	tt.SetScale(1)
+	for i := 0; i < 4; i++ {
+		tt.Frame()
+	}
+	for _, want := range []string{
+		failure.Title,
+		failure.Summary,
+		failure.DatabaseLabel,
+		dbPath,
+		failure.ErrorLabel,
+		cause.Error(),
+		failure.Guidance,
+		failure.RevealLabel,
+		failure.QuitLabel,
+	} {
+		if !tt.HasText(want) {
+			t.Errorf("the startup failure window does not show %q", want)
+		}
+	}
+	if err := tt.Click(failure.RevealLabel); err != nil {
+		t.Fatalf("click %q: %v", failure.RevealLabel, err)
+	}
+	tt.Frame()
+	if revealed != 1 {
+		t.Errorf("the reveal button ran %d times, want 1", revealed)
+	}
+	if err := tt.Click(failure.QuitLabel); err != nil {
+		t.Fatalf("click %q: %v", failure.QuitLabel, err)
+	}
+	tt.Frame()
+	if quit != 1 {
+		t.Errorf("the quit button ran %d times, want 1", quit)
+	}
+}
+
+// Revealing the data directory is the only recovery action the window can take
+// for the user, so the platform mapping is pinned per OS.
+func TestRevealCommandPerPlatform(t *testing.T) {
+	dir := filepath.Join("home", "user", "MyToken")
+	for _, tc := range []struct{ goos, want string }{
+		{"darwin", "open"},
+		{"windows", "explorer"},
+		{"linux", "xdg-open"},
+		{"freebsd", "xdg-open"},
+	} {
+		name, args := revealCommand(tc.goos, dir)
+		if name != tc.want {
+			t.Errorf("revealCommand(%q) = %q, want %q", tc.goos, name, tc.want)
+		}
+		if len(args) != 1 || args[0] != dir {
+			t.Errorf("revealCommand(%q) args = %q, want [%q]", tc.goos, args, dir)
 		}
 	}
 }

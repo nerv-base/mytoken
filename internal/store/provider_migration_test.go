@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -91,20 +92,42 @@ func TestProviderMigrationInvariantFailureRollsBack(t *testing.T) {
 	}
 }
 
-func TestProviderMigrationBackupFailureStopsOpen(t *testing.T) {
+// A leftover pre-migration backup from an interrupted attempt must not block the
+// migration the user is waiting for: the leftover is left byte-for-byte as it
+// was, and the new snapshot goes to the next free, timestamped name.
+func TestProviderMigrationStepsOverLeftoverBackup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "history.db")
 	legacyProviderFixture(t, path)
-	backup := path + ".pre-provider-v1.db"
-	if err := os.WriteFile(backup, []byte("existing"), 0600); err != nil {
+	leftover := path + ".pre-provider-v1.db"
+	content := []byte("leftover from an interrupted attempt")
+	if err := os.WriteFile(leftover, content, 0600); err != nil {
 		t.Fatal(err)
 	}
+	wantHash := sha256.Sum256(content)
+
 	st, err := Open(path)
-	if err == nil {
-		st.Close()
-		t.Fatal("migration proceeded without a new consistent backup")
+	if err != nil {
+		t.Fatalf("a leftover backup must not block the provider migration: %v", err)
 	}
-	got, err := os.ReadFile(backup)
-	if err != nil || string(got) != "existing" {
-		t.Fatal("backup overwritten")
+	defer st.Close()
+
+	// The migration ran to completion.
+	var count, ids int
+	if err = st.DB().QueryRow("SELECT count(*),count(DISTINCT provider_id) FROM provider_endpoints").Scan(&count, &ids); err != nil || count != 3 || ids != 2 {
+		t.Fatalf("identities: %d/%d %v", count, ids, err)
 	}
+	// The leftover is neither overwritten, reused nor deleted.
+	got, err := os.ReadFile(leftover)
+	if err != nil {
+		t.Fatalf("the leftover backup disappeared: %v", err)
+	}
+	if sha256.Sum256(got) != wantHash {
+		t.Fatalf("the leftover backup changed:\n%s", got)
+	}
+	// Exactly one new backup exists, under a different name, and it is healthy.
+	fresh := freshMigrationBackups(t, path, ".pre-provider-v1.db")
+	if len(fresh) != 1 {
+		t.Fatalf("want exactly one fresh pre-migration backup, got %v", fresh)
+	}
+	assertSQLiteIntegrity(t, fresh[0])
 }

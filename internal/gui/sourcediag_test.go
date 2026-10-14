@@ -177,7 +177,7 @@ func TestSourceEvidenceAfterAMoveIsLastKnown(t *testing.T) {
 	// A scan of the new roots writes a fresh record: the label goes away and
 	// the new evidence takes its place.
 	read.records["inst_moved"] = fresh
-	s.src.loaded = false
+	s.src.cfgLoaded = false
 	for i := 0; i < 4; i++ {
 		tt.Frame()
 	}

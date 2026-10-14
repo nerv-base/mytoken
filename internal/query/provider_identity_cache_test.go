@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"testing"
 	"time"
 
@@ -11,13 +12,13 @@ import (
 	"github.com/zzstar101/mytoken/internal/provider"
 )
 
-// idSharedBaseEvents pins the identity bug fixed alongside these tests: two
+// idSharedBaseEvents pins the identity semantics these tests rely on: two
 // unresolved identities can share harness, session_id and base_url and differ
 // only in the resolved pricing provider name. The cache ledger carries
 // resolved_provider, so selecting one identity must not read the other's facts.
-// A second session with the same pricing name is a separate unresolved identity
-// (genuine per-session isolation), and a recognized endpoint must keep merging
-// its pricing names.
+// A second session with the same pricing name stays in the SAME unresolved
+// identity (one provider, not one row per session), and a recognized endpoint
+// must keep merging its pricing names.
 func idSharedBaseEvents() []idEvent {
 	return []idEvent{
 		{h: model.Codex, source: "shared-a1", session: "s-shared", model: "gpt-5", provider: "price-a", base: idEndpointRaw, project: "/p/one", at: idDay(0), input: 10, read: 5},
@@ -50,18 +51,39 @@ func addCacheTotals(dst *CacheTotals, src CacheTotals) {
 	dst.USD += src.USD
 }
 
-// cacheIdentityKeys returns every display identity of the fixture, keyed by
-// request count so a caller can name the two shared-base identities.
+// cacheIdentityKeys returns every display identity of the fixture: one
+// recognized endpoint and two unresolved pricing names.
 func cacheIdentityKeys(t *testing.T, q Service) []ProviderGroup {
 	t.Helper()
 	groups, err := q.ProviderGroups(context.Background(), Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(groups) != 4 {
+	if len(groups) != 3 {
 		t.Fatalf("fixture identities changed: %+v", groups)
 	}
 	return groups
+}
+
+// idKeyByUnresolvedLabel names the unresolved identity whose label (the resolved
+// pricing provider) is label. Two unresolved identities can share a request
+// count once sessions merge, so the label is the stable way to pick one.
+func idKeyByUnresolvedLabel(t *testing.T, q Service, label string) string {
+	t.Helper()
+	groups, err := q.ProviderGroups(context.Background(), Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	for _, g := range groups {
+		if !g.Identified && g.Label == label {
+			found = append(found, g.Key)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("want exactly one unresolved group labelled %q, got %v", label, found)
+	}
+	return found[0]
 }
 
 func TestProviderIDCachePartitionsSharedSessionBaseURL(t *testing.T) {
@@ -70,13 +92,15 @@ func TestProviderIDCachePartitionsSharedSessionBaseURL(t *testing.T) {
 	q, _ := idStore(t, all)
 	cacheIdentityKeys(t, q)
 
-	idA := idKeyByRequests(t, q, false, 2)        // s-shared / price-a
-	idB := idKeyByRequests(t, q, false, 3)        // s-shared / price-b
-	idO := idKeyByRequests(t, q, false, 1)        // s-other / price-a
-	idK, _ := provider.EndpointID(idEndpointMain) // recognized endpoint
+	idA := idKeyByUnresolvedLabel(t, q, "price-a") // s-shared + s-other
+	idB := idKeyByUnresolvedLabel(t, q, "price-b") // s-shared
+	idK, _ := provider.EndpointID(idEndpointMain)  // recognized endpoint
 
-	if idA == idB || idA == idO || idB == idO {
-		t.Fatalf("shared base URL must not collapse identities: %q %q %q", idA, idB, idO)
+	if idA == idB {
+		t.Fatalf("one session and base URL must not collapse two pricing names: %q", idA)
+	}
+	if idA == idK || idB == idK {
+		t.Fatalf("unresolved identities must not collide with an endpoint: %q %q %q", idA, idB, idK)
 	}
 
 	// The Go-side path already partitions; the cache ledger must agree exactly.
@@ -84,7 +108,7 @@ func TestProviderIDCachePartitionsSharedSessionBaseURL(t *testing.T) {
 		name string
 		id   string
 		want int64
-	}{{"shared price-a", idA, 2}, {"shared price-b", idB, 3}, {"other session", idO, 1}, {"known endpoint", idK, 1}}
+	}{{"shared price-a", idA, 3}, {"shared price-b", idB, 3}, {"known endpoint", idK, 1}}
 	for _, tc := range cases {
 		tot, err := q.Totals(ctx, Filter{ProviderIDs: []string{tc.id}})
 		if err != nil {
@@ -104,7 +128,7 @@ func TestProviderIDCachePartitionsSharedSessionBaseURL(t *testing.T) {
 
 	// Selecting one unresolved identity must equal a store that only ever held it.
 	reducedA, _ := idStore(t, idSubset(all, func(e idEvent) bool {
-		return e.session == "s-shared" && e.provider == "price-a"
+		return e.base == idEndpointRaw && e.provider == "price-a"
 	}))
 	wantA, err := reducedA.CacheTotals(ctx, Filter{})
 	if err != nil {
@@ -151,15 +175,15 @@ func TestProviderIDCacheSeriesAndProjectionsPartitionSharedBase(t *testing.T) {
 	ctx := context.Background()
 	all := idSharedBaseEvents()
 	q, _ := idStore(t, all)
-	idA := idKeyByRequests(t, q, false, 2)
-	idB := idKeyByRequests(t, q, false, 3)
-	idO := idKeyByRequests(t, q, false, 1)
+	idA := idKeyByUnresolvedLabel(t, q, "price-a")
+	idB := idKeyByUnresolvedLabel(t, q, "price-b")
 	idK, _ := provider.EndpointID(idEndpointMain)
 
-	// CacheDaily is the cache series: the two shared-base identities must split
-	// their days without overlap and each must match its own reduced store.
+	// CacheDaily is the cache series: the two pricing names that share a session
+	// and base URL must split their days without overlap, and each must match its
+	// own reduced store.
 	reducedA, _ := idStore(t, idSubset(all, func(e idEvent) bool {
-		return e.session == "s-shared" && e.provider == "price-a"
+		return e.base == idEndpointRaw && e.provider == "price-a"
 	}))
 	wantDaily, err := reducedA.CacheDaily(ctx, Filter{})
 	if err != nil {
@@ -172,9 +196,16 @@ func TestProviderIDCacheSeriesAndProjectionsPartitionSharedBase(t *testing.T) {
 	if fmt.Sprint(gotDaily) != fmt.Sprint(wantDaily) {
 		t.Fatalf("cache series leaked across identities: %+v vs %+v", gotDaily, wantDaily)
 	}
+	// price-a holds two requests on its first day and one on its second; a leak
+	// from price-b would add its two first-day requests here.
 	byDayA := cacheTotalsByDay(gotDaily)
-	if byDayA[idDay(1).UnixNano()].Requests != 0 {
-		t.Fatalf("price-a series must not include price-b's second day: %+v", gotDaily)
+	dayReq := make([]int64, 0, len(gotDaily))
+	for _, p := range gotDaily {
+		dayReq = append(dayReq, byDayA[p.Day.UnixNano()].Requests)
+	}
+	sort.Slice(dayReq, func(i, j int) bool { return dayReq[i] < dayReq[j] })
+	if len(dayReq) != 2 || dayReq[0] != 1 || dayReq[1] != 2 {
+		t.Fatalf("price-a series must hold only its own two days: %+v", gotDaily)
 	}
 
 	wholeDaily, err := q.CacheDaily(ctx, Filter{})
@@ -183,7 +214,7 @@ func TestProviderIDCacheSeriesAndProjectionsPartitionSharedBase(t *testing.T) {
 	}
 	wholeByDay := cacheTotalsByDay(wholeDaily)
 	union := map[int64]CacheTotals{}
-	for _, id := range []string{idA, idB, idO, idK} {
+	for _, id := range []string{idA, idB, idK} {
 		points, err := q.CacheDaily(ctx, Filter{ProviderIDs: []string{id}})
 		if err != nil {
 			t.Fatalf("%s: %v", id, err)
@@ -212,7 +243,7 @@ func TestProviderIDCacheSeriesAndProjectionsPartitionSharedBase(t *testing.T) {
 			wholeReq += b.Requests
 		}
 		var unionReq int64
-		for _, id := range []string{idA, idB, idO, idK} {
+		for _, id := range []string{idA, idB, idK} {
 			by, err := q.CacheBy(ctx, Filter{ProviderIDs: []string{id}}, dim)
 			if err != nil {
 				t.Fatalf("%s %s: %v", dim, id, err)
@@ -248,12 +279,12 @@ func TestProviderIDCacheFilterSemanticsPreserved(t *testing.T) {
 	ctx := context.Background()
 	all := idSharedBaseEvents()
 	q, st := idStore(t, all)
-	idA := idKeyByRequests(t, q, false, 2)
+	idA := idKeyByUnresolvedLabel(t, q, "price-a")
 	if err := st.SetSetting(ctx, "model-aliases", `[{"from":"gpt-5","to":"canonical","provider":"price-a"}]`); err != nil {
 		t.Fatal(err)
 	}
 	reducedA, _ := idStore(t, idSubset(all, func(e idEvent) bool {
-		return e.session == "s-shared" && e.provider == "price-a"
+		return e.base == idEndpointRaw && e.provider == "price-a"
 	}))
 
 	for _, f := range []Filter{
@@ -282,7 +313,7 @@ func TestProviderIDCacheFilterSemanticsPreserved(t *testing.T) {
 	// pre-existing divergence rather than start expanding (or start ignoring)
 	// aliases in the cache ledger.
 	alias := Filter{ProviderIDs: []string{idA}, Models: []string{"canonical"}}
-	if tot, err := q.Totals(ctx, alias); err != nil || tot.Requests != 2 {
+	if tot, err := q.Totals(ctx, alias); err != nil || tot.Requests != 3 {
 		t.Fatalf("alias under Totals: %+v %v", tot, err)
 	}
 	if tot, err := q.CacheTotals(ctx, alias); err != nil || tot.Requests != 0 {
@@ -292,7 +323,7 @@ func TestProviderIDCacheFilterSemanticsPreserved(t *testing.T) {
 	if tot, err := q.Totals(ctx, raw); err != nil || tot.Requests != 0 {
 		t.Fatalf("pre-alias name must not match under Totals: %+v %v", tot, err)
 	}
-	if tot, err := q.CacheTotals(ctx, raw); err != nil || tot.Requests != 2 {
+	if tot, err := q.CacheTotals(ctx, raw); err != nil || tot.Requests != 3 {
 		t.Fatalf("cache path must keep raw model semantics: %+v %v", tot, err)
 	}
 }

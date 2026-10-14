@@ -12,8 +12,11 @@ import (
 	"github.com/zzstar101/mytoken/internal/store"
 )
 
-// idScaleStore commits one recognized endpoint plus n unresolved per-session
-// events in chunks, so the large fixture stays cheap.
+// idScaleStore commits one recognized endpoint plus n unresolved events in
+// chunks, so the large fixture stays cheap. Every unresolved event shares its
+// (harness, instance, pricing name, base URL) tuple and differs only in session
+// id, which is exactly the shape that used to explode into one identity per
+// session.
 func idScaleStore(t *testing.T, sessions int) (Service, *store.Store) {
 	t.Helper()
 	st, err := store.Open(":memory:")
@@ -106,7 +109,9 @@ func sqliteMaxBoundParams(t *testing.T, db *sql.DB) int {
 // TestProviderIdentityPredicateBoundIndependentOfSessions pins the scalability
 // property: the predicate's bound-parameter count is bounded by the dictionary
 // (distinct endpoint spellings) plus the requested identities, never by the
-// number of sessions. The previous per-session
+// number of sessions, and the unresolved identity itself is one row per
+// (harness, instance, pricing name, base URL) tuple rather than one per session.
+// The previous per-session
 // (harness,instance_id,session_id,resolved_provider,base_url) tuple list grew
 // with the session count and would eventually exceed the engine's
 // bound-parameter limit.
@@ -118,8 +123,10 @@ func TestProviderIdentityPredicateBoundIndependentOfSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(groups) != sessions+1 {
-		t.Fatalf("expected %d identities, got %d", sessions+1, len(groups))
+	// One recognized endpoint plus the single unresolved tuple: 10000 sessions
+	// must not become 10000 provider rows.
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 identities, got %d", len(groups))
 	}
 	endpointID, unresolvedID := "", ""
 	for _, g := range groups {
@@ -130,16 +137,21 @@ func TestProviderIdentityPredicateBoundIndependentOfSessions(t *testing.T) {
 		}
 	}
 	if endpointID == "" || unresolvedID == "" {
-		t.Fatalf("fixture must contain both identity kinds: %+v", groups[:2])
+		t.Fatalf("fixture must contain both identity kinds: %+v", groups)
+	}
+	for _, g := range groups {
+		if !g.Identified && (g.Requests != int64(sessions) || g.Sessions != int64(sessions)) {
+			t.Fatalf("one unresolved tuple must hold all %d sessions: %+v", sessions, g)
+		}
 	}
 
 	// One endpoint spelling -> one bound parameter; one unresolved identity ->
-	// its five identity columns. Neither depends on the 2000 sessions.
+	// its four identity columns. Neither depends on the 10000 sessions.
 	if _, n := identityPredicateArgs(t, q, endpointID); n != 1 {
 		t.Fatalf("endpoint identity used %d bound parameters, want 1", n)
 	}
-	if _, n := identityPredicateArgs(t, q, unresolvedID); n != 5 {
-		t.Fatalf("unresolved identity used %d bound parameters, want 5", n)
+	if _, n := identityPredicateArgs(t, q, unresolvedID); n != 4 {
+		t.Fatalf("unresolved identity used %d bound parameters, want 4", n)
 	}
 	// The endpoint predicate must not enumerate sessions either.
 	predicate, _ := identityPredicateArgs(t, q, endpointID)

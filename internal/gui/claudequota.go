@@ -255,6 +255,10 @@ func (s *State) claudeQuotaCard(c *ui.Context, pal palette) {
 // claudeQuotaConsent is the disclosure shown before anything is enabled: the
 // exact credential sources, the exact target, and what consent means.
 func (s *State) claudeQuotaConsent(c *ui.Context, pal palette) {
+	// Say the state out loud rather than leaving it to the chip: with no
+	// consent stored nothing is read and nothing is requested, and the card
+	// must not look like it merely failed to load.
+	ui.Text(c, tr("claudeQuotaNoConsent")).FontSize(11.5).TextColor(pal.ink)
 	ui.Text(c, tr("claudeQuotaDisclose")).FontSize(11.5).FontWeight(650).TextColor(pal.ink)
 	sourceDisclosureRow(c, pal, tr("claudeQuotaTarget"), claudequota.Target)
 	ui.Text(c, tr("claudeQuotaScope")).FontSize(11.5).TextColor(pal.muted)
@@ -298,6 +302,9 @@ func (s *State) claudeQuotaSourceRow(c *ui.Context, pal palette, src claudequota
 				if !usable {
 					chipOn(c, pal, tr("claudeQuotaUnsupported"), Soyo)
 				}
+				if src.FileMissing {
+					chipOn(c, pal, tr("claudeQuotaFileMissing"), Soyo)
+				}
 				if on {
 					chipOn(c, pal, tr("claudeQuotaChosen"), Anon)
 				}
@@ -315,6 +322,11 @@ func (s *State) claudeQuotaSourceRow(c *ui.Context, pal palette, src claudequota
 // carry stays "—": absent is not zero, and a stale reading says so.
 func (s *State) claudeQuotaReading(c *ui.Context, pal palette) {
 	q := s.cq.quota
+	if !s.cq.haveQ {
+		// Enabled, but the cached reading could not be read: say so instead of
+		// showing an empty status the user cannot act on.
+		ui.Text(c, tr("claudeQuotaNoSnapshot")).FontSize(11.5).TextColor(Soyo)
+	}
 	status := q.Status
 	if status == "" {
 		status = claudequota.StatusUnavailable

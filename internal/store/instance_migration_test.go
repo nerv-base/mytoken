@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -342,26 +343,42 @@ func TestInstanceFactStampsIsPerRequest(t *testing.T) {
 	}
 }
 
-// A pre-existing backup artifact must never be overwritten, reused or deleted.
-func TestInstanceMigrationBackupFailureStopsBeforeChanges(t *testing.T) {
+// A leftover instance backup from an interrupted attempt must not block the
+// migration: it is never overwritten, reused or deleted, and the new snapshot
+// goes to the next free, timestamped name.
+func TestInstanceMigrationStepsOverLeftoverBackup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "instance-nobackup.db")
 	writeLegacyPhysicalDatabase(t, path)
-	backup := path + ".pre-instance-v1.db"
-	if err := os.WriteFile(backup, []byte("existing"), 0600); err != nil {
+	leftover := path + ".pre-instance-v1.db"
+	content := []byte("leftover from an interrupted attempt")
+	if err := os.WriteFile(leftover, content, 0600); err != nil {
 		t.Fatal(err)
 	}
+	wantHash := sha256.Sum256(content)
+
 	st, err := Open(path)
-	if err == nil {
-		st.Close()
-		t.Fatal("migration proceeded without a new consistent backup")
+	if err != nil {
+		t.Fatalf("a leftover backup must not block the instance migration: %v", err)
 	}
-	got, err := os.ReadFile(backup)
-	if err != nil || string(got) != "existing" {
-		t.Fatal("existing backup was overwritten")
+	defer st.Close()
+
+	// The migration ran to completion.
+	if marker, err := st.Setting(context.Background(), instanceVersionKey); err != nil || marker != "1" {
+		t.Fatalf("instance marker: %q %v", marker, err)
 	}
-	raw := openReadOnly(t, path)
-	assertNoIdentityMigrationArtifacts(t, raw)
-	assertFactsUnchanged(t, raw)
+	// The leftover is byte-for-byte unchanged.
+	got, err := os.ReadFile(leftover)
+	if err != nil {
+		t.Fatalf("the leftover backup disappeared: %v", err)
+	}
+	if sha256.Sum256(got) != wantHash {
+		t.Fatalf("the leftover backup changed:\n%s", got)
+	}
+	fresh := freshMigrationBackups(t, path, ".pre-instance-v1.db")
+	if len(fresh) != 1 {
+		t.Fatalf("want exactly one fresh instance backup, got %v", fresh)
+	}
+	assertSQLiteIntegrity(t, fresh[0])
 }
 
 // After the migration, updates, deletes and reprice passes must keep every

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -314,25 +315,45 @@ func TestLegacyPhysicalMigrationDetectsTriggeredInitRewrite(t *testing.T) {
 	assertFactsUnchanged(t, backup)
 }
 
-// A backup that cannot be created stops the migration before any legacy file is
-// touched, even on the genuine legacy schema.
-func TestLegacyPhysicalBackupFailureStopsBeforeChanges(t *testing.T) {
+// A leftover backup must not block the migration even on the genuine legacy
+// schema: the migration runs, the leftover is left byte-for-byte alone, and the
+// fresh snapshot is a complete legacy snapshot too.
+func TestLegacyPhysicalStepsOverLeftoverBackup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy-nobackup.db")
 	writeLegacyPhysicalDatabase(t, path)
-	backup := path + ".pre-provider-v1.db"
-	if err := os.WriteFile(backup, []byte("existing"), 0600); err != nil {
+	leftover := path + ".pre-provider-v1.db"
+	content := []byte("leftover from an interrupted attempt")
+	if err := os.WriteFile(leftover, content, 0600); err != nil {
 		t.Fatal(err)
 	}
+	wantHash := sha256.Sum256(content)
+
 	st, err := Open(path)
-	if err == nil {
-		st.Close()
-		t.Fatal("migration proceeded without a new consistent backup")
+	if err != nil {
+		t.Fatalf("a leftover backup must not block a legacy migration: %v", err)
 	}
-	got, err := os.ReadFile(backup)
-	if err != nil || string(got) != "existing" {
-		t.Fatal("existing backup was overwritten")
+	defer st.Close()
+
+	var kind string
+	if err = st.DB().QueryRow("SELECT type FROM sqlite_master WHERE name='provider_endpoints'").Scan(&kind); err != nil || kind != "table" {
+		t.Fatalf("identity migration did not run: %q %v", kind, err)
 	}
-	raw := openReadOnly(t, path)
-	assertNoIdentityMigrationArtifacts(t, raw)
-	assertFactsUnchanged(t, raw)
+	got, err := os.ReadFile(leftover)
+	if err != nil {
+		t.Fatalf("the leftover backup disappeared: %v", err)
+	}
+	if sha256.Sum256(got) != wantHash {
+		t.Fatalf("the leftover backup changed:\n%s", got)
+	}
+	fresh := freshMigrationBackups(t, path, ".pre-provider-v1.db")
+	if len(fresh) != 1 {
+		t.Fatalf("want exactly one fresh pre-migration backup, got %v", fresh)
+	}
+	// The fresh artifact preserves the original legacy history.
+	backup := openReadOnly(t, fresh[0])
+	if err = backup.QueryRow("SELECT type FROM sqlite_master WHERE name='events'").Scan(&kind); err != nil || kind != "table" {
+		t.Fatalf("fresh backup is not a legacy snapshot: %q %v", kind, err)
+	}
+	assertFactsUnchanged(t, backup)
+	assertSQLiteIntegrity(t, fresh[0])
 }

@@ -102,25 +102,36 @@ func TestBackupArtifactIsNonEmptyAndNamed(t *testing.T) {
 }
 
 // A refused backup must explain the recovery path: stop the app, preserve the
-// database with its WAL, verify both independently, and decide explicitly.
-func TestProviderMigrationBackupFailureErrorIsActionable(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "history.db")
+// database with its WAL, verify both independently, and decide explicitly. A
+// write that fails for a reason other than "that name is taken" is reported at
+// once instead of being retried under a fresh name.
+func TestMigrationBackupFailureErrorIsActionable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.db")
 	legacyProviderFixture(t, path)
-	destination := path + ".pre-provider-v1.db"
-	if err := os.WriteFile(destination, []byte("existing"), 0600); err != nil {
+	st, err := Open(path)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer st.Close()
 
-	st, err := Open(path)
+	canonical := path + ".pre-provider-v1.db"
+	// The parent directory does not exist, so the reservation is refused for a
+	// reason that is not fs.ErrExist: no other candidate name can help.
+	attempted := filepath.Join(dir, "missing", filepath.Base(canonical))
+	written, err := st.BackupFreshDestination(context.Background(), attempted)
 	if err == nil {
-		st.Close()
-		t.Fatal("migration proceeded without a consistent backup")
+		t.Fatal("backup into a missing directory succeeded")
 	}
-	message := err.Error()
+	if written != attempted {
+		t.Fatalf("attempted %q, want %q", written, attempted)
+	}
+	message := migrationBackupFailure("provider", "No event, session or price row was changed and the identity marker was not set", canonical, written, err).Error()
 	for _, want := range []string{
-		"stopped before any history was migrated",
+		"provider migration stopped before any history was migrated",
 		"the migration transaction never started",
-		destination,
+		attempted,
+		canonical,
 		"does not promise a byte-identical file",
 		"never overwritten, reused or deleted",
 		"Stop every MyToken process",
@@ -131,21 +142,5 @@ func TestProviderMigrationBackupFailureErrorIsActionable(t *testing.T) {
 		if !strings.Contains(message, want) {
 			t.Fatalf("failure message is missing %q:\n%s", want, message)
 		}
-	}
-	got, readErr := os.ReadFile(destination)
-	if readErr != nil || string(got) != "existing" {
-		t.Fatal("the existing backup was modified")
-	}
-	raw := openReadOnly(t, path)
-	var cost float64
-	if readErr = raw.QueryRow("SELECT sum(cost) FROM events").Scan(&cost); readErr != nil || cost != 5 {
-		t.Fatalf("live index changed before the backup succeeded: %g %v", cost, readErr)
-	}
-	var marker int
-	if readErr = raw.QueryRow("SELECT count(*) FROM settings WHERE key=?", providerIdentityVersion).Scan(&marker); readErr != nil {
-		t.Fatal(readErr)
-	}
-	if marker != 0 {
-		t.Fatal("identity marker was set before the backup succeeded")
 	}
 }

@@ -41,10 +41,13 @@ func displayProvider(v AttributedEvent) (key, label string, identified bool) {
 	}
 	// Unknown endpoints cannot establish cross-session/source equivalence.
 	// Hash raw input rather than exposing possible userinfo/query credentials.
-	// The instance is part of the tuple: two data sources that happen to log the
-	// same session id against the same unnormalizable URL are still unrelated,
-	// and merging them would sum two unknowns into one identity.
-	raw, _ := json.Marshal([]string{string(v.Harness), v.InstanceID, v.SessionID, v.ResolvedProvider, v.BaseURL})
+	// The instance is part of the tuple: two data sources that log the same
+	// unnormalizable URL are still unrelated, and merging them would sum two
+	// unknowns into one identity. The session is deliberately NOT part of the
+	// tuple: a session is a unit of work, not an endpoint identity, so
+	// including it would split one provider's history into one
+	// unknown-provider row per session.
+	raw, _ := json.Marshal([]string{string(v.Harness), v.InstanceID, v.ResolvedProvider, v.BaseURL})
 	hash := sha256.Sum256(raw)
 	label = v.ResolvedProvider
 	if label == "" {
@@ -92,12 +95,14 @@ func (p *providerIDSelector) match(v AttributedEvent) bool {
 //     bounded `base_url IN (...)` list with one bound parameter per distinct
 //     spelling in the dictionary, not one per session;
 //   - an unresolved identity hashes
-//     (harness, instance_id, session_id, resolved_provider, base_url), so it maps
-//     to exactly one dictionary row and becomes a row-value tuple. Both
-//     instance_id and resolved_provider must stay in that tuple: dropping
-//     resolved_provider lets two pricing names in one session and base URL share
-//     a tuple and leak each other's cache facts, and dropping instance_id merges
-//     two data sources' unrelated unknowns.
+//     (harness, instance_id, resolved_provider, base_url), so every session that
+//     logged the same unresolved endpoint maps to one dictionary row and becomes
+//     a row-value tuple. Both instance_id and resolved_provider must stay in that
+//     tuple: dropping resolved_provider lets two pricing names in one session and
+//     base URL share a tuple and leak each other's cache facts, and dropping
+//     instance_id merges two data sources' unrelated unknowns. session_id must
+//     stay out of it so one provider's history is one identity, not one per
+//     session.
 //
 // The argument count is therefore bounded by the distinct endpoint spellings
 // plus the requested unresolved IDs; it never grows with the number of sessions
@@ -142,20 +147,20 @@ func providerIdentityPredicate(ctx context.Context, tx *sql.Tx, f Filter) (predi
 			return "", nil, true, e
 		}
 	}
-	tuples := map[[5]string]bool{}
+	tuples := map[[4]string]bool{}
 	if needUnresolved {
-		rows, e := tx.QueryContext(ctx, "SELECT DISTINCT harness, instance_id, session_id, resolved_provider, base_url FROM event_dimensions")
+		rows, e := tx.QueryContext(ctx, "SELECT DISTINCT harness, instance_id, resolved_provider, base_url FROM event_dimensions")
 		if e != nil {
 			return "", nil, true, e
 		}
 		for rows.Next() {
 			var v AttributedEvent
-			if e = rows.Scan(&v.Harness, &v.InstanceID, &v.SessionID, &v.ResolvedProvider, &v.BaseURL); e != nil {
+			if e = rows.Scan(&v.Harness, &v.InstanceID, &v.ResolvedProvider, &v.BaseURL); e != nil {
 				rows.Close()
 				return "", nil, true, e
 			}
 			if key, _, identified := displayProvider(v); !identified && sel.ids[key] {
-				tuples[[5]string{string(v.Harness), v.InstanceID, v.SessionID, v.ResolvedProvider, v.BaseURL}] = true
+				tuples[[4]string{string(v.Harness), v.InstanceID, v.ResolvedProvider, v.BaseURL}] = true
 			}
 		}
 		e = rows.Err()
@@ -177,12 +182,12 @@ func providerIdentityPredicate(ctx context.Context, tx *sql.Tx, f Filter) (predi
 		}
 	}
 	if len(tuples) > 0 {
-		rows := make([][5]string, 0, len(tuples))
+		rows := make([][4]string, 0, len(tuples))
 		for t := range tuples {
 			rows = append(rows, t)
 		}
 		sort.Slice(rows, func(i, j int) bool {
-			for k := 0; k < 5; k++ {
+			for k := 0; k < 4; k++ {
 				if rows[i][k] != rows[j][k] {
 					return rows[i][k] < rows[j][k]
 				}
@@ -190,13 +195,13 @@ func providerIdentityPredicate(ctx context.Context, tx *sql.Tx, f Filter) (predi
 			return false
 		})
 		var b strings.Builder
-		b.WriteString("(harness, instance_id, session_id, resolved_provider, base_url) IN (VALUES ")
+		b.WriteString("(harness, instance_id, resolved_provider, base_url) IN (VALUES ")
 		for i, t := range rows {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString("(?, ?, ?, ?, ?)")
-			args = append(args, t[0], t[1], t[2], t[3], t[4])
+			b.WriteString("(?, ?, ?, ?)")
+			args = append(args, t[0], t[1], t[2], t[3])
 		}
 		b.WriteString(")")
 		clauses = append(clauses, b.String())

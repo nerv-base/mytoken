@@ -12,6 +12,9 @@ import (
 // MainView is the main window's content.
 func (s *State) MainView(c *ui.Context) {
 	pal := applyTheme(c)
+	// A page switch drops the auxiliary data of the page being entered, so the
+	// settings cards reload when the user goes there and never on a data change.
+	s.enterPage()
 	c.Root().Background(ui.Transparent)
 	// Window buttons on the right (Windows, Linux) sit over the page's
 	// header, so the page starts below them.

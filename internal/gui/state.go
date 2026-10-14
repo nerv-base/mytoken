@@ -96,7 +96,12 @@ type State struct {
 	sync bool
 
 	page string
-	span int
+	// auxPage is the page whose auxiliary (settings-only) data the caches hold.
+	// Data changes refresh the cheap core only; the settings-page loads are
+	// re-run when that page is entered, when the user acts, or when the service
+	// behind them reports a change (see enterPage).
+	auxPage string
+	span    int
 
 	ov       Overview
 	ovLoaded bool
@@ -203,8 +208,43 @@ func (s *State) changed() {
 }
 
 // Shown is called when a window showing the state appears: it shows what
-// it has at once, and reloads behind it what changed while hidden.
-func (s *State) Shown() { s.refresh() }
+// it has at once, and reloads behind it what changed while hidden. It also
+// drops the settings-page caches, which the commit-driven refresh deliberately
+// leaves alone: a window that appears on that page reloads them once, and every
+// other page pays nothing for the flags being cleared.
+func (s *State) Shown() {
+	s.invalidateAux()
+	s.refresh()
+}
+
+// enterPage notices that the window switched page. Auxiliary data is reloaded
+// when the page that shows it is entered rather than on every data change: a
+// running agent commits every few seconds, and the settings-page loads (the
+// pricing catalog, the 90-day budget scopes) cost more than the whole dashboard,
+// so refreshing them per commit kept the load queue permanently behind and
+// starved the UI thread. It runs once per frame and costs one string compare.
+func (s *State) enterPage() {
+	if s.auxPage == s.page {
+		return
+	}
+	s.auxPage = s.page
+	s.invalidateAux()
+}
+
+// invalidateAux drops the cached loads that only the settings page shows. The
+// next frame that builds that page reloads them; no other page is affected.
+func (s *State) invalidateAux() {
+	// Pricing is only on the settings page: elsewhere, load it when shown.
+	s.pr.loaded = false
+	// The source editor's rows and configured sources, their diagnostics
+	// included: refreshed on entry, on a rebuild, and after every edit.
+	s.src.rowsLoaded, s.src.cfgLoaded = false, false
+	// The quota cards and the source editor only exist on the settings page.
+	s.cq.loaded = false
+	s.oq.loaded = false
+	// The budget card only exists on the settings page: reload it when shown.
+	s.bg.loaded = false
+}
 
 func (s *State) refresh() {
 	if !s.stale || s.waiting || (s.Hooks.Visible != nil && !s.Hooks.Visible()) {
@@ -220,7 +260,7 @@ func (s *State) refresh() {
 		})
 		return
 	}
-	s.Reload()
+	s.reloadCore()
 }
 
 // Stop stops listening for changes.
@@ -243,7 +283,7 @@ func (s *State) rebuild() {
 	// returns, with no goroutine and no clock.
 	if s.sync {
 		s.Hooks.Rebuild()
-		s.src.loaded = false
+		s.src.rowsLoaded, s.src.cfgLoaded = false, false
 		s.changed()
 		return
 	}
@@ -252,14 +292,30 @@ func (s *State) rebuild() {
 	go func() {
 		s.Hooks.Rebuild()
 		s.post(func() {
-			s.src.loaded = false
+			s.src.rowsLoaded, s.src.cfgLoaded = false, false
 			s.changed()
 		})
 	}()
 }
 
-// Reload reloads the data of every view; cached spans count as stale.
+// Reload reloads the data of every view; cached spans count as stale. It is the
+// full reload: the initial load, and explicit reloads after an action that
+// changes pricing, sources or the budget. The commit-driven refresh uses
+// reloadCore instead, so a running agent cannot make the settings-page loads the
+// permanent bottleneck.
 func (s *State) Reload() {
+	s.reloadCore()
+	// The relay page loads when drawn; the report shown stays until replaced.
+	s.rl.loaded, s.rl.want = false, ""
+	s.invalidateAux()
+	// The cache page reloads when drawn; what it shows stays until replaced.
+	s.ch.want = ""
+}
+
+// reloadCore refreshes the data the visible pages stay current on: the overview
+// spans, the shared dashboard numbers, the session list and the open detail. It
+// leaves the auxiliary settings loads to enterPage, Shown and explicit actions.
+func (s *State) reloadCore() {
 	s.gen++
 	s.stale = false
 	s.lastReload = s.Hooks.Now()
@@ -272,25 +328,6 @@ func (s *State) Reload() {
 	if s.sel.SessionID != "" {
 		s.loadDetail(s.sel)
 	}
-	// Pricing is only on the settings page: elsewhere, load it when shown.
-	if s.Hooks.Settings != nil {
-		if s.page == "settings" || s.sync {
-			s.loadPricing()
-		} else {
-			s.pr.loaded = false
-		}
-	}
-	// The relay page loads when drawn; the report shown stays until replaced.
-	s.rl.loaded, s.rl.want = false, ""
-	s.src.loaded = false
-	// The quota cards and the source editor only exist on the settings page:
-	// reload them when shown, and drop the picked rows with the data.
-	s.cq.loaded = false
-	s.oq.loaded = false
-	// The budget card only exists on the settings page: reload it when shown.
-	s.bg.loaded = false
-	// The cache page reloads when drawn; what it shows stays until replaced.
-	s.ch.want = ""
 }
 
 // location is the stats timezone the dashboard and the tray resolve calendar

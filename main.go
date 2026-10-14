@@ -19,6 +19,8 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"os/exec"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -92,7 +94,14 @@ func main() {
 
 	a, err := app.OpenWith(app.Options{Notify: systemNotifier{}})
 	if err != nil {
-		log.Fatalf("mytoken: %v", err)
+		// Opening the index failed (a migration refused to run, a leftover
+		// backup, a full disk, a locked file). The CLI reports this on stderr
+		// and exits non-zero; the tray app must not vanish silently, so it
+		// shows the error and the recovery steps in a real window and waits
+		// for the user. showStartupFailure runs its own event loop and returns
+		// only after that window is closed.
+		showStartupFailure(err)
+		return
 	}
 	defer a.Close()
 
@@ -147,13 +156,7 @@ func main() {
 	hooks := guiHooks(a, ctx, dataDir, func() { mygo.RunOnMain(openMain) }, func() bool {
 		return main != nil && main.IsVisible() || panel != nil && panel.IsVisible()
 	})
-	if l := mygo.App.Locale(); os.Getenv("MYTOKEN_LANG") == "" && l != "" {
-		if strings.HasPrefix(strings.ToLower(l), "zh") {
-			gui.SetLang("zh")
-		} else {
-			gui.SetLang("en")
-		}
-	}
+	setLangFromSystem()
 
 	mygo.App.WhenReady(func() {
 		hidden := mygo.App.WasOpenedAtLogin() || len(os.Args) > 1
@@ -279,6 +282,119 @@ func main() {
 		fmt.Fprintln(os.Stderr, "mytoken:", err)
 		os.Exit(1)
 	}
+}
+
+// setLangFromSystem localizes the GUI from the OS locale, unless MYTOKEN_LANG
+// overrides it. Both the normal startup path and the startup-failure window use
+// it, so the failure window speaks the user's language too.
+func setLangFromSystem() {
+	if l := mygo.App.Locale(); os.Getenv("MYTOKEN_LANG") == "" && l != "" {
+		if strings.HasPrefix(strings.ToLower(l), "zh") {
+			gui.SetLang("zh")
+		} else {
+			gui.SetLang("en")
+		}
+	}
+}
+
+// showStartupFailure reports a fatal startup error in a window instead of
+// letting the process die with no UI. It shows the cause, the database path,
+// the operator recovery guidance, a button that reveals the data directory and
+// a Quit button, then runs the app's event loop for as long as that window is
+// open. There is no retry loop: the process leaves when the user asks it to.
+func showStartupFailure(cause error) {
+	log.Printf("mytoken: %v", cause)
+	setLangFromSystem()
+	dbPath, dbErr := paths.DBPath()
+	if dbErr != nil {
+		// The path itself is the problem (a missing or unreadable data
+		// directory): show why instead of an empty location.
+		dbPath = dbErr.Error()
+	}
+	dataDir, dirErr := paths.ResolveDataDir()
+	failure := app.DescribeStartupFailure(gui.Lang(), dbPath, cause)
+	view := startupFailureView(failure,
+		func() {
+			if dirErr != nil {
+				log.Printf("mytoken: data directory: %v", dirErr)
+				return
+			}
+			if err := revealDirectory(dataDir); err != nil {
+				log.Printf("mytoken: reveal data directory: %v", err)
+			}
+		},
+		func() { mygo.App.Quit() })
+	mygo.App.WhenReady(func() {
+		// Deliberately not an accessory window: it must appear in the Dock or
+		// taskbar and come to the front, unlike the tray's own panel.
+		w := mygo.NewWindow(mygo.WindowOptions{
+			Title:         failure.Title,
+			Width:         760,
+			Height:        640,
+			MinWidth:      520,
+			MinHeight:     420,
+			TitleBarStyle: mygo.TitleBarDefault,
+			Content:       ui.View(view),
+		})
+		w.OnClosed(func() { mygo.App.Quit() })
+		w.Show()
+		w.Focus()
+	})
+	if err := mygo.App.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "mytoken:", err)
+		os.Exit(1)
+	}
+}
+
+// startupFailureView draws the fatal-startup window. reveal and quit are the
+// button actions, kept out of the drawing code so the view stays a function of
+// the message alone.
+func startupFailureView(f app.StartupFailure, reveal, quit func()) func(*ui.Context) {
+	return func(c *ui.Context) {
+		ui.Column(c).Fill().Padding(26).Gap(12).Children(func() {
+			ui.Text(c, f.Title).FontSize(20).Bold()
+			ui.Text(c, f.Summary).FontSize(13).Wrap()
+			ui.Text(c, f.DatabaseLabel).FontSize(11.5).Bold()
+			ui.Text(c, f.Database).FontSize(12).Wrap().Selectable()
+			ui.Text(c, f.ErrorLabel).FontSize(11.5).Bold()
+			ui.Scroll(c).Grow(1).Children(func() {
+				ui.Text(c, f.Error).FontSize(11.5).Wrap().Selectable()
+			})
+			ui.Text(c, f.Guidance).FontSize(12).Wrap()
+			ui.Row(c).Gap(10).Children(func() {
+				if ui.PrimaryButton(c, f.RevealLabel).Clicked() {
+					reveal()
+				}
+				if ui.Button(c, f.QuitLabel).Clicked() {
+					quit()
+				}
+			})
+		})
+	}
+}
+
+// revealCommand is the platform command that shows a directory in the file
+// manager. It is pure, so the mapping is testable on every platform.
+func revealCommand(goos, dir string) (string, []string) {
+	switch goos {
+	case "darwin":
+		return "open", []string{dir}
+	case "windows":
+		return "explorer", []string{dir}
+	default:
+		return "xdg-open", []string{dir}
+	}
+}
+
+// revealDirectory hands dir to the platform file manager and returns without
+// waiting: the file manager owns its own window.
+func revealDirectory(dir string) error {
+	name, args := revealCommand(runtime.GOOS, dir)
+	cmd := exec.Command(name, args...)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
 }
 
 // guiHooks is the window's view of the app main() has already opened: what the

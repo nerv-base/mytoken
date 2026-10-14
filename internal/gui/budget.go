@@ -63,6 +63,7 @@ type budgetState struct {
 	draft   draft
 
 	// scope choices, from the last 90 days of usage.
+	scopes    bool
 	projects  []scopeOption
 	providers []scopeOption
 
@@ -128,6 +129,12 @@ func (s *State) BudgetChanged() {
 	}
 }
 
+// loadBudget refreshes the rules and, when the editor that shows them is
+// open, the scope choices. The choices cost two aggregate queries over 90 days
+// of usage each time they load, so they are loaded once with the card and
+// after that only while an editor is open: no other part of the page reads
+// them, and a reload every couple of seconds on the settings page must not
+// pay for a picker nobody has open.
 func (s *State) loadBudget() {
 	b := s.Hooks.Budget
 	if b == nil {
@@ -140,6 +147,14 @@ func (s *State) loadBudget() {
 			s.bg.cfg, s.bg.st, s.bg.err, s.bg.loaded = cfg, st, err, true
 		}
 	})
+	if s.bg.open || !s.bg.scopes {
+		s.bg.scopes = true
+		s.loadScopeOptions()
+	}
+}
+
+// loadScopeOptions loads the identities the rule editor's scope picker offers.
+func (s *State) loadScopeOptions() {
 	s.run("budget-scopes", func(ctx context.Context) func() {
 		projects, providers := s.scopeOptions(ctx)
 		return func() { s.bg.projects, s.bg.providers = projects, providers }
@@ -459,6 +474,8 @@ func (s *State) budgetEdit(r budget.Rule) {
 		d.currency = budget.LocalCurrency
 	}
 	s.bg.open, s.bg.draft, s.bg.message = true, d, ""
+	// The picker is on screen now: bring its choices up to date.
+	s.loadScopeOptions()
 }
 
 // budgetSave writes the drafted rule. A change to the rule's identity (scope,

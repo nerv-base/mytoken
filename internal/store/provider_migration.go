@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 
 	"github.com/zzstar101/mytoken/internal/provider"
 )
@@ -76,13 +75,9 @@ func (s *Store) prepareProviderMigration(ctx context.Context) (bool, error) {
 	// Fresh indexes and in-memory test indexes have no on-disk history to protect.
 	if count > 0 && path != "" {
 		destination := path + ".pre-provider-v1.db"
-		if err = s.Backup(ctx, destination); err != nil {
-			return false, fmt.Errorf(`provider migration stopped before any history was migrated: could not write a consistent pre-migration backup to %s: %w
-
-No event, session or price row was changed and the identity marker was not set; the migration transaction never started. The preflight check does not promise a byte-identical file: opening the index has already applied MyToken's bootstrap DDL (journal mode, and any base table or index created if absent), so only the history is guaranteed untouched. An existing %s is never overwritten, reused or deleted automatically, because it may be a partial artifact of an interrupted attempt.
-
-Recovery requires an explicit operator decision. Stop every MyToken process first, then preserve the database together with its -wal and -shm files and the backup, and verify both independently (open the database and run PRAGMA quick_check; open the backup read-only and check it holds the expected history). Only then choose deliberately between repairing the cause of the failed backup, moving the old backup aside to retry, or restoring the backup. Do not restart while this state is unverified.`,
-				destination, err, filepath.Base(destination))
+		written, err := s.BackupFreshDestination(ctx, destination)
+		if err != nil {
+			return false, migrationBackupFailure("provider", "No event, session or price row was changed and the identity marker was not set", destination, written, err)
 		}
 	}
 	return true, nil

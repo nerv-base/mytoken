@@ -769,3 +769,62 @@ func TestClaudeQuotaHelpDocumentsTheGate(t *testing.T) {
 		t.Fatalf("quota help exit=%d:\n%s", code, out)
 	}
 }
+
+// TestClaudeQuotaInfoTextSaysNoConsentIsRecorded pins the plain wording of the
+// default state: the text report must say that nothing is authorized and
+// nothing was read, and how to change that, instead of leaving the reader with
+// a status word that looks like a failed load.
+func TestClaudeQuotaInfoTextSaysNoConsentIsRecorded(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MYTOKEN_HOME", dir)
+	fake := &fakeClaude{}
+	fake.install(t)
+
+	out, errout, code := runCLI(t, "quota", "claude", "info")
+	if code != 0 {
+		t.Fatalf("info exit=%d stderr=%s", code, errout)
+	}
+	for _, want := range []string{
+		"no consent is recorded",
+		"consent    none recorded",
+		"mytoken quota claude enable",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the text report does not say %q:\n%s", want, out)
+		}
+	}
+	if reads, fetches := fake.counters(); reads != 0 || fetches != 0 {
+		t.Fatalf("a read-only text report read/fetched: reads=%d fetches=%d", reads, fetches)
+	}
+}
+
+// TestClaudeQuotaInstanceTextSurfacesTheStoredReason pins the other half: an
+// enabled instance whose stored reading is unusable must print the reading's own
+// reason, so the operator sees why the refresh failed rather than a blank.
+func TestClaudeQuotaInstanceTextSurfacesTheStoredReason(t *testing.T) {
+	const detail = "the last explicit refresh failed; the stored reason is unauthorized"
+	entry := claudeQuotaInstanceReport{
+		Instance: "default",
+		Enabled:  true,
+		Target:   claudequota.Target,
+		Quota: snapshot.ClaudeQuota{
+			Instance: "default",
+			Enabled:  true,
+			Status:   snapshot.Status{Reason: string(claudequota.ReasonUnauthorized), Detail: detail},
+		},
+	}
+	var buf bytes.Buffer
+	if err := writeClaudeQuotaInstanceText(&buf, entry); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "enabled    yes") {
+		t.Fatalf("an enabled instance must say so:\n%s", got)
+	}
+	if !strings.Contains(got, detail) {
+		t.Fatalf("the stored reading's own reason is not surfaced:\n%s", got)
+	}
+	if strings.Contains(got, "consent    none recorded") {
+		t.Fatalf("an enabled instance must not claim no consent is recorded:\n%s", got)
+	}
+}

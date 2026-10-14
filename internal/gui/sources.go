@@ -102,9 +102,15 @@ type SourceAdmin interface {
 // sourceState holds the harnesses with indexed requests (all time, most
 // requests first) and the instance editor's own state.
 type sourceState struct {
-	loaded bool
-	rows   []query.Bucket
-	err    error
+	// rowsLoaded and cfgLoaded are separate flags because the settings page
+	// builds the data-source card and the instances card from two different
+	// columns: one shared flag let whichever column rendered first mark the
+	// other's loader as already done, so the data-source card never loaded its
+	// rows.
+	rowsLoaded bool
+	cfgLoaded  bool
+	rows       []query.Bucket
+	err        error
 
 	// view is the persisted configuration; cfgErr is why it could not be
 	// read or written. seq orders writes so a slow completion cannot put a
@@ -152,15 +158,17 @@ func (s *State) loadSources() {
 			}
 		}
 		sort.SliceStable(rows, func(i, j int) bool { return rows[i].Requests > rows[j].Requests })
-		return func() { s.src = sourceState{loaded: true, rows: rows, err: err} }
+		// Only the row half is replaced: the configuration half may already
+		// have loaded, and the two loaders complete in an unspecified order.
+		return func() { s.src.rowsLoaded, s.src.rows, s.src.err = true, rows, err }
 	})
 }
 
 // sourcesCard lists the harnesses with indexed requests, and the roots
 // that hold their logs; the supported ones without data are only counted.
 func (s *State) sourcesCard(c *ui.Context, pal palette) {
-	if !s.src.loaded {
-		s.src.loaded = true
+	if !s.src.rowsLoaded {
+		s.src.rowsLoaded = true
 		s.loadSources()
 	}
 	card(c, pal, tr("sources"), nil, func() {
@@ -262,7 +270,7 @@ func (s *State) sourceWrite(kind, done string, act func(ctx context.Context) (So
 				// view that no longer matches it. That reload converges: a
 				// successful load does not ask for another.
 				s.src.cfgErr = err
-				s.src.loaded = false
+				s.src.cfgLoaded = false
 				return
 			}
 			s.src.cfgErr = nil
@@ -319,8 +327,8 @@ func (s *State) sourcesInstancesCard(c *ui.Context, pal palette) {
 	if admin == nil {
 		return
 	}
-	if !s.src.loaded {
-		s.src.loaded = true
+	if !s.src.cfgLoaded {
+		s.src.cfgLoaded = true
 		s.loadSourceConfig()
 	}
 	card(c, pal, tr("sourcesInstances"), func() {
