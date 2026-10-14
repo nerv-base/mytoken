@@ -338,7 +338,7 @@ Windows, plus a `gofmt` check, for every push and pull request.
 - **[MyGo](https://github.com/egoist/mygo)** — the native UI toolkit the app is built with. Powered by MyGo!
 - **[models.dev](https://models.dev)** and **[LiteLLM](https://github.com/BerriAI/litellm)** — the
   price tables.
-- **cc-switch** — the pricing import format and the provider request log used by attribution.
+- **[cc-switch](https://github.com/farion1231/cc-switch)** — the pricing import format and the provider request log used by attribution.
 
 ## Disclaimer
 
