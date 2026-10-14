@@ -306,7 +306,7 @@ Windows 三个平台运行 `go vet` 和 `go test`，并额外做一次 `gofmt` �
   [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES)）。
 - **[MyGo](https://github.com/egoist/mygo)** —— 应用所用的原生 UI 工具包。由 MyGo 强力驱动！
 - **[models.dev](https://models.dev)** 与 **[LiteLLM](https://github.com/BerriAI/litellm)** —— 价格表来源。
-- **cc-switch** —— 价格导入格式，以及归因所使用的供应商请求日志。
+- **[cc-switch](https://github.com/farion1231/cc-switch)** —— 价格导入格式，以及归因所使用的供应商请求日志。
 
 ## 免责声明
 
