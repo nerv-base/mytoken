@@ -3,6 +3,37 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## 0.4.1
+
+- **A leftover backup no longer blocks an upgrade.** If an earlier attempt
+  left a `mytoken.db.pre-provider-v1.db` or `mytoken.db.pre-instance-v1.db`
+  behind, the migration writes its own backup beside it under a timestamped
+  name instead of refusing to start, and the error message names the file it
+  actually tried. Nothing is ever overwritten, reused or deleted.
+- **A failed start says so in a window.** A database or migration error used
+  to quit without showing anything; it now opens a window with the error, the
+  database path, what to do about it, a button to reveal the data folder and
+  a way to quit.
+- **The sources card lists your sources again.** The card could come up with
+  only its subtitle once the settings page had been reloaded, as if no tool
+  had ever been found.
+- **Codex quota shows the last reading the logs contain.** Quota was only
+  published while new records were being indexed, so a source that was
+  already fully scanned never reported anything at all. A bounded read of the
+  tail of the newest rollout files now finds the most recent usable reading
+  without rescanning events, advancing cursors or guessing from tokens, and
+  the card states the age of the reading and why a pace cannot be computed.
+- **Claude quota says when there is nothing to read.** The card marks a
+  credentials file that is not there instead of offering it as ready, and
+  still reads nothing until you enable it.
+- **The settings page stops re-running its heavy panels on every commit.**
+  Each store commit re-ran the pricing, source and 90-day scope queries, which
+  kept the load queue busy while the page was open. They now load when the
+  page is opened or when their own data changes.
+- **The provider ranking merges one endpoint into one row.** Unidentified
+  endpoints were keyed per session, so a single provider appeared once for
+  every conversation.
+
 ## 0.4.0
 
 - **Rebuilt on MyGo 0.4.8.** Charts, tables, selectors and search boxes are
