@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -209,8 +210,14 @@ func TestSaveRoundTripModeAndNoTempLeftovers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat config: %v", err)
 	}
-	if perm := fi.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("config mode = %o, want 600", perm)
+	// Unix permission bits are not representable on Windows: os.Stat reports a
+	// synthetic 0666 for regular files, so the 0600 hardening can only be
+	// asserted where the platform enforces mode bits. The no-leftover check and
+	// the content round trip below still run on Windows.
+	if runtime.GOOS != "windows" {
+		if perm := fi.Mode().Perm(); perm != 0o600 {
+			t.Fatalf("config mode = %o, want 600", perm)
+		}
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -291,37 +298,68 @@ func TestSaveRejectsInvalidConfigAndKeepsOldFile(t *testing.T) {
 	_ = e
 }
 
+// TestSaveAtomicFailureKeepsOldConfig pins that a Save which fails leaves the
+// previously committed config byte-for-byte intact and leaves no temporary file
+// behind. The write is blocked in two ways so the guarantee is exercised on
+// every platform: a read-only data directory (Unix only, because Windows does
+// not enforce directory mode bits) and a data directory path that is already a
+// regular file, which MkdirAll refuses everywhere.
 func TestSaveAtomicFailureKeepsOldConfig(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("running as root: read-only directory does not block writes")
-	}
 	dir := t.TempDir()
 	cfg := newCfg()
 	mustAdd(t, cfg, instance.AddRequest{Label: "old", Harness: model.Codex, Roots: []string{mustDir(t)}, Kind: instance.KindInstance})
 	if err := cfg.Save(dir); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(filepath.Join(dir, instance.FileName))
+	path := filepath.Join(dir, instance.FileName)
+	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(dir, 0o700)
 	cfg.Entries[0].Label = "new"
-	if err := cfg.Save(dir); err == nil {
-		t.Fatal("Save must fail when the data dir is not writable")
+
+	// A read-only data directory is the precise Unix lever. It is left out on
+	// Windows, where chmod does not stop writes, and when running as root,
+	// where mode bits are not enforced; the regular-file case below covers
+	// those platforms instead of skipping the guarantee.
+	if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+		if err := os.Chmod(dir, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		if err := cfg.Save(dir); err == nil {
+			t.Fatal("Save must fail when the data dir is not writable")
+		}
+		if err := os.Chmod(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if after, err := os.ReadFile(path); err != nil {
+			t.Fatalf("read config after a failed Save: %v", err)
+		} else if string(before) != string(after) {
+			t.Fatalf("failed Save mutated the old config:\n%s\n---\n%s", before, after)
+		}
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		t.Fatal(err)
+
+	// Portable failure: the data directory path is an existing regular file
+	// (the config file itself), so MkdirAll refuses it on every platform,
+	// Windows included, before Save can touch the old bytes.
+	if err := cfg.Save(path); err == nil {
+		t.Fatal("Save must fail when the data dir path is a regular file")
 	}
-	after, err := os.ReadFile(filepath.Join(dir, instance.FileName))
+	after, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read config after a failed Save: %v", err)
 	}
 	if string(before) != string(after) {
 		t.Fatalf("failed Save mutated the old config:\n%s\n---\n%s", before, after)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != instance.FileName {
+			t.Fatalf("failed Save left %q behind (temporary files must be removed)", e.Name())
+		}
 	}
 }
 

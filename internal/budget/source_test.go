@@ -2,6 +2,7 @@ package budget_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -29,16 +30,24 @@ func TestQueryCostsCountsEstimatesOnly(t *testing.T) {
 			Timestamp: at, Model: "gpt-5", BaseURL: base, Tokens: model.Tokens{Input: 10},
 		}
 	}
-	estimated := event("estimated", "s1", "/p/one", now.Add(-time.Hour))
-	billedEvent := event("billed", "s1", "/p/one", now.Add(-2*time.Hour))
+	// Project paths are stored after filepath.Clean, so a literal Unix-looking
+	// "/p/one" becomes "\p\one" on Windows and no longer matches a filter built
+	// from the same literal. Build every project path (and the log path) with the
+	// platform separator so the stored row and the scope agree everywhere.
+	projectOne := filepath.FromSlash("/p/one")
+	projectTwo := filepath.FromSlash("/p/two")
+	projectMissing := filepath.FromSlash("/p/missing")
+
+	estimated := event("estimated", "s1", projectOne, now.Add(-time.Hour))
+	billedEvent := event("billed", "s1", projectOne, now.Add(-2*time.Hour))
 	billedEvent.CostUSD = &billed
-	unpriced := event("unpriced", "s2", "/p/two", now.Add(-3*time.Hour))
-	other := event("other", "s3", "/p/two", now.Add(-4*time.Hour))
+	unpriced := event("unpriced", "s2", projectTwo, now.Add(-3*time.Hour))
+	other := event("other", "s3", projectTwo, now.Add(-4*time.Hour))
 
 	writes := []store.Write{{
 		Harness:    model.Codex,
 		InstanceID: store.DefaultInstanceID,
-		Path:       "/tmp/fixture.jsonl",
+		Path:       filepath.FromSlash("/tmp/fixture.jsonl"),
 		Batch:      harness.Batch{Events: []model.UsageEvent{estimated, billedEvent, unpriced, other}},
 		Resolutions: []store.Resolution{
 			{Provider: "openai", Attrib: model.AttribLog, Cost: 1.5, Priced: true},
@@ -68,11 +77,11 @@ func TestQueryCostsCountsEstimatesOnly(t *testing.T) {
 	}
 
 	// Project scope keys on the project path, not a display label.
-	one, ok, err := source.EstimatedSpend(ctx, budget.Scope{Kind: budget.ScopeProject, ID: "/p/one"}, period)
+	one, ok, err := source.EstimatedSpend(ctx, budget.Scope{Kind: budget.ScopeProject, ID: projectOne}, period)
 	if err != nil || !ok || one.Amount != 1.5 {
-		t.Fatalf("EstimatedSpend(/p/one) = %+v, %v, %v; want 1.5", one, ok, err)
+		t.Fatalf("EstimatedSpend(%s) = %+v, %v, %v; want 1.5", projectOne, one, ok, err)
 	}
-	if _, ok, err := source.EstimatedSpend(ctx, budget.Scope{Kind: budget.ScopeProject, ID: "/p/missing"}, period); err != nil || ok {
+	if _, ok, err := source.EstimatedSpend(ctx, budget.Scope{Kind: budget.ScopeProject, ID: projectMissing}, period); err != nil || ok {
 		t.Fatalf("missing project: ok=%v err=%v, want no data", ok, err)
 	}
 

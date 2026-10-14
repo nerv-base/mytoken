@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -38,17 +39,23 @@ type idEvent struct {
 
 func idDay(n int) time.Time { return time.Date(2026, 3, 2+n, 9, 0, 0, 0, time.Local) }
 
+// idProject spells a fixture/filter project path the way the host filesystem
+// does. The store cleans a stored ProjectPath with filepath semantics while
+// Filter.Project is compared verbatim, so a literal "/p/..." would match on
+// Unix but never on Windows, where the stored value is `\p\...`.
+func idProject(elem string) string { return filepath.FromSlash("/p/" + elem) }
+
 // idFixtureEvents crosses pricing names, harnesses and paths over one endpoint,
 // keeps a second path separate, and splits unknown URLs by session.
 func idFixtureEvents() []idEvent {
 	return []idEvent{
-		{h: model.Codex, source: "src-a", session: "s-main", model: "gpt-5", provider: "name-a", base: idEndpointMain, project: "/p/one", at: idDay(0).Add(time.Hour), input: 100, read: 50, write: 10},
-		{h: model.ClaudeCode, source: "src-b", session: "s-alt", model: "sonnet", provider: "name-b", base: idEndpointMain, project: "/p/two", at: idDay(1).Add(time.Hour), input: 200, read: 80},
-		{h: model.Codex, source: "src-c", session: "s-path", model: "gpt-5", provider: "name-c", base: idEndpointAlt, project: "/p/one", at: idDay(0).Add(2 * time.Hour), input: 400},
-		{h: model.Codex, source: "src-d", session: "s-unknown", model: "gpt-5", provider: "name-d", base: idEndpointRaw, project: "/p/one", at: idDay(0).Add(3 * time.Hour), input: 800, read: 20},
-		{h: model.Codex, source: "src-e", session: "s-unknown", model: "gpt-5", provider: "name-d", base: idEndpointRaw, project: "/p/one", at: idDay(1).Add(2 * time.Hour), input: 1600},
-		{h: model.Codex, source: "src-f", session: "s-unknown-2", model: "gpt-5", provider: "name-e", base: idEndpointRaw, project: "/p/one", at: idDay(0).Add(4 * time.Hour), input: 300},
-		{h: model.Codex, source: "src-g", session: "s-main", model: "gpt-5", provider: "name-a", base: idEndpointAlt, project: "/p/one", at: idDay(0).Add(5 * time.Hour), input: 800},
+		{h: model.Codex, source: "src-a", session: "s-main", model: "gpt-5", provider: "name-a", base: idEndpointMain, project: idProject("one"), at: idDay(0).Add(time.Hour), input: 100, read: 50, write: 10},
+		{h: model.ClaudeCode, source: "src-b", session: "s-alt", model: "sonnet", provider: "name-b", base: idEndpointMain, project: idProject("two"), at: idDay(1).Add(time.Hour), input: 200, read: 80},
+		{h: model.Codex, source: "src-c", session: "s-path", model: "gpt-5", provider: "name-c", base: idEndpointAlt, project: idProject("one"), at: idDay(0).Add(2 * time.Hour), input: 400},
+		{h: model.Codex, source: "src-d", session: "s-unknown", model: "gpt-5", provider: "name-d", base: idEndpointRaw, project: idProject("one"), at: idDay(0).Add(3 * time.Hour), input: 800, read: 20},
+		{h: model.Codex, source: "src-e", session: "s-unknown", model: "gpt-5", provider: "name-d", base: idEndpointRaw, project: idProject("one"), at: idDay(1).Add(2 * time.Hour), input: 1600},
+		{h: model.Codex, source: "src-f", session: "s-unknown-2", model: "gpt-5", provider: "name-e", base: idEndpointRaw, project: idProject("one"), at: idDay(0).Add(4 * time.Hour), input: 300},
+		{h: model.Codex, source: "src-g", session: "s-main", model: "gpt-5", provider: "name-a", base: idEndpointAlt, project: idProject("one"), at: idDay(0).Add(5 * time.Hour), input: 800},
 	}
 }
 
@@ -226,7 +233,7 @@ func TestProviderIDsIntersectNameHarnessModelProjectAndDate(t *testing.T) {
 		{"ids and other name", Filter{ProviderIDs: []string{mainID}, Providers: []string{"name-b"}}, 1, 200},
 		{"ids and harness", Filter{ProviderIDs: []string{mainID}, Harnesses: []model.Harness{model.ClaudeCode}}, 1, 200},
 		{"ids and model", Filter{ProviderIDs: []string{mainID}, Models: []string{"gpt-5"}}, 1, 100},
-		{"ids and project", Filter{ProviderIDs: []string{mainID}, Project: "/p/two"}, 1, 200},
+		{"ids and project", Filter{ProviderIDs: []string{mainID}, Project: idProject("two")}, 1, 200},
 		{"ids and date", Filter{ProviderIDs: []string{mainID}, Range: Range{From: idDay(0), To: idDay(1)}}, 1, 100},
 		{"ids and invalid id", Filter{ProviderIDs: []string{mainID, bogus}, Harnesses: []model.Harness{model.ClaudeCode}}, 1, 200},
 	}

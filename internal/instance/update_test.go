@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -416,11 +417,23 @@ func TestUpdateCreatesMissingDataDir(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if mode := fileMode(t, filepath.Join(dir, FileName)); mode != 0o600 {
-		t.Fatalf("sources.json mode = %o, want 600", mode)
+	// Both artifacts must exist on every platform; only the 0600 hardening is a
+	// Unix guarantee.
+	for _, name := range []string{FileName, LockFileName} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
 	}
-	if mode := fileMode(t, filepath.Join(dir, LockFileName)); mode != 0o600 {
-		t.Fatalf("%s mode = %o, want 600", LockFileName, mode)
+	// Unix permission bits are not representable on Windows: os.Stat reports a
+	// synthetic 0666 for regular files, so the exact-mode assertion can only
+	// run where the platform enforces mode bits.
+	if runtime.GOOS != "windows" {
+		if mode := fileMode(t, filepath.Join(dir, FileName)); mode != 0o600 {
+			t.Fatalf("sources.json mode = %o, want 600", mode)
+		}
+		if mode := fileMode(t, filepath.Join(dir, LockFileName)); mode != 0o600 {
+			t.Fatalf("%s mode = %o, want 600", LockFileName, mode)
+		}
 	}
 }
 

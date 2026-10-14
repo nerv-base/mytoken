@@ -747,10 +747,13 @@ func TestRegistration(t *testing.T) {
 }
 
 func TestRootsEnvOverride(t *testing.T) {
-	t.Setenv("MYTOKEN_OPENCODE_DIRS", "/tmp/oc-one"+string(os.PathListSeparator)+"/tmp/oc-two")
+	// The override entries come back cleaned, so on Windows the expected roots
+	// are native (backslash) paths, not the Unix-shaped literals.
+	one, two := filepath.FromSlash("/tmp/oc-one"), filepath.FromSlash("/tmp/oc-two")
+	t.Setenv("MYTOKEN_OPENCODE_DIRS", one+string(os.PathListSeparator)+two)
 	p := New()
 	roots := p.Roots()
-	if len(roots) != 2 || roots[0] != "/tmp/oc-one" || roots[1] != "/tmp/oc-two" {
+	if len(roots) != 2 || roots[0] != one || roots[1] != two {
 		t.Fatalf("Roots() = %v", roots)
 	}
 }

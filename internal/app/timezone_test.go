@@ -21,14 +21,30 @@ func openStore(t *testing.T, path string) *store.Store {
 	return st
 }
 
+// pinStatsTimezone pins TZ to a known IANA name for tests that need a usable
+// calendar. CI runners ship no discoverable IANA zone (/etc/localtime is not a
+// symlink into zoneinfo/, there is no /etc/timezone, and time.Local is
+// "Local"), so unpinned discovery legitimately reports ErrNoIANAZone there.
+// DefaultStatsTimezone reads TZ at call time, so setting it here is the
+// documented seam, and t.Setenv works on every platform.
+func pinStatsTimezone(t *testing.T) {
+	t.Helper()
+	t.Setenv("TZ", "Asia/Shanghai")
+}
+
 // TestStatsTimezoneIsPersistedOnFirstUse walks the contract the snapshot
 // worker depends on: the first normal app startup stores an exact
 // 'stats_timezone' value that a later startup reuses unchanged.
 func TestStatsTimezoneIsPersistedOnFirstUse(t *testing.T) {
 	ctx := context.Background()
+	pinStatsTimezone(t) // a usable calendar must not depend on the runner's zone
 	path := filepath.Join(t.TempDir(), "mytoken.db")
 
 	st := openStore(t, path)
+	// Close on every path, including t.Fatalf: a still-open handle makes
+	// t.TempDir's RemoveAll cleanup fail on Windows ("The process cannot
+	// access the file because it is being used by another process").
+	defer st.Close()
 	a := &App{Store: st}
 	if err := a.EnsureStatsTimezone(ctx); err != nil {
 		t.Fatalf("EnsureStatsTimezone: %v", err)
@@ -76,6 +92,7 @@ func TestStatsTimezoneIsPersistedOnFirstUse(t *testing.T) {
 
 func TestSetTimezoneIsExplicitAndValidated(t *testing.T) {
 	ctx := context.Background()
+	pinStatsTimezone(t) // a usable calendar must not depend on the runner's zone
 	st := openStore(t, filepath.Join(t.TempDir(), "mytoken.db"))
 	defer st.Close()
 	a := &App{Store: st}
@@ -243,10 +260,19 @@ func TestLegacyLocalIsUnresolvedNotTheProcessZone(t *testing.T) {
 	}
 }
 
+// TestDefaultStatsTimezoneIsUsable tests the real discovery function, not the
+// seam. An explicit TZ is the strongest and most portable signal, so pin it and
+// demand that exact usable name; with TZ unset or garbage the only honest
+// outcomes are "no stable name" or a loadable IANA name, never an offset and
+// never the legacy "Local".
 func TestDefaultStatsTimezoneIsUsable(t *testing.T) {
+	pinStatsTimezone(t)
 	name := DefaultStatsTimezone()
 	if name == "" {
-		t.Fatal("DefaultStatsTimezone = empty")
+		t.Fatal("DefaultStatsTimezone = empty with TZ=Asia/Shanghai")
+	}
+	if name != "Asia/Shanghai" {
+		t.Fatalf("DefaultStatsTimezone = %q with TZ=Asia/Shanghai, want Asia/Shanghai", name)
 	}
 	loc, err := ParseStatsTimezone(name)
 	if err != nil {
@@ -254,6 +280,20 @@ func TestDefaultStatsTimezoneIsUsable(t *testing.T) {
 	}
 	if loc == nil {
 		t.Fatalf("ParseStatsTimezone(%q) = nil", name)
+	}
+
+	// Discovery must stay honest when TZ carries nothing usable (empty, an
+	// unknown name, or the legacy "Local"): the result is empty or a real IANA
+	// name. This is the invariant CI runners exercise.
+	for _, tz := range []string{"", "Not/AZone", systemZone} {
+		t.Setenv("TZ", tz)
+		got := DefaultStatsTimezone()
+		if got == "" {
+			continue // no stable name is a correct answer for this machine
+		}
+		if _, ok := IANAZoneName(got); !ok {
+			t.Fatalf("DefaultStatsTimezone() = %q with TZ=%q, want empty or a loadable IANA name", got, tz)
+		}
 	}
 }
 

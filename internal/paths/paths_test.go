@@ -3,6 +3,7 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -63,9 +64,16 @@ func TestDataDirStillCreates(t *testing.T) {
 	if !info.IsDir() {
 		t.Fatalf("%q is not a directory", dir)
 	}
-	if perm := info.Mode().Perm(); perm != 0o700 {
-		t.Fatalf("%q mode = %o, want 700", dir, perm)
-	}
+	// The 0700 mode is only meaningful where Unix permission bits exist. The
+	// creation and directory assertions above still run on every platform.
+	t.Run("unix mode 0700", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows has no Unix permission bits: os.Stat reports a synthetic 0777 for every directory")
+		}
+		if perm := info.Mode().Perm(); perm != 0o700 {
+			t.Fatalf("%q mode = %o, want 700", dir, perm)
+		}
+	})
 }
 
 // The creating and non-creating resolvers must agree on the location, so a

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -73,6 +74,140 @@ func roDirState(t *testing.T, dir string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// roFileNames lists a directory's entry names, ignoring their sizes. SQLite may
+// legally rewrite or resize the -wal/-shm sidecars while a reader attaches (and
+// Windows keeps a different WAL size from Unix), so the set of files - nothing
+// created, nothing removed - is the portable "the reader disturbed no file"
+// invariant. Content and application state are compared separately.
+func roFileNames(t *testing.T, dir string) []string {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", dir, err)
+	}
+	out := make([]string, 0, len(ents))
+	for _, e := range ents {
+		out = append(out, e.Name())
+	}
+	sort.Strings(out)
+	return out
+}
+
+// roWALSlackBytes is how much larger than the database file SQLite's own WAL
+// bookkeeping may legitimately leave the -wal after a read-only attach. Windows
+// keeps a full checkpoint image in the WAL where Unix truncates it, and the exact
+// byte count varies with timing, so tests bound the WAL instead of pinning its
+// size: growth beyond one database image plus this slack is the signature of an
+// application write (a migration, a reprice, a rollup rebuild).
+const roWALSlackBytes = 1 << 20
+
+// roRequireWALBounded asserts that the -wal still exists and did not grow beyond
+// one database image plus slack, without asserting an exact byte size.
+func roRequireWALBounded(t *testing.T, path string) {
+	t.Helper()
+	wal, err := os.Stat(path + "-wal")
+	if err != nil {
+		t.Fatalf("the read-only open removed the writer's -wal: %v", err)
+	}
+	db, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if bound := db.Size() + roWALSlackBytes; wal.Size() > bound {
+		t.Fatalf("-wal = %d bytes, want at most %d (database %d + slack %d): a read-only open must not write application data",
+			wal.Size(), bound, db.Size(), roWALSlackBytes)
+	}
+}
+
+func roMustExist(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("%s must exist: %v", path, err)
+	}
+}
+
+// roValue renders one scanned SQLite value deterministically; byte slices are
+// hashed because event payloads are the only large columns.
+func roValue(v any) string {
+	if b, ok := v.([]byte); ok {
+		sum := sha256.Sum256(b)
+		return fmt.Sprintf("blob:%d:%s", len(b), hex.EncodeToString(sum[:]))
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// roApplicationState is a portable digest of the application data a read-only
+// open must never change: the schema objects and every committed row of every
+// table. A migration, a reprice, a rollup rebuild or an inserted marker all show
+// up as a difference. SQLite's own -wal/-shm reader coordination is deliberately
+// excluded: it is not application data and its byte layout is platform- and
+// timing-dependent.
+func roApplicationState(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	ctx := context.Background()
+
+	// The store opens with MaxOpenConns(1), so each result set is closed before
+	// the next query is issued.
+	tables := make([]string, 0, 16)
+	lines := make([]string, 0, 32)
+	schema, err := db.QueryContext(ctx, "SELECT type, name, tbl_name, coalesce(sql, '') FROM sqlite_master ORDER BY type, name")
+	if err != nil {
+		t.Fatalf("read sqlite_master: %v", err)
+	}
+	for schema.Next() {
+		var typ, name, tbl, ddl string
+		if err := schema.Scan(&typ, &name, &tbl, &ddl); err != nil {
+			schema.Close()
+			t.Fatalf("scan sqlite_master: %v", err)
+		}
+		lines = append(lines, fmt.Sprintf("object %s %s %s %s", typ, name, tbl, ddl))
+		if typ == "table" {
+			tables = append(tables, name)
+		}
+	}
+	if err := schema.Err(); err != nil {
+		schema.Close()
+		t.Fatalf("sqlite_master rows: %v", err)
+	}
+	schema.Close()
+
+	for _, table := range tables {
+		rows, err := db.QueryContext(ctx, `SELECT * FROM "`+strings.ReplaceAll(table, `"`, `""`)+`"`)
+		if err != nil {
+			t.Fatalf("read table %s: %v", table, err)
+		}
+		cols, err := rows.Columns()
+		if err != nil {
+			rows.Close()
+			t.Fatalf("columns of %s: %v", table, err)
+		}
+		for rows.Next() {
+			vals := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range vals {
+				ptrs[i] = &vals[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				rows.Close()
+				t.Fatalf("scan %s: %v", table, err)
+			}
+			var b strings.Builder
+			b.WriteString(table)
+			for i, col := range cols {
+				fmt.Fprintf(&b, " %s=%s", col, roValue(vals[i]))
+			}
+			lines = append(lines, b.String())
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatalf("%s rows: %v", table, err)
+		}
+		rows.Close()
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
 }
 
 // roDiffOffsets lists every byte position at which two file images differ. A -1
@@ -528,6 +663,17 @@ func TestOpenReadOnlySeesCommittedWALFromLiveWriter(t *testing.T) {
 	st, path := roLiveStore(t)
 	roCommit(t, st, "k1", "s1", 10)
 
+	// Application state and the database image captured before the reader
+	// attaches: attaching must not change a single committed row or schema
+	// object. An exact -wal byte size cannot express that (Windows keeps a WAL
+	// that Unix truncates, and SQLite rewrites the sidecars as reader
+	// coordination), so application state and the file set are compared and the
+	// WAL is only bounded.
+	dir := filepath.Dir(path)
+	stateBeforeOpen := roApplicationState(t, st.DB())
+	digestBeforeOpen := roDigest(t, path)
+	filesBeforeOpen := roFileNames(t, dir)
+
 	ro, err := OpenReadOnly(ctx, path)
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
@@ -535,17 +681,29 @@ func TestOpenReadOnlySeesCommittedWALFromLiveWriter(t *testing.T) {
 	roMustEqual(t, "ReadOnly()", ro.ReadOnly(), true)
 	roMustEqual(t, "schema state", ro.ReadOnlySchema().State, SchemaOK)
 	roMustEqual(t, "events seen", roCountEvents(t, ro), int64(1))
+	// This is the assertion a read-only open that migrated, repriced or inserted
+	// through another connection would break.
+	roMustEqual(t, "application state after open", roApplicationState(t, st.DB()), stateBeforeOpen)
+	roMustEqual(t, "db digest after open", roDigest(t, path), digestBeforeOpen)
+	roMustEqual(t, "files after open", strings.Join(roFileNames(t, dir), ","), strings.Join(filesBeforeOpen, ","))
 
 	// The writer commits again while the read-only handle is open: a
 	// WAL-fresh reader must see it, which immutable=1 would not.
 	roCommit(t, st, "k2", "s1", 20)
 	roMustEqual(t, "events seen after commit", roCountEvents(t, ro), int64(2))
 
-	before := roListing(t, filepath.Dir(path))
+	// Closing the read-only handle must leave the writer's committed data and the
+	// database bytes untouched.
+	stateBeforeClose := roApplicationState(t, st.DB())
+	digestBeforeClose := roDigest(t, path)
+	filesBeforeClose := roFileNames(t, dir)
 	if err := ro.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	roMustEqual(t, "directory listing after close", strings.Join(roListing(t, filepath.Dir(path)), ","), strings.Join(before, ","))
+	roMustEqual(t, "db digest after close", roDigest(t, path), digestBeforeClose)
+	roMustEqual(t, "application state after close", roApplicationState(t, st.DB()), stateBeforeClose)
+	roMustEqual(t, "files after close", strings.Join(roFileNames(t, dir), ","), strings.Join(filesBeforeClose, ","))
+	roRequireWALBounded(t, path)
 }
 
 // A cleanly closed WAL database has no -shm. SQLite creates the sidecars while
@@ -719,7 +877,7 @@ func TestOpenReadOnlyReadOnlyReaderWritesOnlyTheWALReadMark(t *testing.T) {
 	}
 	dbBefore := roDigest(t, path)
 	walBefore := roDigest(t, path+"-wal")
-	listingBefore := roListing(t, dir)
+	filesBefore := roFileNames(t, dir)
 
 	ro, err := OpenReadOnly(ctx, path)
 	if err != nil {
@@ -743,7 +901,11 @@ func TestOpenReadOnlyReadOnlyReaderWritesOnlyTheWALReadMark(t *testing.T) {
 	if err := ro.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	roMustEqual(t, "directory listing", strings.Join(roListing(t, dir), ","), strings.Join(listingBefore, ","))
+	// Closing must not create or remove a file. The -wal/-shm sizes are not
+	// portable (see roFileNames/roRequireWALBounded); the byte-level assertions
+	// above already pin the database and the committed WAL frames.
+	roMustEqual(t, "files after close", strings.Join(roFileNames(t, dir), ","), strings.Join(filesBefore, ","))
+	roRequireWALBounded(t, path)
 }
 
 // The read-only handle pins the sidecars it attached to: while it is open the
@@ -830,6 +992,12 @@ func TestOpenReadOnlyWithReadOnlyFilePermissions(t *testing.T) {
 }
 
 func TestOpenReadOnlyUnreadableDatabaseIsTyped(t *testing.T) {
+	// Windows has no Unix permission bits: os.Chmod(0o000) does not make a file
+	// unreadable there, so "permission_denied from an unreadable file" is a
+	// concept that does not exist on this platform.
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based unreadability does not exist on Windows: mode bits are not enforced")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses file permissions")
 	}
@@ -841,7 +1009,13 @@ func TestOpenReadOnlyUnreadableDatabaseIsTyped(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(path, 0o600) })
 
-	_, err := OpenReadOnly(ctx, path)
+	ro, err := OpenReadOnly(ctx, path)
+	if ro != nil {
+		// Never leak a handle on the unexpected-success path: an open database
+		// left behind breaks the TempDir RemoveAll cleanup as well as the
+		// assertion below.
+		defer ro.Close()
+	}
 	roRequireReason(t, err, ReasonPermissionDenied)
 }
 
@@ -888,8 +1062,12 @@ func TestOpenReadOnlyLockedDatabaseIsBoundedAndTyped(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // The reader performs no application write. With a live writer already holding
-// the sidecars, the file set must not change either: no new file, no removed
-// file, no resized file, and the database image stays byte-identical.
+// the sidecars, no file may be created or removed and the application state must
+// be identical: the same database bytes, the same schema objects and the same
+// committed rows. SQLite's own -wal/-shm resizing is reader coordination rather
+// than a write, and its exact size is platform- and timing-dependent (Windows
+// keeps a full-size WAL where Unix truncates it), so the WAL is bounded rather
+// than pinned.
 func TestOpenReadOnlyPerformsNoApplicationWrite(t *testing.T) {
 	ctx := context.Background()
 	st, path := roLiveStore(t)
@@ -898,11 +1076,9 @@ func TestOpenReadOnlyPerformsNoApplicationWrite(t *testing.T) {
 
 	dir := filepath.Dir(path)
 	digest := roDigest(t, path)
-	before := roListing(t, dir)
-	walInfo, err := os.Stat(path + "-wal")
-	if err != nil {
-		t.Fatal(err)
-	}
+	state := roApplicationState(t, st.DB())
+	files := roFileNames(t, dir)
+	roMustExist(t, path+"-wal")
 
 	ro, err := OpenReadOnly(ctx, path)
 	if err != nil {
@@ -944,12 +1120,13 @@ func TestOpenReadOnlyPerformsNoApplicationWrite(t *testing.T) {
 	}
 
 	roMustEqual(t, "db digest", roDigest(t, path), digest)
-	roMustEqual(t, "directory listing", strings.Join(roListing(t, dir), ","), strings.Join(before, ","))
-	after, err := os.Stat(path + "-wal")
-	if err != nil {
-		t.Fatal(err)
-	}
-	roMustEqual(t, "wal size (not truncated by close)", after.Size(), walInfo.Size())
+	roMustEqual(t, "application state", roApplicationState(t, st.DB()), state)
+	roMustEqual(t, "files", strings.Join(roFileNames(t, dir), ","), strings.Join(files, ","))
+	// The -wal must not be truncated away, but its exact size is not portable:
+	// Windows keeps a full-size WAL where Unix truncates it. Bound it instead of
+	// pinning it, and rely on the application-state comparison above to catch an
+	// application write regardless of where SQLite buffered it.
+	roRequireWALBounded(t, path)
 }
 
 // ---------------------------------------------------------------------------

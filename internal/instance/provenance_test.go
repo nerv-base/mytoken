@@ -12,6 +12,7 @@ package instance_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -123,7 +124,9 @@ func TestResolveMissingExplicitEnvRootIsFatalAndNotReplaced(t *testing.T) {
 }
 
 // TestResolveUnusableExplicitEnvRootVariantsIsFatal covers the other ways an
-// explicit root can be wrong: a regular file and an unreadable directory.
+// explicit root can be wrong: a regular file and an unreadable directory. The
+// file case runs on every platform; unreadable means "mode bits deny reading",
+// a concept Windows does not have, so that case is skipped there.
 func TestResolveUnusableExplicitEnvRootVariantsIsFatal(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
@@ -139,11 +142,19 @@ func TestResolveUnusableExplicitEnvRootVariantsIsFatal(t *testing.T) {
 		name string
 		path string
 		code instance.Code
+		// unixModeBits marks a case whose setup needs POSIX permission bits.
+		unixModeBits bool
 	}{
-		{"file", file, instance.CodeNotDir},
-		{"unreadable", unreadable, instance.CodePermission},
+		{"file", file, instance.CodeNotDir, false},
+		{"unreadable", unreadable, instance.CodePermission, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.unixModeBits && runtime.GOOS == "windows" {
+				// Windows ignores os.Chmod on directories, so an existing but
+				// unreadable directory cannot be produced portably. The "file"
+				// case above still asserts the fatal refusal on Windows.
+				t.Skip("windows: os.Chmod does not deny directory reads; an unreadable directory requires an ACL")
+			}
 			if os.Geteuid() == 0 {
 				t.Skip("running as root: permission bits are not enforced")
 			}

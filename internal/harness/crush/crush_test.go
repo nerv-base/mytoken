@@ -450,10 +450,13 @@ func TestRegistration(t *testing.T) {
 }
 
 func TestRootsEnvOverride(t *testing.T) {
-	t.Setenv("MYTOKEN_CRUSH_DIRS", "/tmp/crush-one"+string(os.PathListSeparator)+"/tmp/crush-two")
+	// The override entries come back cleaned, so on Windows the expected roots
+	// are native (backslash) paths, not the Unix-shaped literals.
+	one, two := filepath.FromSlash("/tmp/crush-one"), filepath.FromSlash("/tmp/crush-two")
+	t.Setenv("MYTOKEN_CRUSH_DIRS", one+string(os.PathListSeparator)+two)
 	p := New()
 	roots := p.Roots()
-	if len(roots) != 2 || roots[0] != "/tmp/crush-one" || roots[1] != "/tmp/crush-two" {
+	if len(roots) != 2 || roots[0] != one || roots[1] != two {
 		t.Fatalf("Roots() = %v", roots)
 	}
 }

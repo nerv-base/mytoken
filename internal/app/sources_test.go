@@ -26,9 +26,16 @@ import (
 	"github.com/zzstar101/mytoken/internal/query"
 )
 
-// sandbox isolates a test from the machine: HOME and MYTOKEN_HOME point into a
-// fresh tree, and every harness home/config override is blanked so no parser
-// can resolve a real directory. Blank counts as absent (harness.Getenv).
+// sandbox isolates a test from the machine: HOME, USERPROFILE and MYTOKEN_HOME
+// point into a fresh tree, and every harness home/config override is blanked so
+// no parser can resolve a real directory. Blank counts as absent
+// (harness.Getenv).
+//
+// os.UserHomeDir reads HOME on Unix but USERPROFILE on Windows (HOMEDRIVE +
+// HOMEPATH are only its fallback), so setting HOME alone let a Windows run
+// resolve the runner's real home - which is what broke
+// TestClaudeQuotaSourcesKeychainOnlyForActualDefaultProfile. Every variable the
+// product can consult is pinned.
 func sandbox(t *testing.T) (home, data string) {
 	t.Helper()
 	root := t.TempDir()
@@ -46,6 +53,9 @@ func sandbox(t *testing.T) (home, data string) {
 		}
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
 	t.Setenv("MYTOKEN_HOME", data)
 	return home, data
 }

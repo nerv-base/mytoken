@@ -3,6 +3,7 @@ package instance_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/zzstar101/mytoken/internal/instance"
@@ -107,6 +108,15 @@ func TestResolveFileRootRejected(t *testing.T) {
 }
 
 func TestResolveUnreadableRootRejected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// The "unreadable directory" concept is expressed here with Unix mode
+		// bits (os.Chmod 0o000). Windows ignores chmod and cannot express a
+		// directory that exists but cannot be read without an ACL, which a
+		// portable test cannot install. The other unusable-root refusals still
+		// run on Windows: TestResolveFileRootRejected (a root that is a file)
+		// and TestResolveMissingRootIsFatalAndNeverFallsBack (a missing root).
+		t.Skip("windows: os.Chmod does not deny directory reads; an unreadable directory requires an ACL")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: directory permissions are not enforced")
 	}
@@ -243,6 +253,29 @@ func TestResolveCaseSensitiveDistinctPathsStayDistinct(t *testing.T) {
 
 // --- case aliases and directory identity -----------------------------------
 
+// requireCaseInsensitiveVolume probes the filesystem at runtime: it creates a
+// directory under one spelling and stats it under another. On a case-folding
+// volume (macOS APFS/HFS+ by default, Windows NTFS) the differently cased name
+// resolves to the same directory; on a case-sensitive one (ext4, APFS case
+// sensitive) os.Stat fails with ENOENT.
+//
+// Tests that simulate a case alias (two spellings of one directory) must call
+// this first: on a case-sensitive volume "Alpha" and "alpha" are two unrelated
+// directories, so the alias they exercise does not exist and there is no
+// behaviour to pin. On a case-folding volume they run in full, and the distinct
+// case-sensitive behaviour is covered by
+// TestResolveCaseSensitiveDistinctPathsStayDistinct.
+func requireCaseInsensitiveVolume(t *testing.T) {
+	t.Helper()
+	probeDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(probeDir, "case-probe-a"), 0o700); err != nil {
+		t.Fatalf("create case probe: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(probeDir, "CASE-PROBE-A")); err != nil {
+		t.Skip("case-sensitive filesystem: a differently cased name is a distinct path, so case aliases cannot exist")
+	}
+}
+
 // requireCaseAliasing skips unless alias and existing name the same directory
 // because the volume folds case. On a genuinely case-sensitive volume they are
 // two distinct directories, and the distinct-paths behaviour is covered by
@@ -277,6 +310,7 @@ func anyFatal(ps []instance.Problem) bool {
 // and "alpha" are one directory. The rejected entry must be reported as a
 // fatal overlap, never dropped silently.
 func TestResolveCrossEntryCaseAliasEqualRootsRejected(t *testing.T) {
+	requireCaseInsensitiveVolume(t)
 	base := t.TempDir()
 	upper := filepath.Join(base, "Alpha")
 	if err := os.Mkdir(upper, 0o700); err != nil {
@@ -314,6 +348,7 @@ func TestResolveCrossEntryCaseAliasEqualRootsRejected(t *testing.T) {
 // of it, spelled with a different case on a case-insensitive volume: the
 // ancestor relationship is invisible to a lexical path-prefix test.
 func TestResolveCrossEntryCaseAliasAncestorRootsRejected(t *testing.T) {
+	requireCaseInsensitiveVolume(t)
 	base := t.TempDir()
 	upper := filepath.Join(base, "Alpha")
 	innerAlias := filepath.Join(base, "alpha", "sub")
@@ -343,6 +378,7 @@ func TestResolveCrossEntryCaseAliasAncestorRootsRejected(t *testing.T) {
 // A single entry listing a directory and its case-aliased subtree has the same
 // double-counting hazard and must be rejected too.
 func TestResolveSameEntryCaseAliasAncestorRootsRejected(t *testing.T) {
+	requireCaseInsensitiveVolume(t)
 	base := t.TempDir()
 	upper := filepath.Join(base, "Alpha")
 	innerAlias := filepath.Join(base, "alpha", "sub")
@@ -422,6 +458,7 @@ func TestResolveFallbackBroadRootKeptRegardlessOfDeclaredOrder(t *testing.T) {
 // caught by walking ancestor identity, because the retained spelling of the
 // ancestor and the declared spelling of the subtree differ in case.
 func TestResolveFallbackCaseAliasRootsDeduplicated(t *testing.T) {
+	requireCaseInsensitiveVolume(t)
 	base := t.TempDir()
 	upper := filepath.Join(base, "Alpha")
 	if err := os.Mkdir(upper, 0o700); err != nil {

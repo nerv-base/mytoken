@@ -124,9 +124,14 @@ func TestConcurrentReloadsKeepOneWatcher(t *testing.T) {
 		t.Error("the moved instance is not scanned")
 	}
 
-	// History and the cursor rows the reloads passed over are unchanged.
-	if got := totals(t, a, query.Filter{}).Requests; got != before {
-		t.Errorf("requests after the reloads = %d, want %d", got, before)
+	// The replacement watcher scans its new root once before it starts watching
+	// (Scanner.Run scans, then watches), so history legitimately gains exactly
+	// one row: the session under the new path. Wait for that scan to land
+	// instead of racing it, then pin that the reload itself re-dated or
+	// double-counted nothing.
+	waitForRequests(t, a, before+1)
+	if got := totals(t, a, query.Filter{}).Requests; got != before+1 {
+		t.Errorf("requests after the reloads = %d, want %d", got, before+1)
 	}
 	if _, err := a.Store.CursorIn(ctx, model.ClaudeCode, id, want); err != nil {
 		t.Errorf("CursorIn after the reloads: %v", err)
@@ -141,12 +146,32 @@ func TestConcurrentReloadsKeepOneWatcher(t *testing.T) {
 		t.Errorf("ClaudeQuotaInfo after the reloads: %v", err)
 	}
 
-	// The replacement scans the new path: the instance now carries both.
+	// An explicit scan of the replacement path adds nothing: the watcher's own
+	// initial scan already committed that session exactly once.
 	if err := a.CurrentScanner().Scan(ctx); err != nil {
 		t.Fatalf("Scan after the reloads: %v", err)
 	}
 	if got := totals(t, a, query.Filter{}).Requests; got != before+1 {
 		t.Errorf("requests after scanning the new path = %d, want %d", got, before+1)
+	}
+}
+
+// waitForRequests blocks until the store reports at least want requests, so an
+// assertion about what a background watcher committed does not depend on how
+// quickly its goroutine got scheduled. It fails loudly rather than hanging when
+// the scan never lands.
+func waitForRequests(t *testing.T, a *App, want int64) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		got := totals(t, a, query.Filter{}).Requests
+		if got >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("requests never reached %d (still %d): the replacement watcher did not scan its new path", want, got)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

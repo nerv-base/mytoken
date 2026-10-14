@@ -183,11 +183,18 @@ func TestReloadSourcesMovesARunningScan(t *testing.T) {
 	if got := scannedIDs(a); len(got) != 1 || got[0] != id {
 		t.Errorf("scanned ids after the move = %v, want [%s]", got, id)
 	}
-	if got := totals(t, a, query.Filter{}).Requests; got != 1 {
-		t.Errorf("requests after the move = %d, want the 1 read before it", got)
+	// The replacement watcher scans its new root once before it starts watching
+	// (Scanner.Run scans, then watches), so history legitimately gains exactly
+	// one row: the session under the new path, on top of the one read before
+	// the move. Wait for that scan rather than racing it, then pin that the
+	// move re-dated or double-counted nothing.
+	waitForRequests(t, a, 2)
+	if got := totals(t, a, query.Filter{}).Requests; got != 2 {
+		t.Errorf("requests after the move = %d, want the 1 read before it plus the new path's 1", got)
 	}
 
-	// The replacement reads the new path: the same instance now carries both.
+	// An explicit scan of the replacement path adds nothing: the watcher's own
+	// initial scan already committed that session exactly once.
 	if err := a.CurrentScanner().Scan(ctx); err != nil {
 		t.Fatalf("Scan after reload: %v", err)
 	}

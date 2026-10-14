@@ -415,9 +415,32 @@ func TestGetenvAndSplitEnvListEdges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("SplitEnvList: %v", err)
 		}
-		want := []string{"/a", "b", "c"}
+		// SplitEnvList cleans with filepath semantics, and filepath.Clean
+		// rewrites "/" to "\" on Windows. Deriving the expected elements the
+		// same way keeps the expectation platform-correct instead of pinning
+		// the Unix spelling of the input.
+		want := []string{
+			filepath.Clean(filepath.FromSlash("/a")),
+			filepath.Clean(filepath.FromSlash("b/../b")),
+			filepath.Clean(filepath.FromSlash("c")),
+		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("SplitEnvList = %q, want %q", got, want)
+		}
+		// The meaning of the splitter, asserted portably and on every
+		// platform: only the three non-blank entries survive, each trimmed
+		// and already clean. This is what "drops blanks and cleans" means,
+		// independent of the host's path separator.
+		if len(got) != 3 {
+			t.Fatalf("SplitEnvList returned %d entries, want the 3 non-blank ones: %q", len(got), got)
+		}
+		for i, e := range got {
+			if strings.TrimSpace(e) == "" {
+				t.Errorf("entry %d is blank: %q", i, e)
+			}
+			if e != filepath.Clean(e) {
+				t.Errorf("entry %d = %q is not cleaned", i, e)
+			}
 		}
 	})
 

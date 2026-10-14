@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -174,9 +175,16 @@ func TestSourcesAddListRemoveRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sources.json: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("sources.json mode = %o", info.Mode().Perm())
-	}
+	// The 0600 mode is only meaningful where Unix permission bits exist. The
+	// list/remove round-trip below still runs on every platform.
+	t.Run("sources.json unix mode 0600", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows has no Unix permission bits: os.Stat reports a synthetic 0666 for every file")
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("sources.json mode = %o", info.Mode().Perm())
+		}
+	})
 
 	if _, errout, code := runCLI(t, "sources", "remove", e.ID); code != 0 {
 		t.Fatalf("remove code=%d stderr=%s", code, errout)
@@ -410,8 +418,24 @@ func TestSourcesFatalRootIsReportedNonZero(t *testing.T) {
 	t.Setenv("MYTOKEN_HOME", home)
 	useTempFallback(t, t.TempDir())
 	missing := filepath.Join(t.TempDir(), "gone")
-	body := `{"version":1,"entries":[{"id":"inst_broken","harness":"codex","roots":["` + missing + `"],"kind":"instance"}]}`
-	if err := os.WriteFile(filepath.Join(home, instance.FileName), []byte(body), 0o600); err != nil {
+	// Marshal the root path instead of pasting it into a JSON string literal: on
+	// Windows a path contains backslashes, which are JSON escape characters, so
+	// the hand-built body would be an unparsable config rather than an entry
+	// whose root is missing. The assertion below is about a missing root, not
+	// about escaping.
+	body, err := json.Marshal(map[string]any{
+		"version": 1,
+		"entries": []map[string]any{{
+			"id":      "inst_broken",
+			"harness": "codex",
+			"roots":   []string{missing},
+			"kind":    "instance",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, instance.FileName), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	out, errout, code := runCLI(t, "sources", "list", "--json")
