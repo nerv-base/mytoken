@@ -3,19 +3,50 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
-## Unreleased
+## 0.5.0
 
-- **Four more coding agents can be counted offline.** ZCode, MiniMax Code, MiMo Code and Step Code
-  now have their own source identities and readers. SQLite databases are opened read-only and
-  query-only; JSONL readers keep incremental cursors and stable request identities.
-- **Kimi Code is covered by the existing Kimi source.** The reader understands the current
-  `~/.kimi-code` agent-wire protocol as well as legacy Kimi logs, and avoids counting a child
-  agent once in its own wire and again in the parent's summary.
-- **Pi and OpenCode recognize their compatible orchestrators.** Pi can discover Oh My Pi and
-  Oh My OpenAgent/senpi sessions; OpenCode remains the identity for OMO plugin-mode sessions.
-  Aggregate `model_usage`, child-result and orchestration event logs are not counted a second time.
-- **Unsupported products stay honest.** Trae and Qoder do not expose a stable, publicly verifiable
-  offline usage ledger, so this release does not guess at private databases or add network access.
+MyToken is now a spend and plan-quota dashboard for the AI coding tools on
+this machine. The relay-reconciliation direction of 0.2–0.4 is gone.
+
+- **A new app, rebuilt on MyGo 0.5.5.** Five pages: Overview (today's and
+  this month's spend, a month-end forecast, plan quota rings, daily spend by
+  tool), Sessions, Ranking (with the yearly heatmap and streaks), Projects
+  and Settings. The menu-bar panel shows today's spend, quota bars with reset
+  countdowns and the sessions running right now, with their estimated output
+  speed, cache hit rate and cost per hour. The menu-bar text can show any of
+  today's spend, speed, hit rate and quota.
+- **Costs are official API prices, labelled "API equivalent".** Models
+  without a price show as unpriced instead of $0; Settings → Prices can price
+  them as another model or with your own rates. Headline token counts no
+  longer include cache reads, and there is one cache hit rate:
+  `cache read / (input + cache read + cache write)`. One-hour cache writes are
+  now priced at 2× input (five-minute writes stay 1.25×).
+- **Claude totals are right.** Claude Desktop's Code tab no longer counts
+  Claude Code sessions a second time, Cowork turns are not counted twice, and
+  ledger rows keep millisecond timestamps.
+- **Plan quota without setup.** Codex is read from its logs; Claude, Cursor,
+  Copilot and GLM are queried with the login those tools already have on this
+  machine. Tools without a detected plan show no quota card.
+- **Sources are switches.** Every supported tool is detected automatically
+  and can be turned off; one that is installed somewhere unusual can be
+  pointed at its folder, which is checked on the spot.
+- **Much faster and lighter.** A fresh index of ~255K requests takes about
+  13 seconds instead of 23 minutes; the app watches a bounded set of folders
+  (~125 open files instead of 5,400), refreshes in about 10 ms and is
+  nearly idle in the background. Command-line reads open the index read-only.
+- **Removed:** relays, reconciliation, provider multipliers, budgets and
+  alerts, multiple instances, the cache ledger and the Cache page. The index
+  is migrated in place — your history is kept, repriced and compacted, with
+  one backup beside it.
+- **Command line trimmed** to `mytoken` (summary), `daily`, `quota`, `scan`,
+  `statusline`, `doctor` and `version`. A bare `mytoken` opens the app when it
+  is not run from a terminal.
+- **Windows:** right-click the tray icon for Open, Rescan and Quit.
+- **More tools.** ZCode, MiniMax Code, MiMo Code and Step Code are counted
+  offline; Kimi Code is covered by the Kimi source; Pi and OpenCode recognise
+  their compatible orchestrators (Oh My Pi, Oh My OpenAgent/senpi, OMO)
+  without counting aggregate logs twice. Trae and Qoder stay unsupported: they
+  have no verifiable offline usage record.
 
 ## 0.4.1
 

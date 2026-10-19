@@ -236,8 +236,8 @@ go install github.com/zzstar101/mytoken@latest
 
 ## 命令行
 
-应用二进制同时也是 CLI。不带参数打印只读的费用摘要；GUI 用 `mytoken gui` 启动（登录项使用
-`--hidden`）。完整说明见 [docs/CLI.md](docs/CLI.md)。
+应用二进制同时也是 CLI。在终端里不带参数运行打印只读的费用摘要；从访达、资源管理器或启动器打开时
+是桌面应用，也可以用 `mytoken gui` 启动（登录项使用 `--hidden`）。完整说明见 [docs/CLI.md](docs/CLI.md)。
 
 ```sh
 mytoken                                        # 今日与本月，API 等价费用

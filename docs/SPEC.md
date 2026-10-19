@@ -2,11 +2,13 @@
 
 轻量、跨平台、原生 UI 的 AI 编程 harness token 统计工具。粒度：**会话 × 供应商 × 模型**。
 
+> 0.5 起的定位、口径、删除项和性能指标以 [PLAN-0.5.md](PLAN-0.5.md) 为准；本文其余部分是数据层（存储、扫描、归因）的历史设计记录。
+
 ## 1. 形态与技术栈
 
 | 项 | 决定 |
 |---|---|
-| 框架 | `github.com/egoist/mygo` v0.3.x，**纯原生 `ui` 包**（无 WebView），Go 1.27+，无 cgo |
+| 框架 | `github.com/egoist/mygo` v0.5.5，**纯原生 `ui` 包**（无 WebView），Go 1.27+，无 cgo |
 | 形态 | 托盘常驻 + 开机自启 + 托盘弹出面板 + 主窗口 |
 | 平台 | macOS 优先打磨；Windows / Linux 可运行；GitHub Release 开源分发 |
 | 存储 | `modernc.org/sqlite`，只存数字 + 元数据（会话标题 = 首条用户消息前 60 字符），永久保留，可一键重建 |

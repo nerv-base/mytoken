@@ -265,8 +265,9 @@ Builds the same binary the bundles carry, including the CLI, into `$(go env GOPA
 
 ## Command line
 
-The app binary is also the CLI. A bare invocation prints the read-only cost summary; the GUI starts
-with `mytoken gui` (the login item uses `--hidden`). The full reference is in
+The app binary is also the CLI. A bare `mytoken` in a terminal prints the read-only cost summary;
+opened from Finder, Explorer or a launcher it is the app, which also starts with `mytoken gui` (the
+login item uses `--hidden`). The full reference is in
 [docs/CLI.md](docs/CLI.md).
 
 ```sh
