@@ -1,0 +1,424 @@
+package plan
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+type fakeProvider struct {
+	id       string
+	local    bool
+	detected bool
+
+	mu    sync.Mutex
+	fetch func(ctx context.Context) (Snapshot, error)
+	calls int
+	det   int
+}
+
+func (p *fakeProvider) ID() string          { return p.id }
+func (p *fakeProvider) DisplayName() string { return p.id }
+func (p *fakeProvider) Local() bool         { return p.local }
+
+func (p *fakeProvider) Detect(context.Context) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.det++
+	return p.detected
+}
+
+func (p *fakeProvider) Fetch(ctx context.Context) (Snapshot, error) {
+	p.mu.Lock()
+	p.calls++
+	fn := p.fetch
+	p.mu.Unlock()
+	if fn == nil {
+		return Snapshot{Provider: p.id, Windows: []Window{{Name: "week", UsedPercent: 10}}}, nil
+	}
+	return fn(ctx)
+}
+
+func (p *fakeProvider) stats() (calls, det int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls, p.det
+}
+
+type fakeStore struct {
+	mu   sync.Mutex
+	vals map[string]string
+	err  error
+}
+
+func newFakeStore() *fakeStore { return &fakeStore{vals: map[string]string{}} }
+
+func (s *fakeStore) Setting(_ context.Context, key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if v, ok := s.vals[key]; ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("no setting %q", key)
+}
+
+func (s *fakeStore) SetSetting(_ context.Context, key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return s.err
+	}
+	s.vals[key] = value
+	return nil
+}
+
+func (s *fakeStore) get(key string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.vals[key]
+	return v, ok
+}
+
+func TestRegistryValidation(t *testing.T) {
+	if _, err := NewRegistry(&fakeProvider{id: "Upper"}); err == nil {
+		t.Fatal("uppercase id accepted")
+	}
+	if _, err := NewRegistry(&fakeProvider{id: ""}); err == nil {
+		t.Fatal("empty id accepted")
+	}
+	if _, err := NewRegistry(&fakeProvider{id: "a"}, &fakeProvider{id: "a"}); err == nil {
+		t.Fatal("duplicate id accepted")
+	}
+	if _, err := NewRegistry(nil); err == nil {
+		t.Fatal("nil provider accepted")
+	}
+	a := &fakeProvider{id: "a", detected: true}
+	b := &fakeProvider{id: "b"}
+	r, err := NewRegistry(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := r.Detected(context.Background())
+	if len(got) != 1 || got[0].ID() != "a" {
+		t.Fatalf("detected = %v", len(got))
+	}
+	if p, ok := r.Lookup("b"); !ok || p.ID() != "b" {
+		t.Fatal("lookup failed")
+	}
+}
+
+func TestSnapshotValidate(t *testing.T) {
+	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		in   Snapshot
+		ok   bool
+	}{
+		{"empty", Snapshot{}, false},
+		{"no windows", Snapshot{Provider: "a"}, false},
+		{"blank name dropped", Snapshot{Provider: "a", Windows: []Window{{Name: " "}}}, false},
+		{"ok", Snapshot{Provider: " a ", Windows: []Window{{Name: "week"}}}, true},
+	}
+	for _, tc := range cases {
+		s := tc.in
+		err := s.validate(now)
+		if (err == nil) != tc.ok {
+			t.Fatalf("%s: err = %v", tc.name, err)
+		}
+		if err == nil && (s.Provider != "a" || s.Source != SourceAPI || s.FetchedAt != now) {
+			t.Fatalf("%s: normalized = %+v", tc.name, s)
+		}
+	}
+}
+
+func TestDoJSONStatusMapping(t *testing.T) {
+	statuses := []struct {
+		code int
+		head map[string]string
+		want Reason
+	}{
+		{401, nil, ReasonUnauthorized},
+		{403, nil, ReasonForbidden},
+		{429, map[string]string{"Retry-After": "42"}, ReasonRateLimited},
+		{500, nil, ReasonHTTPStatus},
+		{302, map[string]string{"Location": "/elsewhere"}, ReasonRedirectRefused},
+	}
+	for _, tc := range statuses {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for k, v := range tc.head {
+				w.Header().Set(k, v)
+			}
+			w.WriteHeader(tc.code)
+		}))
+		_, err := DoJSON(context.Background(), DefaultTransport(), http.MethodGet, srv.URL, nil, nil, 1024)
+		srv.Close()
+		if !IsReason(err, tc.want) {
+			t.Fatalf("status %d: err = %v, want %s", tc.code, err, tc.want)
+		}
+		if tc.want == ReasonRateLimited {
+			var e *Error
+			if errors.As(err, &e) && e.RetryAfter != 42*time.Second {
+				t.Fatalf("retry after = %v", e.RetryAfter)
+			}
+		}
+	}
+}
+
+func TestDoJSONBoundsAndTargets(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer t" {
+			t.Errorf("authorization = %q", got)
+		}
+		fmt.Fprint(w, "0123456789")
+	}))
+	defer srv.Close()
+
+	if _, err := DoJSON(context.Background(), DefaultTransport(), http.MethodGet, srv.URL, http.Header{"Authorization": {"Bearer t"}}, nil, 4); !IsReason(err, ReasonMalformed) {
+		t.Fatalf("oversize err = %v", err)
+	}
+	if _, err := DoJSON(context.Background(), DefaultTransport(), http.MethodGet, "http://example.com/x", nil, nil, 1024); !IsReason(err, ReasonUnsupported) {
+		t.Fatalf("plain http err = %v", err)
+	}
+	bad := transportFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("boom") })
+	if _, err := DoJSON(context.Background(), bad, http.MethodGet, srv.URL, nil, nil, 1024); !IsReason(err, ReasonNetwork) {
+		t.Fatalf("network err = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := DoJSON(ctx, DefaultTransport(), http.MethodGet, srv.URL, nil, nil, 1024); !IsReason(err, ReasonCanceled) {
+		t.Fatalf("canceled err = %v", err)
+	}
+}
+
+type transportFunc func(*http.Request) (*http.Response, error)
+
+func (f transportFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestServiceFetchPersistsAndNotifies(t *testing.T) {
+	store := newFakeStore()
+	p := &fakeProvider{id: "alpha", detected: true}
+	var changes int
+	svc, err := NewService(Options{
+		Providers: []Provider{p},
+		Store:     store,
+		Now:       func() time.Time { return time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC) },
+		OnChange:  func([]Snapshot) { changes++ },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	svc.Refresh(context.Background())
+
+	got := svc.Latest()
+	if len(got) != 1 || got[0].Provider != "alpha" || got[0].Source != SourceAPI {
+		t.Fatalf("latest = %+v", got)
+	}
+	raw, ok := store.get(SnapshotKey("alpha"))
+	if !ok {
+		t.Fatal("snapshot not persisted")
+	}
+	var decoded Snapshot
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil || decoded.Provider != "alpha" {
+		t.Fatalf("persisted = %q, %v", raw, err)
+	}
+	if changes != 1 {
+		t.Fatalf("changes = %d", changes)
+	}
+
+	// A new Service restores the snapshot without a fetch.
+	p2 := &fakeProvider{id: "alpha", detected: true}
+	svc2, err := NewService(Options{Providers: []Provider{p2}, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc2.Close()
+	restored, ok := svc2.Snapshot("alpha")
+	if !ok || restored.Provider != "alpha" {
+		t.Fatalf("restored = %+v, %v", restored, ok)
+	}
+}
+
+func TestServiceKeepsLastGoodSnapshotOnFailure(t *testing.T) {
+	store := newFakeStore()
+	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+	p := &fakeProvider{id: "alpha", detected: true}
+	p.fetch = func(context.Context) (Snapshot, error) {
+		return Snapshot{}, &Error{Reason: ReasonHTTPStatus, StatusCode: 500}
+	}
+	svc, err := NewService(Options{
+		Providers: []Provider{p},
+		Store:     store,
+		Now:       func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	// Seed a good reading, then make the provider fail.
+	svc.snaps["alpha"] = Snapshot{Provider: "alpha", Windows: []Window{{Name: "5h", UsedPercent: 20}}, FetchedAt: now}
+	svc.Refresh(context.Background())
+	got := svc.Latest()
+	if len(got) != 1 || got[0].Windows[0].UsedPercent != 20 {
+		t.Fatalf("latest after failure = %+v", got)
+	}
+	st := svc.Statuses()[0]
+	if st.Reason != ReasonHTTPStatus || st.Attempts != 1 {
+		t.Fatalf("status = %+v", st)
+	}
+	if !st.NextAttempt.After(now) {
+		t.Fatalf("no backoff: %+v", st)
+	}
+}
+
+func TestServiceRetryAfterAndDetection(t *testing.T) {
+	store := newFakeStore()
+	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+	p := &fakeProvider{id: "alpha", detected: true}
+	p.fetch = func(context.Context) (Snapshot, error) {
+		return Snapshot{}, &Error{Reason: ReasonRateLimited, RetryAfter: 10 * time.Minute}
+	}
+	svc, err := NewService(Options{Providers: []Provider{p}, Store: store, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	svc.Refresh(context.Background())
+	if st := svc.Statuses()[0]; st.NextAttempt.Sub(now) < 10*time.Minute {
+		t.Fatalf("retry-after ignored: %+v", st)
+	}
+
+	// A provider without a credential is not fetched.
+	q := &fakeProvider{id: "beta", detected: false}
+	svc2, err := NewService(Options{Providers: []Provider{q}, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc2.Close()
+	svc2.Refresh(context.Background())
+	if calls, det := q.stats(); calls != 0 || det == 0 {
+		t.Fatalf("calls=%d det=%d", calls, det)
+	}
+	if st := svc2.Statuses()[0]; st.Detected || st.Reason != ReasonNone {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+func TestServiceOfflineSkipsNetworkProviders(t *testing.T) {
+	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+	remote := &fakeProvider{id: "remote", detected: true}
+	local := &fakeProvider{id: "local", detected: true, local: true}
+	svc, err := NewService(Options{
+		Providers: []Provider{remote, local},
+		Offline:   true,
+		Now:       func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	svc.Refresh(context.Background())
+	if calls, _ := remote.stats(); calls != 0 {
+		t.Fatalf("remote fetched %d times", calls)
+	}
+	if calls, _ := local.stats(); calls != 1 {
+		t.Fatalf("local fetched %d times", calls)
+	}
+	statuses := svc.Statuses()
+	if !statuses[0].Offline || statuses[1].Offline {
+		t.Fatalf("statuses = %+v", statuses)
+	}
+}
+
+func TestServiceLoopPollsAndCloses(t *testing.T) {
+	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+	done := make(chan struct{}, 1)
+	p := &fakeProvider{id: "alpha", detected: true}
+	p.fetch = func(context.Context) (Snapshot, error) {
+		select {
+		case done <- struct{}{}:
+		default:
+		}
+		return Snapshot{Provider: "alpha", Windows: []Window{{Name: "week", UsedPercent: 1}}}, nil
+	}
+	svc, err := NewService(Options{
+		Providers: []Provider{p},
+		Now:       func() time.Time { return now },
+		Tick:      5 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Start()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop did not fetch")
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatalf("second close: %v", err)
+	}
+	if len(svc.Latest()) != 1 {
+		t.Fatal("snapshot missing after close")
+	}
+}
+
+func TestServiceDetectedFiltersSignedOutProviders(t *testing.T) {
+	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+	store := newFakeStore()
+	p := &fakeProvider{id: "alpha", detected: true}
+	svc, err := NewService(Options{Providers: []Provider{p}, Store: store, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	svc.Refresh(context.Background())
+	if got := svc.Detected(); len(got) != 1 {
+		t.Fatalf("detected = %+v", got)
+	}
+
+	// Signing out keeps the last good snapshot but hides it from Detected.
+	p.detected = false
+	svc.Refresh(context.Background())
+	if got := svc.Detected(); len(got) != 0 {
+		t.Fatalf("detected after sign-out = %+v", got)
+	}
+	if got := svc.Latest(); len(got) != 1 {
+		t.Fatalf("latest after sign-out = %+v", got)
+	}
+}
+
+func TestSortSnapshots(t *testing.T) {
+	snaps := []Snapshot{{Provider: "z"}, {Provider: "b"}, {Provider: "a"}}
+	sortSnapshots([]string{"b", "a"}, snaps)
+	if snaps[0].Provider != "b" || snaps[1].Provider != "a" || snaps[2].Provider != "z" {
+		t.Fatalf("order = %v", snaps)
+	}
+}
+
+func TestErrorSanitized(t *testing.T) {
+	err := &Error{Reason: ReasonUnauthorized, StatusCode: 401, cause: errors.New("secret token abc")}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("error leaks cause: %v", err)
+	}
+	if !IsReason(err, ReasonUnauthorized) {
+		t.Fatal("reason lost")
+	}
+	if got := err.QuotaReason(); got != string(ReasonUnauthorized) {
+		t.Fatalf("reason = %q", got)
+	}
+	if got := err.RetryDelay(); got != 0 {
+		t.Fatalf("retry delay = %v", got)
+	}
+}
