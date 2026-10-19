@@ -19,13 +19,15 @@
 <p align="center"><b>English</b> · <a href="README.zh-CN.md">简体中文</a></p>
 <p align="center"><a href="#install">Install</a> · <a href="#screenshots">Screenshots</a> · <a href="#supported-harnesses">Harnesses</a> · <a href="docs/CLI.md">CLI</a> · <a href="docs/ROADMAP.md">Roadmap</a> · <a href="https://github.com/zzstar101/mytoken/releases/latest">Download</a></p>
 
-**Where did all your tokens go?** MyToken!!!!! reads the session logs your AI coding harnesses
-already write to disk, attributes every request to a session, provider and model, prices it, and
-shows you the result in a native desktop app — or as JSON from the command line.
+**What did your AI coding cost today, and how much plan quota is left?** MyToken!!!!! reads the
+session logs your AI coding tools already write to disk, prices every request at the official API
+list price, and shows today's and this month's spend, your Codex / Claude / Cursor plan quotas and
+what is running right now — in a native desktop app, a menu-bar panel, or the command line.
 
 Everything happens on your machine. No account, no telemetry, no uploads: by default the app
-makes two kinds of request — the price table download, and a daily update check on github.com
-(Settings turns it off). Nothing else is contacted.
+makes the price table download and a daily update check on github.com; plan quotas are fetched
+from a tool's own service only with the credentials that tool already stored. Nothing else is
+contacted.
 
 - **Thirty-two harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
   Crush, Cline, Roo Code, Kilo Code, Claude Desktop, WorkBuddy, CodeBuddy, Hermes, Qwen Code, Kimi,
@@ -33,14 +35,15 @@ makes two kinds of request — the price table download, and a daily update chec
   ZCode, MiniMax Code, MiMo Code and Step Code.
 - **Session × provider × model** — token classes kept apart (input, output, cache read, cache write,
   reasoning), with cache-hit rate, per-project and per-day breakdowns, and sub-agent trees.
-- **Attribution you can audit** — every provider is labelled with how it was determined: `log`,
-  `cc-switch`, `config-timeline`, `inferred` or `user-rule` (see
-  [Provider attribution](#provider-attribution)).
 - **API-equivalent cost** — models.dev prices with a LiteLLM fallback, labelled as what the same
   tokens would cost at list price. Add your own per-model prices when a plan or gateway differs;
   there are no provider multipliers or inferred discounts.
-- **Tray-resident** — closing the window keeps scanning; the tray panel shows today's tokens and
-  cost, the last 24 hours, and the top models.
+- **Spend first** — today's cost in big type, the month so far with a forecast, daily spend stacked
+  by tool, and rankings by cost. Token counts leave cache reads out of the headline number.
+- **Plan quotas** — Codex, Claude, Cursor, Copilot and GLM windows as rings, with reset times,
+  detected automatically.
+- **Menu bar** — today's spend (or output speed, cache hit rate, quota) beside the icon; the panel
+  lists sessions running now with an estimated output speed, $/hour and cache hit rate.
 - **CLI for scripts** — `mytoken` prints today's and this month's cost; `mytoken daily` prints a
   ccusage-style table with each cache class in its own column.
 - **Native, small, fast** — built with [MyGo](https://github.com/egoist/mygo)'s native UI package:
@@ -50,15 +53,15 @@ makes two kinds of request — the price table download, and a daily update chec
 
 | Overview | Sessions |
 | --- | --- |
-| ![Overview: trends, heatmap, cache hit rate, harness split](docs/screenshots/overview.png) | ![Sessions: virtual list and the provider × model breakdown of one session](docs/screenshots/sessions.png) |
+| ![Overview: today's spend, month forecast, plan quotas, daily spend by tool](docs/screenshots/overview.png) | ![Sessions: virtual list, cumulative cost and every request of one session](docs/screenshots/sessions.png) |
 
-| Rankings | Tray panel |
+| Ranking | Menu bar panel |
 | --- | --- |
-| ![Rankings: providers and models](docs/screenshots/models.png) | ![Tray panel: today's tokens and cost, 24h bars, top models](docs/screenshots/tray.png) |
+| ![Ranking: a year of daily spend and cost by tool, model or provider](docs/screenshots/ranking.png) | ![Menu bar panel: today's spend, quotas and the sessions running now](docs/screenshots/tray.png) |
 
 | CLI | Settings |
 | --- | --- |
-| ![mytoken summary in a terminal](docs/screenshots/cli.png) | ![Settings: harness sources, model mappings and custom prices](docs/screenshots/settings.png) |
+| ![mytoken summary in a terminal](docs/screenshots/cli.png) | ![Settings: detected tools, each with an on/off switch and an optional folder](docs/screenshots/settings.png) |
 
 ## Supported harnesses
 
@@ -186,8 +189,8 @@ priority chain, and the app tells you which step produced the answer:
   input, unless the catalog carries explicit cache-write prices.
 - **Model mappings.** Model names your own config invented have no price in any table, so
   they are listed as *unpriced* instead of guessed at. Map each one to the real model — and
-  optionally to a provider — under *Settings → Model mappings*, and those requests are priced and
-  merged into the rankings from then on.
+  optionally to a provider — and those requests are priced and
+  merged into the rankings from then on (*Settings → Prices*).
 - A cost recorded in the log itself always wins over the computed one, and requests that no price
   can be found for are reported as *unpriced* instead of silently costing nothing.
 
@@ -198,8 +201,7 @@ priority chain, and the app tells you which step produced the answer:
 - **Two requests by default — the price table and the update check.** The price table comes from
   models.dev, falling back to LiteLLM; with a cached or bundled table no request is made. Once a day
   the app asks github.com whether there is a new version, sending nothing but the request itself;
-  Settings turns this off, and builds that cannot update themselves (development builds, the Debian
-  package) never ask. The command line never checks. Plan-quota providers contact their own service
+  builds that cannot update themselves (development builds, the Debian package) never ask. The command line never checks. Plan-quota providers contact their own service
   only when a credential for that tool already exists on disk; there is no separate consent step and
   no credential is copied into the index.
 - **Read-only readers.** Harness logs are opened for reading; the index is a separate SQLite file

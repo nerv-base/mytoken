@@ -19,10 +19,11 @@
 <p align="center"><a href="README.md">English</a> · <b>简体中文</b></p>
 <p align="center"><a href="#安装">安装</a> · <a href="#界面截图">截图</a> · <a href="#支持的-harness">支持的 harness</a> · <a href="docs/CLI.md">命令行</a> · <a href="docs/ROADMAP.md">路线图</a> · <a href="https://github.com/zzstar101/mytoken/releases/latest">下载</a></p>
 
-**你的 token 都花在哪了？** MyToken!!!!! 读取 AI 编程 harness 已经写在磁盘上的会话日志，把每一次请求归到
-会话 × 供应商 × 模型，算出费用，然后在原生桌面应用里展示出来 —— 也可以用命令行直接拿到 JSON。
+**今天 AI 编程花了多少？套餐额度还剩多少？** MyToken!!!!! 读取 AI 编程工具已经写在磁盘上的会话日志，按官方 API
+价格给每次请求算出等价费用，展示今日与本月花费、Codex / Claude / Cursor 的套餐额度，以及正在进行的会话 ——
+在原生桌面应用、菜单栏面板或命令行里都能看。
 
-一切都在你自己的机器上完成。没有账号、没有遥测、没有上传：默认只发两类请求：价格表，和每天一次到 github.com 检查更新（设置里可关）；除此之外不联系任何服务。
+一切都在你自己的机器上完成。没有账号、没有遥测、没有上传：默认只下载价格表、每天一次到 github.com 检查更新；套餐额度只用对应工具自己已保存的凭据向它自己的服务查询。除此之外不联系任何服务。
 
 - **一个窗口里看三十二个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
   Cline、Roo Code、Kilo Code、Claude Desktop、WorkBuddy、CodeBuddy、Hermes、Qwen Code、Kimi、
@@ -30,11 +31,11 @@
   ZCode、MiniMax Code、MiMo Code、Step Code。
 - **会话 × 供应商 × 模型** —— 五类 token 分开统计（input、output、cache read、cache write、
   reasoning），同时给出缓存命中率、按项目 / 按天的拆分，以及子代理树。
-- **可审计的归因** —— 每个供应商都标注了它是怎么确定的：`log`、`cc-switch`、`config-timeline`、
-  `inferred` 或 `user-rule`（见[供应商归因](#供应商归因)）。
 - **API 等价费用** —— 优先用 models.dev 的价格、LiteLLM 兜底，界面明确标注这是“按官方 API 价”的等价费用。
   套餐、网关或议价不同时，可以按模型自定义单价；不叠加供应商倍率，也不推断折扣。
-- **托盘常驻** —— 关掉窗口也继续扫描；托盘面板显示今日 token 与费用、最近 24 小时和 Top 模型。
+- **花费优先** —— 今日花费大字显示，本月累计带月末预测，每日花费按工具堆叠，排行按花费。token 主数字不含缓存读取。
+- **套餐额度** —— 自动检测 Codex、Claude、Cursor、Copilot、GLM 的额度窗口，用圆环显示已用比例和重置时间。
+- **菜单栏** —— 图标旁显示今日花费（也可选输出速度、缓存命中率、额度）；面板列出正在进行的会话、估算输出速度、每小时花费和命中率。
 - **命令行可脚本化** —— 不带参数运行 `mytoken` 输出今日与本月费用；`mytoken daily` 输出 ccusage 风格的每日表，缓存各类单独成列。
 - **原生、小巧、快** —— 基于 [MyGo](https://github.com/egoist/mygo) 的原生 UI 包：没有 Electron、
   没有 WebView、不用 cgo。本机日志全量首扫只需几秒。
@@ -43,15 +44,15 @@
 
 | 概览 | 会话 |
 | --- | --- |
-| ![概览：趋势、热力图、缓存命中率、harness 占比](docs/screenshots/overview.png) | ![会话：虚拟列表与单个会话的供应商 × 模型拆分](docs/screenshots/sessions.png) |
+| ![概览：今日花费、本月预测、套餐额度、按工具的每日花费](docs/screenshots/overview.png) | ![会话：虚拟列表、单个会话的累计花费与每次请求](docs/screenshots/sessions.png) |
 
-| 排行 | 托盘面板 |
+| 排行 | 菜单栏面板 |
 | --- | --- |
-| ![排行：供应商与模型](docs/screenshots/models.png) | ![托盘面板：今日 token 与费用、24 小时柱图、Top 模型](docs/screenshots/tray.png) |
+| ![排行：一年的每日花费热力图，按工具 / 模型 / 提供商的花费排行](docs/screenshots/ranking.png) | ![菜单栏面板：今日花费、额度和正在进行的会话](docs/screenshots/tray.png) |
 
 | 命令行 | 设置 |
 | --- | --- |
-| ![终端里的 mytoken 摘要](docs/screenshots/cli.png) | ![设置：harness 数据源、模型映射与自定义价格](docs/screenshots/settings.png) |
+| ![终端里的 mytoken 摘要](docs/screenshots/cli.png) | ![设置：检测到的工具，每个都有开关，可选指定目录](docs/screenshots/settings.png) |
 
 ## 支持的 harness
 
@@ -170,7 +171,7 @@ Linux 是 `~/.config/<编辑器>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…
   output、cache read、cache write）。费用始终是“API 等价”：不乘供应商倍率，也不推断折扣。
 - 1 小时缓存写入按 input 单价的 2 倍计价，其余缓存写入按 1.25 倍；价格表里带有明确 cache write 单价时以价格表为准。
 - **模型映射。** 你自己的配置编出来的模型名在任何价格表里都查不到，应用会把它们列成 *unpriced*
-  而不是瞎猜。在*设置 → 模型映射*里把每个名字映射到真实模型（可选指定供应商），之后这些请求就会被正常计价
+  而不是瞎猜。在*设置 → 价格*里把每个名字映射到真实模型（可选指定供应商），之后这些请求就会被正常计价
   并合并进排行。
 - 日志自带的费用永远优先于计算值；找不到价格的请求会明确标成 *unpriced*，而不是悄悄算成 0。
 

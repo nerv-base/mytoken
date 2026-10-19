@@ -21,7 +21,11 @@ type harness struct {
 
 func newHarness(t testing.TB) *harness {
 	h := &harness{now: time.Date(2026, 10, 19, 15, 30, 0, 0, time.Local)}
-	prefs := memPrefs{PrefLang: "zh"}
+	lang := os.Getenv("GUI_SHOTS_LANG")
+	if lang == "" {
+		lang = "zh"
+	}
+	prefs := memPrefs{PrefLang: lang}
 	h.app = New(Deps{
 		Query:   newDemo(h.now),
 		Quotas:  func() []Quota { return demoQuotas(h.now) },
@@ -68,9 +72,9 @@ func (h *harness) drain(t testing.TB) {
 }
 
 func shotDir(t testing.TB) string {
-	dir := os.Getenv("GUI2_SHOTS")
+	dir := os.Getenv("GUI_SHOTS")
 	if dir == "" {
-		t.Skip("set GUI2_SHOTS=<dir> to write screenshots")
+		t.Skip("set GUI_SHOTS=<dir> to write screenshots")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
