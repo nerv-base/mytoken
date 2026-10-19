@@ -281,7 +281,7 @@ func (a *App) generalSettings(c *ui.Context, pal palette) {
 		settingRow(c, pal, tr("pricesFrom"), tr("pricesFromHint"), func() {
 			if a.d.Prices != nil {
 				info := a.d.Prices.Catalog()
-				caption(c, pal, trf("catalogInfo", info.Version, info.Models))
+				caption(c, pal, trf("catalogInfo", catalogVersion(info.Version), info.Models))
 			}
 		})
 	})
@@ -416,7 +416,7 @@ func (a *App) priceSettings(c *ui.Context, pal palette) {
 		cardTitle(c, pal, tr("pricesFrom"), nil)
 		info := p.Catalog()
 		caption(c, pal, tr("pricesFromHint"))
-		caption(c, pal, trf("catalogInfo", info.Version, info.Models))
+		caption(c, pal, trf("catalogInfo", catalogVersion(info.Version), info.Models))
 	})
 	card(c, pal).Gap(8).Children(func() {
 		cardTitle(c, pal, trf("unpricedModels", len(st.unpriced)), nil)
@@ -626,4 +626,12 @@ func (a *App) confirmDialogs(c *ui.Context) {
 			}
 		}
 	}
+}
+
+// catalogVersion names the price list: the bundled one or its date.
+func catalogVersion(v string) string {
+	if v == "" || v == "builtin" {
+		return tr("builtinCatalog")
+	}
+	return v
 }

@@ -242,3 +242,7 @@ func monthStart(t time.Time) time.Time {
 	y, m, _ := t.Date()
 	return time.Date(y, m, 1, 0, 0, 0, 0, t.Location())
 }
+
+// GoTo shows a page: "overview", "sessions", "ranking", "projects" or
+// "settings".
+func (a *App) GoTo(page string) { a.goTo(page) }

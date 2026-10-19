@@ -22,7 +22,6 @@ import (
 	"os/exec"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"time"
 	// The IANA database travels with the binary: a budget period is resolved
 	// in a named zone the user typed, and a shipped build cannot rely on the
@@ -30,15 +29,14 @@ import (
 	_ "time/tzdata"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/plugins/updater"
 	"github.com/egoist/mygo/plugins/updater/native"
 	"github.com/egoist/mygo/ui"
 
 	"github.com/zzstar101/mytoken/internal/app"
 	"github.com/zzstar101/mytoken/internal/cli"
 	"github.com/zzstar101/mytoken/internal/gui"
-	"github.com/zzstar101/mytoken/internal/ingestrate"
 	"github.com/zzstar101/mytoken/internal/paths"
+	"github.com/zzstar101/mytoken/internal/quota/plan"
 )
 
 // memoryLimit is the GUI's soft Go heap limit. Live data is ~20 MB on a
@@ -127,16 +125,13 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// The app owns the watcher's lifecycle: a source reload cancels and joins
-	// this run before starting the replacement, and a runtime failure is
-	// recorded on the app instead of falling back to another source set.
-	a.StartScanning(ctx)
+	if err := a.StartScanning(ctx); err != nil {
+		log.Printf("mytoken: scan: %v", err)
+	}
+	setLangFromSystem()
 
-	dataDir, _ := paths.DataDir()
-	var state *gui.State
-
-	// Both windows show the same state; a change redraws both. Updates
-	// go through the panel, which outlives the main window.
+	// Both windows draw the same App; a change redraws both. Updates go
+	// through the panel, which outlives the main window.
 	post := func(fn func()) {
 		w := panel
 		if w == nil {
@@ -153,21 +148,50 @@ func main() {
 			}
 		})
 	}
-	hooks := guiHooks(a, ctx, dataDir, func() { mygo.RunOnMain(openMain) }, func() bool {
-		return main != nil && main.IsVisible() || panel != nil && panel.IsVisible()
-	})
-	setLangFromSystem()
+	var tray *mygo.Tray
+	deps := guiDeps(a)
+	deps.Post = post
+	deps.OpenMain = func() { mygo.RunOnMain(openMain) }
+	deps.HidePanel = func() {
+		if panel != nil {
+			panel.Hide()
+		}
+	}
+	deps.Quit = func() { mygo.App.Quit() }
+	deps.Reveal = func(path string) { mygo.Shell.ShowItemInFolder(path) }
+	deps.PickFolder = func(start string) (string, bool) {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: main, DefaultPath: start, Directory: true, ShowHiddenFiles: true})
+		if err != nil || len(paths) == 0 {
+			return "", false
+		}
+		return paths[0], true
+	}
+	deps.SaveFile = func(name string) (string, bool) {
+		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: main, DefaultPath: name, CreateDirectories: true})
+		return path, err == nil && path != ""
+	}
+	deps.Login = login{}
+	deps.SetTrayTitle = func(title string) {
+		if tray != nil {
+			tray.SetTitle(title)
+			tip := "MyToken!!!!!"
+			if title != "" {
+				tip += " · " + title
+			}
+			tray.SetToolTip(tip)
+		}
+	}
+	ui2 := gui.New(deps)
+	if a.Quota != nil {
+		a.Quota.SetOnChange(func([]plan.Snapshot) { ui2.QuotasChanged() })
+	}
 
 	mygo.App.WhenReady(func() {
 		hidden := mygo.App.WasOpenedAtLogin() || len(os.Args) > 1 && os.Args[1] == "--hidden"
-		// The state must exist before the first window: a window that is
-		// not hidden builds and draws its content synchronously inside
-		// NewWindow, so a nil state panics on that first frame.
-		state = gui.NewState(a.Query, hooks, post)
 		// A quit (the tray menu, Cmd+Q, SIGTERM, logging out) closes every
 		// window; only a close by the user leaves the app in the tray.
 		quitting := false
-		mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { quitting = true })
+		mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { quitting = true; ui2.Stop() })
 		var trayless bool
 		newMain = func(hidden bool) *mygo.Window {
 			w := mygo.NewWindow(mygo.WindowOptions{
@@ -178,12 +202,11 @@ func main() {
 				MinHeight:     640,
 				Hidden:        hidden,
 				TitleBarStyle: mygo.TitleBarHidden,
-				// The traffic lights sit inside the sidebar card, not on its edge.
+				// The traffic lights sit inside the sidebar, not on its edge.
 				TrafficLightPosition: &mygo.Point{X: gui.TrafficLightX, Y: gui.TrafficLightY},
 				StateKey:             "main",
-				Content:              ui.View(func(c *ui.Context) { state.MainView(c) }),
+				Content:              ui.View(ui2.MainView),
 			})
-			w.OnShow(state.Shown)
 			w.OnClosed(func() {
 				if main == w {
 					main = nil
@@ -217,16 +240,21 @@ func main() {
 			SkipTaskbar:     true,
 			Transparent:     true,
 			Vibrancy:        mygo.VibrancyMenu,
-			Content:         ui.View(func(c *ui.Context) { state.TrayView(c) }),
+			Content:         ui.View(ui2.PanelView),
 		})
 		panel.OnBlur(func() { panel.Hide() })
-		// Hidden windows leave changes unloaded: catch up when one shows.
-		panel.OnShow(state.Shown)
 		ready = true
+		ui2.Start()
 
-		state.Start()
-
-		tray, err := mygo.NewTray(mygo.TrayOptions{Icon: trayIcon(), IconIsTemplate: true, ToolTip: "MyToken!!!!!"})
+		menu := trayMenu(openMain, func() { logErr("rescan", a.Rescan(context.Background())) })
+		opts := mygo.TrayOptions{Icon: trayIcon(), IconIsTemplate: true, ToolTip: "MyToken!!!!!"}
+		if runtime.GOOS != "darwin" {
+			// Windows shows the menu on a right click and keeps the left
+			// click for the panel; Linux indicators only have a menu.
+			opts.Menu = menu
+		}
+		var err error
+		tray, err = mygo.NewTray(opts)
 		if err != nil {
 			// No tray (e.g. Linux without appindicator): the window is the app.
 			log.Printf("mytoken: tray: %v", err)
@@ -250,6 +278,17 @@ func main() {
 			panel.Show()
 			panel.Focus()
 		})
+		if runtime.GOOS == "darwin" {
+			// A status item with a menu opens it on every click, so the menu
+			// is lent to the item only while a right click shows it.
+			tray.OnRightClick(func() {
+				panel.Hide()
+				tray.SetMenu(menu)
+				tray.PopUpMenu()
+				tray.SetMenu(nil)
+			})
+		}
+		ui2.QuotasChanged() // also sets the menu bar text
 		mygo.App.OnActivate(func(hasVisible bool) {
 			if !hasVisible {
 				openMain()
@@ -266,17 +305,36 @@ func main() {
 	}
 }
 
+// trayMenu is the icon's context menu.
+func trayMenu(open, rescan func()) *mygo.Menu {
+	l := func(en, zh string) string {
+		if gui.Lang() == "zh" {
+			return zh
+		}
+		return en
+	}
+	return mygo.NewMenu([]*mygo.MenuItem{
+		{Label: l("Open MyToken", "打开 MyToken"), Click: func(*mygo.MenuItem, *mygo.Window) { open() }},
+		{Label: l("Rescan logs", "重新扫描"), Click: func(*mygo.MenuItem, *mygo.Window) { go rescan() }},
+		mygo.Separator(),
+		{Label: l("Quit MyToken", "退出 MyToken"), Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
+	})
+}
+
+// login turns the login item on and off.
+type login struct{}
+
+func (login) OpenAtLogin() bool            { return mygo.App.OpenAtLogin() }
+func (login) SetOpenAtLogin(on bool) error { return mygo.App.SetOpenAtLogin(on) }
+
+func versionLabel() string { return cli.Version }
+
 // setLangFromSystem localizes the GUI from the OS locale, unless MYTOKEN_LANG
 // overrides it. Both the normal startup path and the startup-failure window use
 // it, so the failure window speaks the user's language too.
 func setLangFromSystem() {
-	if l := mygo.App.Locale(); os.Getenv("MYTOKEN_LANG") == "" && l != "" {
-		if strings.HasPrefix(strings.ToLower(l), "zh") {
-			gui.SetLang("zh")
-		} else {
-			gui.SetLang("en")
-		}
-	}
+	gui.SetSystemLang(mygo.App.Locale())
+	gui.SetLang("")
 }
 
 // showStartupFailure reports a fatal startup error in a window instead of
@@ -377,42 +435,6 @@ func revealDirectory(dir string) error {
 		return err
 	}
 	return cmd.Process.Release()
-}
-
-// guiHooks is the window's view of the app main() has already opened: what the
-// GUI may ask of it, never a second app.
-func guiHooks(a *app.App, ctx context.Context, dataDir string, openMain func(), visible func() bool) gui.Hooks {
-	var setProviderAlias func(ctx context.Context, id, label string) error
-	if a.Store != nil {
-		setProviderAlias = a.Store.SetProviderAlias
-	}
-	var ingestRate func(now time.Time) ingestrate.Snapshot
-	if a.CurrentScanner() != nil {
-		ingestRate = a.ScannerIngestRate
-	}
-	return gui.Hooks{
-		Progress: a.ScannerProgress,
-		Rebuild: func() {
-			if err := a.Rebuild(ctx); err != nil {
-				log.Printf("mytoken: rebuild: %v", err)
-			}
-		},
-		OpenAtLogin:      mygo.App.OpenAtLogin,
-		SetOpenAtLogin:   func(on bool) { _ = mygo.App.SetOpenAtLogin(on) },
-		DataDir:          dataDir,
-		Settings:         a.Settings,
-		SetProviderAlias: setProviderAlias,
-		Location:         a.Location,
-		IngestRate:       ingestRate,
-		OpenMain:         openMain,
-		Quit:             func() { mygo.App.Quit() },
-		Version:          cli.Version,
-		CanUpdate:        mygo.Updater.Enabled,
-		CheckUpdates:     updater.CheckForUpdates,
-		AutoUpdates:      updater.AutomaticChecks,
-		SetAutoUpdates:   updater.SetAutomaticChecks,
-		Visible:          visible,
-	}
 }
 
 // trayIcon draws the template icon: three rising bars, like a tiny chart.

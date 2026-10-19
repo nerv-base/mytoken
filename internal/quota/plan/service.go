@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -89,7 +90,7 @@ type Service struct {
 	interval  time.Duration
 	intervals map[string]time.Duration
 	now       func() time.Time
-	onChange  func([]Snapshot)
+	onChange  atomic.Pointer[func([]Snapshot)]
 	tick      time.Duration
 
 	mu      sync.Mutex
@@ -137,7 +138,6 @@ func NewService(opts Options) (*Service, error) {
 		interval:  interval,
 		intervals: make(map[string]time.Duration, len(opts.Intervals)),
 		now:       now,
-		onChange:  opts.OnChange,
 		tick:      tick,
 		snaps:     make(map[string]Snapshot, len(opts.Providers)),
 		status:    make(map[string]*Status, len(opts.Providers)),
@@ -153,6 +153,9 @@ func NewService(opts Options) (*Service, error) {
 		if v := opts.Intervals[p.ID()]; v >= MinInterval {
 			s.intervals[p.ID()] = v
 		}
+	}
+	if opts.OnChange != nil {
+		s.SetOnChange(opts.OnChange)
 	}
 	s.load()
 	return s, nil
@@ -446,12 +449,22 @@ func (s *Service) persist(snap Snapshot) {
 	_ = s.store.SetSetting(ctx, SnapshotKey(snap.Provider), string(raw))
 }
 
+// SetOnChange replaces the callback run with the latest snapshots after a
+// provider reports a new one; nil removes it.
+func (s *Service) SetOnChange(fn func([]Snapshot)) {
+	if fn == nil {
+		s.onChange.Store(nil)
+		return
+	}
+	s.onChange.Store(&fn)
+}
+
 func (s *Service) notify() {
-	cb := s.onChange
+	cb := s.onChange.Load()
 	if cb == nil {
 		return
 	}
-	cb(s.Latest())
+	(*cb)(s.Latest())
 }
 
 func (s *Service) intervalFor(id string) time.Duration {

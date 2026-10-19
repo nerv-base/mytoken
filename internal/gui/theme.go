@@ -1,8 +1,10 @@
-// Package gui is MyToken!!!!!'s native interface: the main window and the
-// tray panel, drawn with MyGo's ui package (no WebView).
+// Package gui is MyToken's native interface: the main window and the tray
+// panel, drawn with MyGo's ui package.
 //
-// Look: Liquid Glass panes floating over a soft "aurora" painted in the five
-// MyGO!!!!! member colors, which double as the chart palette.
+// Look: opaque, quiet surfaces; color is reserved for money, quota and the
+// tools themselves. Motion is limited to a few places where it carries
+// meaning (quota rings, rolling figures, charts morphing between ranges, the
+// tray's burn band) and is paint-only wherever MyGo allows it.
 package gui
 
 import (
@@ -12,63 +14,132 @@ import (
 	"github.com/zzstar101/mytoken/internal/model"
 )
 
-// The five member colors, slightly deepened so that they read on white.
-var (
-	Tomori = ui.Hex("#5AA9D6") // 高松燈  — sky blue
-	Anon   = ui.Hex("#FF7A92") // 千早愛音 — pink
-	Rana   = ui.Hex("#4FC27A") // 要楽奈  — green
-	Soyo   = ui.Hex("#F0B83C") // 長崎そよ — honey
-	Taki   = ui.Hex("#7B6FD0") // 椎名立希 — violet
+// Faces. display is for big figures and titles; text for everything else.
+const (
+	display  = "SF Pro Display, system-ui"
+	textFace = "SF Pro Text, system-ui"
 )
 
-// Band is the chart palette, in the order series are given colors.
-var Band = []ui.Color{Tomori, Anon, Rana, Soyo, Taki,
-	ui.Hex("#3E8FB8"), ui.Hex("#E25C79"), ui.Hex("#34A262"), ui.Hex("#D69A22"), ui.Hex("#5F54B3")}
-
-// bandAt returns the i-th palette color, cycling.
-func bandAt(i int) ui.Color { return Band[((i%len(Band))+len(Band))%len(Band)] }
-
-// class is a token class with its color.
-type class struct {
-	key   string
-	color ui.Color
-	get   func(model.Tokens) int64
+// palette is one appearance's colors.
+type palette struct {
+	dark bool
+	// bg is the window, side the sidebar, card a raised surface, well a
+	// recessed track (bars, rings, inputs).
+	bg, side, card, well ui.Color
+	// ink and muted color text; line colors hairlines and chart grids.
+	ink, muted, line ui.Color
+	hover, selected  ui.Color
+	accent           ui.Color
+	good, warn, bad  ui.Color
 }
 
-// classes lists the token classes in drawing order: one member per class.
-var classes = []class{
-	{"input", Tomori, func(t model.Tokens) int64 { return t.Input }},
-	{"output", Anon, func(t model.Tokens) int64 { return t.Output }},
-	{"cacheRead", Rana, func(t model.Tokens) int64 { return t.CacheRead }},
-	{"cacheWrite", Soyo, func(t model.Tokens) int64 { return t.CacheWrite }},
-	{"reasoning", Taki, func(t model.Tokens) int64 { return t.Reasoning }},
+func paletteFor(dark bool) palette {
+	if dark {
+		return palette{
+			dark: true,
+			bg:   ui.Hex("#101013"), side: ui.Hex("#16161A"), card: ui.Hex("#1B1B20"), well: ui.RGBA(255, 255, 255, 0.07),
+			ink: ui.Hex("#F2F2F5"), muted: ui.RGBA(235, 235, 245, 0.56), line: ui.RGBA(255, 255, 255, 0.075),
+			hover: ui.RGBA(255, 255, 255, 0.05), selected: ui.RGBA(124, 140, 255, 0.20),
+			accent: ui.Hex("#7C8CFF"),
+			good:   ui.Hex("#32D17C"), warn: ui.Hex("#FFB547"), bad: ui.Hex("#FF5A52"),
+		}
+	}
+	return palette{
+		bg: ui.Hex("#F5F5F7"), side: ui.Hex("#ECECEF"), card: ui.Hex("#FFFFFF"), well: ui.RGBA(20, 20, 40, 0.06),
+		ink: ui.Hex("#1C1C1F"), muted: ui.RGBA(60, 60, 70, 0.62), line: ui.RGBA(20, 20, 40, 0.07),
+		hover: ui.RGBA(20, 20, 40, 0.04), selected: ui.RGBA(76, 96, 245, 0.11),
+		accent: ui.Hex("#4C60F5"),
+		good:   ui.Hex("#1FAF5F"), warn: ui.Hex("#E89A12"), bad: ui.Hex("#E5483F"),
+	}
 }
 
-// harnessColor gives each harness a stable member color.
+// applyTheme sets MyToken's theme on c and returns the palette. dark
+// overrides the system appearance when set.
+func applyTheme(c *ui.Context, appearance string) palette {
+	base := c.Theme()
+	dark := base.Dark
+	switch appearance {
+	case "light":
+		dark = false
+	case "dark":
+		dark = true
+	}
+	pal := paletteFor(dark)
+	t := *base
+	t.Dark = dark
+	t.Accent = pal.accent
+	t.AccentHover = pal.accent.Mix(ui.RGB(255, 255, 255), 0.12)
+	t.AccentPressed = pal.accent.Mix(ui.RGB(0, 0, 0), 0.12)
+	t.AccentText = ui.RGB(255, 255, 255)
+	t.Text = pal.ink
+	t.TextMuted = pal.muted
+	t.Background = pal.bg
+	t.Radius = 8
+	t.Font = textFace
+	if dark {
+		t.Surface = ui.RGBA(255, 255, 255, 0.07)
+		t.SurfaceHover = ui.RGBA(255, 255, 255, 0.11)
+		t.SurfacePressed = ui.RGBA(255, 255, 255, 0.15)
+		t.Border = ui.RGBA(255, 255, 255, 0.10)
+	} else {
+		t.Surface = ui.RGBA(255, 255, 255, 1)
+		t.SurfaceHover = ui.Hex("#F4F4F7")
+		t.SurfacePressed = ui.Hex("#EAEAEE")
+		t.Border = ui.RGBA(20, 20, 40, 0.12)
+	}
+	c.SetTheme(&t)
+	return pal
+}
+
+// usageColor is the color of a quota or share that is frac used.
+func (p palette) usageColor(frac float64) ui.Color {
+	switch {
+	case frac >= 0.9:
+		return p.bad
+	case frac >= 0.7:
+		return p.warn
+	}
+	return p.good
+}
+
+// series is the palette of chart series that are not tools (models,
+// providers, projects), in the order they are given.
+var series = []ui.Color{
+	ui.Hex("#4C60F5"), ui.Hex("#F0B83C"), ui.Hex("#2FB8A6"), ui.Hex("#FF7A92"),
+	ui.Hex("#7B6FD0"), ui.Hex("#5AA9D6"), ui.Hex("#E36A3B"), ui.Hex("#8FB339"),
+}
+
+func seriesAt(i int) ui.Color { return series[((i%len(series))+len(series))%len(series)] }
+
+// otherColor colors the "everything else" bucket.
+var otherColor = ui.Hex("#9A9AA6")
+
+// harnessColor gives each tool a stable color close to its brand.
 func harnessColor(h model.Harness) ui.Color {
 	switch h {
 	case model.ClaudeCode:
-		return Soyo
+		return ui.Hex("#D97757")
+	case model.ClaudeDesktop:
+		return ui.Hex("#C9925E")
 	case model.Codex:
-		return Tomori
+		return ui.Hex("#10A37F")
 	case model.DSH:
-		return Taki
+		return ui.Hex("#4D6BFE")
 	case model.Pi:
-		return Rana
+		return ui.Hex("#2FB8A6")
 	case model.Gemini:
-		return ui.Hex("#3E8FB8")
+		return ui.Hex("#3E8FE8")
 	case model.OpenCode:
 		return ui.Hex("#5F54B3")
 	case model.Crush:
 		return ui.Hex("#E25C79")
+	case model.Cline:
+		return ui.Hex("#7A7A86")
 	case model.Roo:
 		return ui.Hex("#E0577A")
 	case model.Kilo:
 		return ui.Hex("#D99A2B")
-	case model.ClaudeDesktop:
-		return ui.Hex("#D97757")
 	case model.OpenClaude:
-		// The mark's own green (the "CLAUDE" half of the wordmark).
 		return ui.Hex("#4EBA65")
 	case model.Qwen:
 		return ui.Hex("#615CED")
@@ -111,14 +182,13 @@ func harnessColor(h model.Harness) ui.Color {
 	case model.StepCode:
 		return ui.Hex("#2563EB")
 	}
-	return Anon
+	return ui.Hex("#8E8E9A")
 }
 
-// Harness marks are the tools' own logos (the MIT-licensed @lobehub/icons set,
-// plus Droid's and OpenClaude's own brand assets; brand/README.md lists every
-// source). Colored logos are shown in their colors; one-color ones take the
-// harness color. Crush has no square mark, so it gets a drawn heart; Codebuff
-// publishes no vector mark, so it shows a dot in its color.
+// Tool marks are the tools' own logos (the MIT-licensed @lobehub/icons set
+// plus Droid's and OpenClaude's brand assets; brand/README.md lists every
+// source). Colored logos keep their colors; one-color ones take the tool's
+// color. Tools without a bundled mark show their initial.
 //
 //go:embed brand/*.svg
 var brandFS embed.FS
@@ -168,103 +238,54 @@ var harnessIcons = func() map[model.Harness]brandMark {
 	}
 }()
 
-// harnessMark draws h's logo at size points, or a dot when no bundled mark exists.
-func harnessMark(c *ui.Context, h model.Harness, size float32) ui.Element {
+// toolBadge is a tool's logo on a tinted rounded square.
+func toolBadge(c *ui.Context, h model.Harness, box float32) ui.Element {
 	m, ok := harnessIcons[h]
-	switch {
-	case !ok:
-		return dot(c, harnessColor(h), size*0.6)
-	case m.colored:
-		return ui.Image(c, m.svg).Size(size, size).Shrink(0)
-	}
-	return ui.Icon(c, m.svg).FontSize(size).TextColor(harnessColor(h)).Shrink(0)
-}
-
-// harnessBadge is harnessMark on a tinted rounded square, for list rows;
-// logos that are tiles already fill the square themselves.
-func harnessBadge(c *ui.Context, h model.Harness, box float32) ui.Element {
-	if m := harnessIcons[h]; m.tile {
+	if ok && m.tile {
 		return ui.Image(c, m.svg).Size(box, box).Shrink(0)
 	}
-	return ui.Box(c).Size(box, box).Radius(box * 0.3).Center().Shrink(0).Background(harnessColor(h).Alpha(0.16)).Children(func() {
-		harnessMark(c, h, box*0.56)
+	col := harnessColor(h)
+	return ui.Box(c).Size(box, box).Radius(box * 0.28).Center().Shrink(0).Background(col.Alpha(0.14)).Children(func() {
+		switch {
+		case !ok:
+			name := []rune(h.DisplayName())
+			if len(name) == 0 {
+				name = []rune("?")
+			}
+			ui.Text(c, string(name[0])).FontSize(box * 0.5).Bold().TextColor(col)
+		case m.colored:
+			ui.Image(c, m.svg).Size(box*0.58, box*0.58).Shrink(0)
+		default:
+			ui.Icon(c, m.svg).FontSize(box * 0.58).TextColor(col).Shrink(0)
+		}
 	})
 }
 
-// display is the face for big figures and page titles: the system's display
-// cut (SF Pro Display on macOS), falling back to the interface face.
-const display = "SF Pro Display, system-ui"
-
-// palette is one appearance's colors beyond the ui.Theme.
-type palette struct {
-	dark bool
-	// base is painted under the stage lights; ink and muted color text;
-	// faint colors hairlines and chart grids; well fills recessed tracks.
-	base, ink, muted, faint, well ui.Color
-	// pane tints the glass so that text on it stays legible; edge is the
-	// glass's lit rim and lift the shadow it casts.
-	pane, edge, lift ui.Color
-	hover            ui.Color
-	// raised is the solid face of a selected pill or row.
-	raised ui.Color
+// icon parses a 24×24 stroked icon drawn in currentColor.
+func icon(shapes string) *ui.SVG {
+	return ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` + shapes + `</svg>`))
 }
 
-func paletteFor(dark bool) palette {
-	if dark {
-		return palette{
-			dark:   true,
-			base:   ui.Hex("#0F0F14"),
-			ink:    ui.Hex("#F4F2F8"),
-			muted:  ui.RGBA(240, 236, 250, 0.54),
-			faint:  ui.RGBA(255, 255, 255, 0.075),
-			well:   ui.RGBA(255, 255, 255, 0.055),
-			pane:   ui.RGBA(24, 22, 33, 0.52),
-			edge:   ui.RGBA(255, 255, 255, 0.085),
-			lift:   ui.RGBA(0, 0, 0, 0.38),
-			hover:  ui.RGBA(255, 255, 255, 0.055),
-			raised: ui.RGBA(255, 255, 255, 0.10),
-		}
-	}
-	return palette{
-		base:   ui.Hex("#F3F4F7"),
-		ink:    ui.Hex("#17161C"),
-		muted:  ui.RGBA(23, 22, 28, 0.55),
-		faint:  ui.RGBA(23, 22, 28, 0.075),
-		well:   ui.RGBA(23, 22, 28, 0.05),
-		pane:   ui.RGBA(255, 255, 255, 0.56),
-		edge:   ui.RGBA(255, 255, 255, 0.80),
-		lift:   ui.RGBA(30, 35, 60, 0.07),
-		hover:  ui.RGBA(23, 22, 28, 0.04),
-		raised: ui.RGBA(255, 255, 255, 0.92),
-	}
-}
-
-// applyTheme sets MyToken's theme on c and returns its palette.
-func applyTheme(c *ui.Context) palette {
-	base := c.Theme()
-	pal := paletteFor(base.Dark)
-	t := *base
-	accent := Tomori.Mix(ui.RGB(0, 0, 0), 0.08)
-	t.Accent = accent
-	t.AccentHover = accent.Mix(ui.RGB(255, 255, 255), 0.12)
-	t.AccentPressed = accent.Mix(ui.RGB(0, 0, 0), 0.12)
-	t.AccentText = ui.RGB(255, 255, 255)
-	t.Text = pal.ink
-	t.TextMuted = pal.muted
-	t.Background = pal.base
-	t.Radius = 10
-	t.Font = "SF Pro Text, system-ui"
-	if pal.dark {
-		t.Surface = ui.RGBA(255, 255, 255, 0.07)
-		t.SurfaceHover = ui.RGBA(255, 255, 255, 0.11)
-		t.SurfacePressed = ui.RGBA(255, 255, 255, 0.15)
-		t.Border = ui.RGBA(255, 255, 255, 0.10)
-	} else {
-		t.Surface = ui.RGBA(255, 255, 255, 0.72)
-		t.SurfaceHover = ui.RGBA(255, 255, 255, 0.92)
-		t.SurfacePressed = ui.RGBA(236, 232, 226, 1)
-		t.Border = ui.RGBA(23, 22, 28, 0.10)
-	}
-	c.SetTheme(&t)
-	return pal
-}
+var (
+	icOverview = icon(`<rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/>`)
+	icSessions = icon(`<path d="M4 6h16M4 12h16M4 18h10"/>`)
+	icRanking  = icon(`<path d="M8 21V11M16 21V7M12 21V3M4 21h16"/>`)
+	icProjects = icon(`<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`)
+	icSettings = icon(`<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>`)
+	icGeneral  = icon(`<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>`)
+	icSources  = icon(`<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>`)
+	icPrice    = icon(`<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>`)
+	icDatabase = icon(`<path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 12A9 9 0 0 1 18.5 5.8L21 8"/><path d="M3 21v-5h5M21 3v5h-5"/>`)
+	icSearch   = icon(`<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>`)
+	icFolder   = icon(`<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`)
+	icClock    = icon(`<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>`)
+	icWindow   = icon(`<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18"/>`)
+	icPower    = icon(`<path d="M12 3v9"/><path d="M6.4 6.4a8 8 0 1 0 11.2 0"/>`)
+	icRefresh  = icon(`<path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 12A9 9 0 0 1 18.5 5.8L21 8"/><path d="M3 21v-5h5M21 3v5h-5"/>`)
+	icChevron  = icon(`<path d="m9 6 6 6-6 6"/>`)
+	icBack     = icon(`<path d="m15 6-6 6 6 6"/>`)
+	icBolt     = icon(`<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>`)
+	icCheck    = icon(`<path d="m5 12 5 5 9-10"/>`)
+	icAlert    = icon(`<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>`)
+	icTrash    = icon(`<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>`)
+)
