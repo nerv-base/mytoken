@@ -1,6 +1,6 @@
 // Internal registry tests for NewRooted. These live in package harness because
 // they must register deliberately broken parsers and then remove them again:
-// the public suite must only ever see the real 28 harnesses.
+// the public suite must only ever see the real 32 harnesses.
 package harness
 
 import (

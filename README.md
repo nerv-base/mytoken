@@ -28,9 +28,10 @@ makes two kinds of request — the price table download, and a daily update chec
 (Settings turns it off). Relay-site reconciliation is opt-in per site, and a site is only ever
 contacted with the key you already gave that site.
 
-- **Twenty-eight harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
+- **Thirty-two harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
   Crush, Cline, Roo Code, Kilo Code, Claude Desktop, WorkBuddy, CodeBuddy, Hermes, Qwen Code, Kimi,
-  OpenClaude, Grok, OpenClaw, Droid, Goose, Forge, Amp, Kiro, Zed, Antigravity, Codebuff and Mux.
+  OpenClaude, Grok, OpenClaw, Droid, Goose, Forge, Amp, Kiro, Zed, Antigravity, Codebuff, Mux,
+  ZCode, MiniMax Code, MiMo Code and Step Code.
 - **Session × provider × model** — token classes kept apart (input, output, cache read, cache write,
   reasoning), with cache-hit rate, per-project and per-day breakdowns, and sub-agent trees.
 - **Attribution you can audit** — every provider is labelled with how it was determined: `log`,
@@ -69,7 +70,7 @@ first user message).
 | Claude Code | `claude-code` | `~/.claude/projects/**/*.jsonl` (`$CLAUDE_CONFIG_DIR/projects`), plus `~/.config/claude/projects` when it exists |
 | Codex CLI | `codex` | `$CODEX_HOME/sessions` and `$CODEX_HOME/archived_sessions` (`~/.codex` by default) |
 | DSH — DeepSeek Harness | `dsh` | `$DSH_HOME/sessions` (`~/.dsh/sessions` by default) |
-| pi | `pi` | `$PI_HOME/agent/sessions` (`~/.pi/agent/sessions` by default) |
+| pi / OMP / OMO-senpi | `pi` | `$PI_HOME/sessions` when set; otherwise `~/.pi/agent/sessions` plus detected OMP and OMO/senpi agent roots |
 | Gemini CLI | `gemini` | `$GEMINI_CLI_HOME/tmp` (`~/.gemini/tmp` by default) |
 | opencode | `opencode` | `$OPENCODE_DATA_HOME`, else `$XDG_DATA_HOME/opencode`, else `~/.local/share/opencode` |
 | Crush | `crush` | `$CRUSH_GLOBAL_DATA`, else `$XDG_DATA_HOME/crush`, else `~/.local/share/crush` |
@@ -81,7 +82,7 @@ first user message).
 | CodeBuddy | `codebuddy` | `$CODEBUDDY_HOME/projects` (`~/.codebuddy/projects` by default) |
 | Hermes | `hermes` | `$HERMES_HOME` (`~/.hermes` by default), SQLite |
 | Qwen Code | `qwen` | `$QWEN_DATA_DIR/projects` (`~/.qwen/projects` by default) |
-| Kimi | `kimi` | `$KIMI_SHARE_DIR/sessions` (`~/.kimi/sessions` by default) |
+| Kimi / Kimi Code | `kimi` | Legacy `$KIMI_SHARE_DIR/sessions` (`~/.kimi/sessions`) plus `$KIMI_CODE_HOME/sessions` (`~/.kimi-code/sessions`) |
 | OpenClaude | `openclaude` | `$CODEBURN_OPENCLAUDE_DIR/projects`, else `~/.openclaude/projects` |
 | Grok | `grok` | `$GROK_HOME` (`~/.grok` by default) |
 | OpenClaw | `openclaw` | `~/.openclaw/agents`, plus the `~/.moltbot`, `~/.moldbot` and `~/.clawdbot` spellings |
@@ -94,9 +95,18 @@ first user message).
 | Antigravity | `antigravity` | `$GEMINI_CLI_HOME/antigravity{,-cli,-ide}/conversations` and the matching `implicit` dirs (`~/.gemini` by default), only `*.db` |
 | Codebuff | `codebuff` | `$CODEBUFF_DATA_DIR`, else `~/.config/manicode`, `~/.config/manicode-dev` and `~/.config/manicode-staging` |
 | Mux | `mux` | `$CODEBURN_MUX_DIR` or `$MUX_ROOT`, else `~/.mux`, `~/.mux-dev` and `~/.cmux` |
+| ZCode | `zcode` | `$MYTOKEN_ZCODE_DIRS`, else `~/.zcode/cli/db/db.sqlite`, query-only SQLite |
+| MiniMax Code | `minimax-code` | `$MINIMAX_DATA_DIR` / `$MAVIS_DATA_DIR`, else `~/.minimax/v2/sqlite/runtime-state.sqlite` (legacy `~/.mavis`) |
+| MiMo Code | `mimo-code` | `$MIMOCODE_HOME/data`; otherwise `$XDG_DATA_HOME/mimocode` or `~/.local/share/mimocode` on every OS (matching upstream `xdg-basedir`), query-only SQLite |
+| Step Code | `step-code` | `$STEP_CODING_AGENT_SESSION_DIR`, `$STEP_CODING_AGENT_DIR/sessions`, else `~/.stepcode/agent/sessions` |
 
-Amp, Kiro, Zed, Antigravity, Codebuff and Mux are wired and covered by the conformance suite, but
-have not been verified against real-world logs yet.
+ZCode, MiniMax Code, MiMo Code and Step Code are protocol-validated against upstream source and
+synthetic conformance fixtures; Kimi Code and the OMP/OMO compatibility paths have the same evidence
+level. No anonymized real-install fixture was available for this batch, so they remain explicitly
+unverified against real-world logs. See [`docs/verification/v04x-harness-matrix.md`](docs/verification/v04x-harness-matrix.md).
+
+Amp, Kiro, Zed, Antigravity, Codebuff, Mux, Hermes and OpenClaw likewise have conformance coverage but
+no committed anonymized real-world fixture yet.
 
 For the VS Code family extensions, `…/globalStorage` is resolved per platform and per editor —
 editors: VS Code, VS Code Insiders, Cursor, Windsurf, VSCodium, Trae; platforms:
@@ -113,7 +123,9 @@ archived logs:
 | `CLAUDE_CONFIG_DIR` | Claude Code config dir instead of `~/.claude` |
 | `CODEX_HOME` | Codex data dir instead of `~/.codex` |
 | `DSH_HOME` | DSH data dir instead of `~/.dsh` |
-| `PI_HOME` | pi data dir instead of `~/.pi` |
+| `PI_HOME`, `MYTOKEN_PI_DIRS` | pi data dir, or explicit pi-compatible session roots (path list) |
+| `PI_CODING_AGENT_DIR`, `OMP_PROFILE`, `PI_PROFILE`, `PI_CONFIG_DIR` | OMP agent/profile roots reused by the `pi` reader |
+| `OMO_CODING_AGENT_DIR`, `SENPI_CODING_AGENT_DIR` | OMO/senpi agent roots reused by the `pi` reader |
 | `GEMINI_CLI_HOME` | Gemini CLI data dir instead of `~/.gemini` |
 | `MYTOKEN_GEMINI_DIRS` | Explicit Gemini CLI log dirs (path list) |
 | `OPENCODE_DATA_HOME` | opencode data dir |
@@ -126,7 +138,7 @@ archived logs:
 | `WORKBUDDY_HOME`, `CODEBUDDY_HOME` | WorkBuddy / CodeBuddy home dir instead of `~/.workbuddy` / `~/.codebuddy` |
 | `HERMES_HOME` | Hermes home dir instead of `~/.hermes` |
 | `QWEN_DATA_DIR`, `MYTOKEN_QWEN_DIRS` | Qwen Code data dir, or explicit dirs (path list) |
-| `KIMI_SHARE_DIR`, `MYTOKEN_KIMI_DIRS` | Kimi share dir, or explicit dirs (path list) |
+| `KIMI_SHARE_DIR`, `KIMI_CODE_HOME`, `MYTOKEN_KIMI_DIRS` | Kimi / Kimi Code data dirs, or explicit dirs (path list) |
 | `CODEBURN_OPENCLAUDE_DIR`, `MYTOKEN_OPENCLAUDE_DIRS` | OpenClaude data dir, or explicit dirs (path list) |
 | `GROK_HOME`, `MYTOKEN_GROK_DIRS` | Grok home dir, or explicit dirs (path list) |
 | `MYTOKEN_OPENCLAW_DIRS` | Explicit OpenClaw agent dirs (path list) |
@@ -139,6 +151,10 @@ archived logs:
 | `MYTOKEN_ANTIGRAVITY_DIRS` | Explicit Antigravity conversation dirs (path list) |
 | `CODEBUFF_DATA_DIR`, `MYTOKEN_CODEBUFF_DIRS` | Codebuff data dir, or explicit dirs (path list) |
 | `CODEBURN_MUX_DIR`, `MUX_ROOT`, `MYTOKEN_MUX_DIRS` | Mux data dir, or explicit dirs (path list) |
+| `MYTOKEN_ZCODE_DIRS` | Explicit ZCode database files or containing dirs (path list) |
+| `MINIMAX_DATA_DIR`, `MAVIS_DATA_DIR`, `MYTOKEN_MINIMAX_DIRS` | MiniMax Code data root, legacy data root, or explicit roots (path list) |
+| `MIMOCODE_HOME`, `MIMOCODE_DB`, `MYTOKEN_MIMO_CODE_DIRS` | MiMo Code data root, exact database, or explicit roots (path list) |
+| `STEP_CODING_AGENT_SESSION_DIR`, `STEP_CODING_AGENT_DIR`, `MYTOKEN_STEP_CODE_DIRS` | Step Code session root, agent root, or explicit roots (path list) |
 
 ## Provider attribution
 

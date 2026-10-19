@@ -100,37 +100,32 @@
 package pi
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
-	"strconv"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/zzstar101/mytoken/internal/harness"
+	"github.com/zzstar101/mytoken/internal/harness/sessionlog"
 	"github.com/zzstar101/mytoken/internal/model"
 )
 
 const (
-	// fingerprintBytes is how much of a file is hashed into Cursor.Fingerprint.
-	fingerprintBytes = 4096
-	// readBuffer is the line reader's buffer size (it still grows per line).
-	readBuffer = 64 << 10
-	// headerLimit caps how much of the first line Discover inspects.
-	headerLimit = 64 << 10
-
 	kindJSONL = "jsonl"
+
+	// The byte-offset cursor model, the first-line fence and the JSON scalar
+	// encodings live in internal/harness/sessionlog, because Step Code — a Pi
+	// fork with the same log layout — needs all three and must not copy this
+	// parser. What stays here is Pi's own record schema.
+	fingerprintBytes = sessionlog.FingerprintBytes
+	readBuffer       = sessionlog.ReadBuffer
+	headerLimit      = sessionlog.FenceLimit
 )
 
 // Parser reads Pi session logs. It holds no mutable state and is safe for
@@ -143,8 +138,10 @@ type Parser struct {
 	prov func() ([]harness.Root, error)
 }
 
-// New returns the parser for the default root: $PI_HOME/sessions, falling back
-// to ~/.pi/agent/sessions.
+// New returns the parser for the default roots: $PI_HOME/sessions when PI_HOME
+// is set, else ~/.pi/agent/sessions together with the sessions directory of an
+// Oh My Pi install (see ompAgentDir) and of an OMO/senpi install (see
+// omoSenpiAgentDir), each when one is configured.
 func New() *Parser {
 	p := NewWithRoots()
 	p.prov = rootProvenance
@@ -170,13 +167,267 @@ func NewWithRoots(roots ...string) *Parser {
 	return &Parser{roots: cp}
 }
 
-// rootProvenance reports Pi's default root and where it came from. PI_HOME is
-// an explicit harness-specific base; otherwise the base is the platform default.
+// rootProvenance reports Pi's default roots and where they came from. Besides
+// Pi's own root it reports the sessions directory of an Oh My Pi (OMP) install
+// and of an OMO/senpi (Oh My OpenAgent) install, because both are Pi forks that
+// write the very same session logs and have no parser of their own.
 func rootProvenance() ([]harness.Root, error) {
+	if v, ok := harness.Getenv(piDirsEnv); ok {
+		dirs, err := harness.SplitEnvList(piDirsEnv, v)
+		if err != nil {
+			return nil, err
+		}
+		return harness.EnvRoots(piDirsEnv, dirs...), nil
+	}
+	// PI_HOME is this tool's own explicit base for a Pi install. Like the other
+	// parsers' *_HOME overrides it replaces the whole default set, so an explicit
+	// Pi base does not drag an unrelated OMP or OMO install in.
 	if home, ok := harness.Getenv("PI_HOME"); ok {
 		return harness.EnvRoots("PI_HOME", filepath.Join(home, "sessions")), nil
 	}
-	return harness.BuiltinRoots(filepath.Join(harness.Home(), ".pi", "agent", "sessions")), nil
+
+	home := harness.Home()
+	roots := harness.BuiltinRoots(filepath.Join(home, ".pi", "agent", "sessions"))
+	if agent, env := ompAgentDir(home); agent != "" {
+		roots = appendAgentSessions(roots, agent, env)
+	}
+	if agent, env := omoSenpiAgentDir(home); agent != "" {
+		roots = appendAgentSessions(roots, agent, env)
+	}
+	return dedupeRoots(roots), nil
+}
+
+// appendAgentSessions appends the sessions directory of one agent directory,
+// tagged env-origin when an environment variable determined the agent directory
+// and built-in otherwise.
+func appendAgentSessions(roots []harness.Root, agent, env string) []harness.Root {
+	dir := filepath.Join(agent, "sessions")
+	if env != "" {
+		return append(roots, harness.EnvRoots(env, dir)...)
+	}
+	return append(roots, harness.BuiltinRoots(dir)...)
+}
+
+// piDirsEnv is the MyToken-side override that replaces the whole root set.
+const piDirsEnv = "MYTOKEN_PI_DIRS"
+
+// OMP agent-directory variables. OMP's resolver (packages/utils/src/dirs.ts)
+// reads exactly these: PI_CONFIG_DIR names the config directory (".omp"), the
+// two profile variables select a named profile, and PI_CODING_AGENT_DIR
+// overrides the agent directory of the default profile.
+const (
+	ompConfigDirEnv = "PI_CONFIG_DIR"
+	ompAgentDirEnv  = "PI_CODING_AGENT_DIR"
+
+	ompConfigDirName = ".omp"
+	ompDataDirName   = "omp"
+	ompProfilesDir   = "profiles"
+	ompAgentDirName  = "agent"
+)
+
+// OMO/senpi agent-home variables and layouts. Oh My OpenAgent (OMO) brands the
+// senpi engine, and both share one resolver
+// (packages/omo-senpi/src/components/agent-home/resolve-agent-home.ts): the
+// three agent-directory variables in the order below name the agent home
+// directly, and only when none is set does the resolver fall back to detection.
+const (
+	omoAgentDirEnv   = "OMO_CODING_AGENT_DIR"
+	senpiAgentDirEnv = "SENPI_CODING_AGENT_DIR"
+
+	// agentHomeSentinel is the marker proving a directory really holds engine
+	// state rather than sharing its name.
+	agentHomeSentinel = "settings.json"
+	omoDirName        = ".omo"
+	senpiDirName      = ".senpi"
+)
+
+// omoSenpiAgentDir reports the agent directory of the run-time OMO/senpi install
+// and the environment variable that determined it ("" for a detected or
+// fallback home, and "" for the directory itself when OMO should not be watched
+// at all).
+//
+// Resolution follows the official resolver exactly:
+//
+//	env        $OMO_CODING_AGENT_DIR, then $SENPI_CODING_AGENT_DIR, then
+//	           $PI_CODING_AGENT_DIR — trimmed, and resolved against the working
+//	           directory when relative
+//	canonical  ~/.omo/agent   when ~/.omo/agent/settings.json exists
+//	legacy     ~/.omo         when ~/.omo/settings.json exists (pre-unification
+//	                          releases wrote the state flat)
+//	fallback   ~/.senpi/agent (standalone engine)
+//
+// A blank value counts as unset, exactly like harness.Getenv, so a
+// whitespace-only variable never collapses the home onto the working directory.
+// Only the sentinel turns ~/.omo into an engine home: a directory that merely
+// carries the name is not state. Detection is existence-based, not
+// directory-based, so a home whose sessions directory does not exist yet is
+// still reported — the engine creates it lazily.
+func omoSenpiAgentDir(home string) (dir, env string) {
+	// The environment always wins over detection. PI_CODING_AGENT_DIR is shared
+	// with the OMP tier, so an OMO install configured through it resolves to the
+	// same home and dedupes onto the OMP root instead of adding a second one.
+	for _, name := range []string{omoAgentDirEnv, senpiAgentDirEnv, ompAgentDirEnv} {
+		if v, ok := harness.Getenv(name); ok {
+			return resolveDir(v), name
+		}
+	}
+	branded := filepath.Join(home, omoDirName)
+	canonical := filepath.Join(branded, ompAgentDirName)
+	if pathExists(filepath.Join(canonical, agentHomeSentinel)) {
+		return canonical, ""
+	}
+	if pathExists(filepath.Join(branded, agentHomeSentinel)) {
+		return branded, ""
+	}
+	return filepath.Join(home, senpiDirName, ompAgentDirName), ""
+}
+
+// resolveDir mirrors node:path.resolve for an environment-supplied directory: a
+// relative value is anchored at the working directory and the result is
+// cleaned. A value filepath.Abs cannot resolve is returned cleaned rather than
+// dropped, so a usable user request is never lost.
+func resolveDir(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return filepath.Clean(path)
+}
+
+// pathExists reports whether path exists at all (file or directory), matching
+// the official resolver's existsSync gate on the settings.json sentinel.
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// ompAgentDir reports the agent directory of the run-time OMP install and the
+// environment variable that determined it ("" for a built-in default, and ""
+// for the directory itself when OMP should not be watched at all).
+//
+// Resolution follows OMP's own order:
+//
+//	profile        ~/.omp/profiles/<name>/agent        (OMP_PROFILE, then
+//	                                                    PI_PROFILE)
+//	agent override $PI_CODING_AGENT_DIR                (default profile only)
+//	XDG data       $XDG_DATA_HOME/omp                  (linux/darwin, default
+//	                                                    profile, only when that
+//	                                                    directory exists; the
+//	                                                    agent/ level is
+//	                                                    flattened away)
+//	built-in       ~/.omp/agent
+//
+// A blank or unparsable profile name counts as the default profile rather than
+// an error: an invalid environment variable must not stop a scan of Pi's own
+// logs. Because the profile name becomes a path segment it is validated first
+// (see validProfileName), so it can never escape the profiles directory.
+func ompAgentDir(home string) (dir, env string) {
+	configDir := ompConfigDirName
+	// A blank value counts as unset, exactly like harness.Getenv: an empty
+	// PI_CONFIG_DIR names no directory and must not collapse the config root
+	// onto HOME.
+	if v, ok := harness.Getenv(ompConfigDirEnv); ok {
+		configDir = v
+	}
+	configRoot := filepath.Join(home, configDir)
+
+	if profile := activeProfile(); profile != "" {
+		return filepath.Join(configRoot, ompProfilesDir, profile, ompAgentDirName), profileEnv()
+	}
+	// PI_CODING_AGENT_DIR outranks the XDG redirect: OMP drops the override once
+	// a profile is active and applies it before the XDG choice
+	// (agentDirOverride ? agentDirOverride : defaultAgent), so a custom agent
+	// directory is never silently replaced by the migrated XDG location.
+	if agent, ok := harness.Getenv(ompAgentDirEnv); ok {
+		return agent, ompAgentDirEnv
+	}
+	if xdgSupported() {
+		if data, ok := harness.Getenv("XDG_DATA_HOME"); ok && isDir(filepath.Join(data, ompDataDirName)) {
+			// XDG flattens the agent/ prefix: ~/.omp/agent/sessions becomes
+			// $XDG_DATA_HOME/omp/sessions. A named profile never reaches this
+			// branch, matching OMP, which keys the XDG choice on the
+			// profile-specific path only.
+			return filepath.Join(data, ompDataDirName), ""
+		}
+	}
+	return filepath.Join(configRoot, ompAgentDirName), ""
+}
+
+// xdgSupported reports whether OMP honours the XDG environment at all: XDG is a
+// Linux convention that OMP also applies on darwin, and on no other platform.
+func xdgSupported() bool {
+	return runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+}
+
+// activeProfile returns the valid named profile from the environment, or "" for
+// the default profile. OMP_PROFILE is canonical and takes precedence over the
+// legacy PI_PROFILE; a blank one falls through to PI_PROFILE because the
+// resolver treats them as a single OMP_PROFILE || PI_PROFILE expression. A
+// blank, "default" or invalid name selects the default profile.
+func activeProfile() string {
+	// Truthiness, not set-ness: resolveProfileEnv reads OMP_PROFILE || PI_PROFILE,
+	// so a blank OMP_PROFILE must fall through to PI_PROFILE.
+	if v, ok := harness.Getenv("OMP_PROFILE"); ok {
+		return profileName(v)
+	}
+	if v, ok := harness.Getenv("PI_PROFILE"); ok {
+		return profileName(v)
+	}
+	return ""
+}
+
+// profileName normalizes a raw profile variable to a profile directory name: an
+// empty or "default" value selects the default profile (""), and an invalid name
+// is ignored rather than turned into a path segment.
+func profileName(raw string) string {
+	if raw == "default" || !validProfileName(raw) {
+		return ""
+	}
+	return raw
+}
+
+// profileEnv names the variable that selected the active profile.
+func profileEnv() string {
+	if _, ok := harness.Getenv("OMP_PROFILE"); ok {
+		return "OMP_PROFILE"
+	}
+	return "PI_PROFILE"
+}
+
+// profileNameRE mirrors OMP's PROFILE_NAME_RE.
+var profileNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+// windowsReservedRE mirrors OMP's reserved Windows device names, which cannot be
+// a profile directory on Windows.
+var windowsReservedRE = regexp.MustCompile(`(?i)^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..*)?$`)
+
+// validProfileName reports whether name is a profile OMP itself would accept.
+// The rules are OMP's: a bounded character set, no "." or "..", no trailing dot,
+// and no Windows device name.
+func validProfileName(name string) bool {
+	return name != "." && name != ".." && !strings.HasSuffix(name, ".") &&
+		profileNameRE.MatchString(name) && !windowsReservedRE.MatchString(name)
+}
+
+// isDir reports whether path is an existing directory. Any stat failure counts
+// as absent, so an unreadable or dangling path never redirects a root.
+func isDir(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
+}
+
+// dedupeRoots drops later roots that name a path an earlier root already
+// reported, keeping the first occurrence's provenance and the input order.
+func dedupeRoots(roots []harness.Root) []harness.Root {
+	seen := make(map[string]bool, len(roots))
+	out := roots[:0]
+	for _, r := range roots {
+		if r.Path == "" || seen[r.Path] {
+			continue
+		}
+		seen[r.Path] = true
+		out = append(out, r)
+	}
+	return out
 }
 
 // defaultRoots returns the paths of rootProvenance.
@@ -220,54 +471,19 @@ func init() { harness.Register(New()) }
 // Discover walks every root and returns one Source per session log, sorted by
 // path so scans are deterministic.
 func (p *Parser) Discover(ctx context.Context) ([]harness.Source, error) {
-	var out []harness.Source
-	for _, root := range p.roots {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		werr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				// Unreadable entries (permissions, races with deletion) are
-				// skipped; a missing root is simply not discovered.
-				return nil
-			}
-			if d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl") {
-				return nil
-			}
-			kind, ok := piLogKind(path)
-			if !ok {
-				return nil
-			}
-			out = append(out, harness.Source{Path: path, Kind: kind})
-			return nil
-		})
-		if werr != nil && !errors.Is(werr, fs.SkipAll) {
-			return nil, werr
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out, nil
+	return sessionlog.Walk(ctx, p.roots, piLogKind)
 }
 
 // piLogKind classifies a JSONL file by its first line: a Pi session log, an
 // async-subagent transcript, or something else entirely. This is what keeps
 // artifact mirrors and unrelated JSONL files out of the scan.
 func piLogKind(path string) (string, bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", false
-	}
-	defer f.Close()
-	br := bufio.NewReaderSize(f, headerLimit)
-	line, err := br.ReadSlice('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		if errors.Is(err, bufio.ErrBufferFull) {
-			return "", false // a header line is tiny
-		}
-		return "", false
+	line, ok := sessionlog.FirstLine(path)
+	if !ok {
+		return "", false // a header line is tiny; an unreadable file is not a log
 	}
 	var r piRecord
-	if json.Unmarshal(bytes.TrimSpace(line), &r) != nil {
+	if json.Unmarshal(line, &r) != nil {
 		return "", false
 	}
 	switch {
@@ -289,19 +505,16 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 	if err != nil {
 		return harness.Batch{}, err
 	}
-	fp, err := fingerprint(src.Path)
+	fp, err := sessionlog.Fingerprint(src.Path)
 	if err != nil {
 		return harness.Batch{}, err
 	}
-	if unchanged(cur, st, fp) {
+	if sessionlog.Unchanged(cur, st, fp) {
 		return harness.Batch{Next: cur}, nil
 	}
-	off := cur.Offset
 	// A shrunken file, an offset past EOF or a different fingerprint (the file
 	// was rewritten/truncated) means the log no longer matches the cursor.
-	if off < 0 || off > st.Size() || (cur.Fingerprint != "" && cur.Fingerprint != fp) {
-		off = 0
-	}
+	off := sessionlog.Rewind(cur, st.Size(), fp)
 	f, err := os.Open(src.Path)
 	if err != nil {
 		return harness.Batch{}, err
@@ -312,14 +525,14 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 			return harness.Batch{}, err
 		}
 	}
-	s := newSession(p.rootFor(src.Path), src.Path)
+	s := newSession(sessionlog.RootFor(p.roots, src.Path), src.Path)
 	if off > 0 {
 		_ = json.Unmarshal([]byte(cur.Extra), &s.boundary)
 	}
 	if strings.Contains(filepath.Base(src.Path), "_transcript.jsonl") {
 		s.provider = asyncMetaProvider(src.Path)
 	}
-	n, rerr := readCompleteLines(f, s.consume)
+	n, rerr := sessionlog.ReadLines(f, s.consume)
 	b := s.batch()
 	boundaryRaw, _ := json.Marshal(s.boundary)
 	b.Next = harness.Cursor{
@@ -334,66 +547,6 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 		return b, nil
 	}
 	return b, nil
-}
-
-// rootFor returns the configured root that contains path, or "" when none does.
-func (p *Parser) rootFor(path string) string {
-	best := ""
-	for _, r := range p.roots {
-		if r == "" {
-			continue
-		}
-		rel, err := filepath.Rel(r, path)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			continue
-		}
-		if len(r) > len(best) {
-			best = r
-		}
-	}
-	return best
-}
-
-func unchanged(cur harness.Cursor, st os.FileInfo, fp string) bool {
-	return cur.Fingerprint != "" && cur.Fingerprint == fp &&
-		cur.Size == st.Size() && cur.ModTime.Equal(st.ModTime())
-}
-
-// fingerprint returns the sha1 of the first fingerprintBytes bytes.
-func fingerprint(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha1.New()
-	if _, err := io.CopyN(h, f, fingerprintBytes); err != nil && !errors.Is(err, io.EOF) {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// readCompleteLines feeds every '\n'-terminated line of r to fn and returns the
-// number of bytes consumed, which always ends on a line boundary. A trailing
-// chunk without '\n' is never passed to fn and never counted, so a partially
-// written record is left for the next scan.
-func readCompleteLines(r io.Reader, fn func(line []byte) error) (int64, error) {
-	br := bufio.NewReaderSize(r, readBuffer)
-	var n int64
-	for {
-		line, err := br.ReadBytes('\n')
-		if err == nil {
-			if e := fn(line[:len(line)-1]); e != nil {
-				return n, e
-			}
-			n += int64(len(line))
-			continue
-		}
-		if errors.Is(err, io.EOF) {
-			return n, nil
-		}
-		return n, err
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -458,15 +611,12 @@ func (s *session) consume(line []byte) error {
 		// rest. (A compaction record's own usage decodes normally since
 		// piAsyncUsage accepts both cost shapes; this is a safety net for a shape
 		// we have not seen.)
-		var env struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal(line, &env) == nil && env.Type == "compaction" {
+		if sessionlog.EnvelopeType(line) == "compaction" {
 			s.boundary.Pending = model.BoundaryCompact
 		}
 		return nil // partial or foreign record: skip
 	}
-	if t := parseTS(r.Timestamp); !t.IsZero() && t.After(s.updatedAt) {
+	if t := sessionlog.ParseStamp(r.Timestamp); !t.IsZero() && t.After(s.updatedAt) {
 		s.updatedAt = t
 	}
 	// Async subagent runs use a record shape of their own: no "type", a
@@ -491,7 +641,7 @@ func (s *session) consume(line []byte) error {
 				s.parentID = id
 			}
 		}
-		if t := parseTS(r.Timestamp); !t.IsZero() && (s.startedAt.IsZero() || t.Before(s.startedAt)) {
+		if t := sessionlog.ParseStamp(r.Timestamp); !t.IsZero() && (s.startedAt.IsZero() || t.Before(s.startedAt)) {
 			s.startedAt = t
 		}
 
@@ -500,7 +650,7 @@ func (s *session) consume(line []byte) error {
 		if m == nil {
 			break
 		}
-		if mt := msTime(m.Timestamp); !mt.IsZero() && mt.After(s.updatedAt) {
+		if mt := sessionlog.Millis(m.Timestamp); !mt.IsZero() && mt.After(s.updatedAt) {
 			s.updatedAt = mt
 		}
 		switch {
@@ -508,9 +658,9 @@ func (s *session) consume(line []byte) error {
 			if m.Usage.IsZero() {
 				break
 			}
-			ts := msTime(m.Timestamp)
+			ts := sessionlog.Millis(m.Timestamp)
 			if ts.IsZero() {
-				ts = parseTS(r.Timestamp)
+				ts = sessionlog.ParseStamp(r.Timestamp)
 			}
 			if ts.IsZero() {
 				ts = s.startedAt
@@ -527,17 +677,17 @@ func (s *session) consume(line []byte) error {
 			}
 			s.events = append(s.events, model.UsageEvent{
 				Harness:     model.Pi,
-				DedupKey:    firstNonEmpty(m.ResponseID, r.ID, s.id+"#"+string(r.Timestamp)),
+				DedupKey:    sessionlog.FirstNonEmpty(m.ResponseID, r.ID, s.id+"#"+string(r.Timestamp)),
 				RequestID:   m.ResponseID,
-				Boundary:    s.boundary.Apply(firstNonEmpty(m.ResponseID, r.ID, s.id+"#"+string(r.Timestamp))),
+				Boundary:    s.boundary.Apply(sessionlog.FirstNonEmpty(m.ResponseID, r.ID, s.id+"#"+string(r.Timestamp))),
 				SessionID:   s.id,
 				ParentID:    s.parentID,
 				ProjectPath: s.project,
 				Timestamp:   ts,
 				Model:       mdl,
 				Provider:    m.Provider,
-				Tokens:      m.Usage.tokens(),
-				CostUSD:     m.Usage.costUSD(),
+				Tokens:      m.Usage.Tokens(sessionlog.ReasoningSeparate),
+				CostUSD:     m.Usage.CostUSD(),
 			})
 		case strings.EqualFold(m.Role, "user") && s.userTitle == "":
 			if txt := firstText(m.Content); isTitleCandidate(txt) {
@@ -562,21 +712,21 @@ func (s *session) consumeCompaction(r piRecord) {
 	if u == nil || u.IsZero() {
 		return
 	}
-	ts := parseTS(r.Timestamp)
+	ts := sessionlog.ParseStamp(r.Timestamp)
 	if ts.IsZero() {
 		ts = s.updatedAt
 	}
 	s.events = append(s.events, model.UsageEvent{
 		Harness:     model.Pi,
-		DedupKey:    firstNonEmpty(r.ID, s.id+"#"+string(r.Timestamp)),
+		DedupKey:    sessionlog.FirstNonEmpty(r.ID, s.id+"#"+string(r.Timestamp)),
 		SessionID:   s.id,
 		ParentID:    s.parentID,
 		ProjectPath: s.project,
 		Timestamp:   ts,
 		Model:       s.lastModel,
 		Provider:    s.lastProvider,
-		Tokens:      u.tokens(),
-		CostUSD:     u.costUSD(),
+		Tokens:      u.Tokens(sessionlog.ReasoningSeparate),
+		CostUSD:     u.CostUSD(),
 	})
 	if s.lastModel == "" || s.lastProvider == "" {
 		s.modelInherit = append(s.modelInherit, len(s.events)-1)
@@ -593,7 +743,7 @@ func (s *session) consumeAsync(r piRecord) {
 	if r.Cwd != "" {
 		s.project = r.Cwd
 	}
-	ts := parseTS(r.Timestamp)
+	ts := sessionlog.ParseStamp(r.Timestamp)
 	if !ts.IsZero() && (s.startedAt.IsZero() || ts.Before(s.startedAt)) {
 		s.startedAt = ts
 	}
@@ -606,7 +756,7 @@ func (s *session) consumeAsync(r piRecord) {
 		if r.Message != nil {
 			content = r.Message.Content
 		}
-		txt := firstNonEmpty(r.Text, firstText(content))
+		txt := sessionlog.FirstNonEmpty(r.Text, firstText(content))
 		if isTitleCandidate(txt) {
 			s.userTitle = txt
 		}
@@ -629,8 +779,8 @@ func (s *session) consumeAsync(r piRecord) {
 			Timestamp:   ts,
 			Model:       r.Model,
 			Provider:    s.provider,
-			Tokens:      r.AsyncUsage.tokens(),
-			CostUSD:     r.AsyncUsage.costUSD(),
+			Tokens:      r.AsyncUsage.Tokens(sessionlog.ReasoningSeparate),
+			CostUSD:     r.AsyncUsage.CostUSD(),
 		})
 	}
 }
@@ -799,161 +949,29 @@ type piMessage struct {
 	Content       []piContent `json:"content"`
 }
 
-type piContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
+// piContent is one content block. The type, like the rest of the JSON scalar
+// and text handling, lives in sessionlog.
+type piContent = sessionlog.Content
 
 // firstText joins the text blocks of a message.
-func firstText(cs []piContent) string {
-	var b strings.Builder
-	for _, c := range cs {
-		if c.Type == "text" || c.Type == "" {
-			b.WriteString(c.Text)
-		}
-	}
-	return strings.TrimSpace(b.String())
-}
-
-// slashCmdRE matches "/name" or "/name args" but not a path such as
-// "/Users/zzstar/Downloads/x.rar…", whose next character is '/'.
-var slashCmdRE = regexp.MustCompile(`^/[A-Za-z][A-Za-z0-9_-]*(\s|$)`)
+func firstText(cs []piContent) string { return sessionlog.FirstText(cs) }
 
 // isTitleCandidate reports whether a user message can serve as the session
 // title: plugin-injected system reminders and slash commands are skipped.
-func isTitleCandidate(text string) bool {
-	t := strings.TrimSpace(text)
-	if t == "" || strings.HasPrefix(t, "<system-reminder") || slashCmdRE.MatchString(t) {
-		return false
-	}
-	return true
-}
+func isTitleCandidate(text string) bool { return sessionlog.TitleCandidate(text) }
 
 // piUsage is message.usage. See the package doc for why these five fields map
-// one-to-one onto model.Tokens without any subtraction.
-type piUsage struct {
-	Input        num     `json:"input"`
-	Output       num     `json:"output"`
-	CacheRead    num     `json:"cacheRead"`
-	CacheWrite   num     `json:"cacheWrite"`
-	TotalTokens  num     `json:"totalTokens"`
-	Reasoning    num     `json:"reasoning"`
-	CacheWrite1h num     `json:"cacheWrite1h"` // subset of cacheWrite: ignored
-	Cost         *piCost `json:"cost"`
-}
-
-// IsZero reports whether the record accounts for no tokens at all. The real
-// corpus contains usage objects whose fields are all zero (failed requests, e.g.
-// HTTP 429 or 400 with a cost object attached), so the counted fields are
-// compared rather than the struct value.
-func (u *piUsage) IsZero() bool {
-	return u == nil || (u.Input == 0 && u.Output == 0 && u.CacheRead == 0 &&
-		u.CacheWrite == 0 && u.Reasoning == 0)
-}
-
-func (u *piUsage) tokens() model.Tokens {
-	return model.Tokens{
-		Input:      clamp(u.Input),
-		Output:     clamp(u.Output),
-		CacheRead:  clamp(u.CacheRead),
-		CacheWrite: clamp(u.CacheWrite),
-		Reasoning:  clamp(u.Reasoning),
-	}
-}
-
-// costUSD reports the log's own cost, or nil when it does not name one.
-func (u *piUsage) costUSD() *float64 {
-	if u == nil || u.Cost == nil {
-		return nil
-	}
-	t := float64(u.Cost.Total)
-	if t == 0 {
-		return nil
-	}
-	return &t
-}
-
-type piCost struct {
-	Input      fnum `json:"input"`
-	Output     fnum `json:"output"`
-	CacheRead  fnum `json:"cacheRead"`
-	CacheWrite fnum `json:"cacheWrite"`
-	Total      fnum `json:"total"`
-}
+// one-to-one onto model.Tokens without any subtraction — that reading is
+// sessionlog.ReasoningSeparate, and Step Code, a Pi fork, reads its own usage
+// block the other way round.
+type piUsage = sessionlog.Usage
 
 // piAsyncUsage is the top-level usage object of an async transcript record. It
-// has no totalTokens and no reasoning field, and its cost is a plain number
-// rather than an object.
-type piAsyncUsage struct {
-	Input      num  `json:"input"`
-	Output     num  `json:"output"`
-	CacheRead  num  `json:"cacheRead"`
-	CacheWrite num  `json:"cacheWrite"`
-	Reasoning  num  `json:"reasoning"`
-	Cost       fnum `json:"cost"`
-}
-
-// UnmarshalJSON accepts both shapes of "cost" that appear in a top-level usage
-// object: the plain number an async transcript writes, and the object a
-// compaction record writes (the same shape as message.usage.cost). Without this
-// a compaction record fails to decode as a whole and its tokens never reach the
-// ledger.
-func (u *piAsyncUsage) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		Input      num             `json:"input"`
-		Output     num             `json:"output"`
-		CacheRead  num             `json:"cacheRead"`
-		CacheWrite num             `json:"cacheWrite"`
-		Reasoning  num             `json:"reasoning"`
-		Cost       json.RawMessage `json:"cost"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	u.Input, u.Output = raw.Input, raw.Output
-	u.CacheRead, u.CacheWrite = raw.CacheRead, raw.CacheWrite
-	u.Reasoning, u.Cost = raw.Reasoning, 0
-	if len(raw.Cost) == 0 || string(raw.Cost) == "null" {
-		return nil
-	}
-	var plain fnum
-	if err := json.Unmarshal(raw.Cost, &plain); err == nil {
-		u.Cost = plain
-		return nil
-	}
-	var obj piCost
-	if err := json.Unmarshal(raw.Cost, &obj); err != nil {
-		return err
-	}
-	u.Cost = obj.Total
-	return nil
-}
-
-// IsZero reports whether the record accounts for no tokens at all.
-func (u *piAsyncUsage) IsZero() bool {
-	return u == nil || (u.Input == 0 && u.Output == 0 && u.CacheRead == 0 &&
-		u.CacheWrite == 0 && u.Reasoning == 0)
-}
-
-func (u *piAsyncUsage) tokens() model.Tokens {
-	return model.Tokens{
-		Input:      clamp(u.Input),
-		Output:     clamp(u.Output),
-		CacheRead:  clamp(u.CacheRead),
-		CacheWrite: clamp(u.CacheWrite),
-		Reasoning:  clamp(u.Reasoning),
-	}
-}
-
-// costUSD reports the log's own cost, or nil when it does not name one. Async
-// transcripts report 0 for every request of the reference corpus.
-func (u *piAsyncUsage) costUSD() *float64 {
-	if u == nil || u.Cost == 0 {
-		return nil
-	}
-	c := float64(u.Cost)
-	return &c
-}
+// has no "totalTokens" field, and its cost may be a plain number rather than an
+// object; sessionlog.Usage decodes both shapes so a compaction record — the same
+// shape as message.usage.cost — reaches the ledger instead of failing to decode
+// as a whole.
+type piAsyncUsage = sessionlog.Usage
 
 // asyncMetaProvider reads the provider an async run's meta file names, e.g. "rn"
 // out of "rn/gpt-6.1-sol:high". Only the model field is decoded: the meta's
@@ -982,104 +1000,12 @@ func asyncMetaProvider(path string) string {
 	return ""
 }
 
-func clamp(n num) int64 {
-	if n < 0 {
-		return 0
-	}
-	return int64(n)
-}
-
-// num decodes a JSON number that may arrive as an integer, a float or a quoted
-// string; null and absent values decode to 0.
-type num int64
-
-func (n *num) UnmarshalJSON(b []byte) error {
-	b = bytes.TrimSpace(b)
-	if len(b) == 0 || string(b) == "null" {
-		return nil
-	}
-	var f float64
-	if err := json.Unmarshal(b, &f); err == nil {
-		*n = num(f)
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(b, &s); err == nil {
-		v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-		if err != nil {
-			return err
-		}
-		*n = num(v)
-		return nil
-	}
-	return fmt.Errorf("pi: cannot decode %s as a number", b)
-}
-
-// fnum decodes a JSON number without truncating it to an integer.
-type fnum float64
-
-func (f *fnum) UnmarshalJSON(b []byte) error {
-	b = bytes.TrimSpace(b)
-	if len(b) == 0 || string(b) == "null" {
-		return nil
-	}
-	var v float64
-	if err := json.Unmarshal(b, &v); err == nil {
-		*f = fnum(v)
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(b, &s); err == nil {
-		x, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-		if err != nil {
-			return err
-		}
-		*f = fnum(x)
-		return nil
-	}
-	return fmt.Errorf("pi: cannot decode %s as a number", b)
-}
-
-// parseTS decodes a timestamp that arrives either as an RFC3339 string or as a
-// millisecond epoch number.
-func parseTS(b json.RawMessage) time.Time {
-	b = bytes.TrimSpace(b)
-	if len(b) == 0 || string(b) == "null" {
-		return time.Time{}
-	}
-	var s string
-	if json.Unmarshal(b, &s) == nil {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			return time.Time{}
-		}
-		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-			return t.UTC()
-		}
-		if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return msTime(num(ms))
-		}
-		return time.Time{}
-	}
-	var n num
-	if json.Unmarshal(b, &n) == nil {
-		return msTime(n)
-	}
-	return time.Time{}
-}
-
-func msTime(ms num) time.Time {
-	if ms <= 0 {
-		return time.Time{}
-	}
-	return time.UnixMilli(int64(ms)).UTC()
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
+// num and fnum are sessionlog's JSON scalar decoders, aliased so Pi's record
+// structs read exactly as they did before the extraction. The timestamp
+// decoders (sessionlog.ParseStamp, sessionlog.Millis) and the small string
+// helpers (sessionlog.FirstNonEmpty) are shared the same way: Step Code's logs
+// use the same encodings.
+type (
+	num  = sessionlog.Num
+	fnum = sessionlog.Fnum
+)

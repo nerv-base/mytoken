@@ -208,19 +208,22 @@ CI 在三个平台上跑 200K 事件的查询基准（`internal/query/bench_test
 
 ### 0.4.x —— Harness 补齐（0.4.0 之后）
 
-- [ ] **ZCode、MiniMax Code、Step Code、MiMo Code 接入调研与离线适配**：不阻塞 0.4.0 的 MyGo 升级和日常使用主线。名称暂按需求记录，先确认具体产品、版本及其属于独立客户端还是其他 harness 的模型 / Coding Plan 配置，再确认日志位置与格式，验证 token、缓存、模型、Base URL 和会话标识是否可读；目前未确认其数据格式，不视为已支持。若只是现有 harness 的供应商配置，补供应商识别、计价与用量验证，不重复新增解析器。
-- [ ] **Kimi Code 兼容性与真实日志验证**：已有 Kimi / Kimi Code 接入记录，本轮不重复列为从零接入；确认当前产品版本与已有 Kimi 读取器的兼容范围，补脱敏真实日志及 token、缓存、模型、供应商归因测试；不兼容的新格式再扩展适配。
-- [ ] **Trae、Qoder 接入调研与离线适配**：确认具体客户端 / CLI 版本、本地数据位置和用量字段，验证自定义路径、多实例及增量采集；未验证前不宣称支持。可离线读取的适配随 0.4.x 发布，仅有联网用量接口的按下述规则转入 0.5。
-- [ ] **Hermes、OpenClaw、Antigravity 兼容性与覆盖补齐**：已有接入记录，不重复列为从零接入；核对当前版本、日志变体、自定义路径、token / 缓存字段和供应商归因，补脱敏真实日志回归。Antigravity 在 0.3 的记录中仍缺真实日志验证，本轮优先补证据，不将 fixture 通过等同于真实环境可用。
-- [ ] **ohmypi（omp）、ohmyopencode（omo）兼容性调研与适配**：项目名称已由用户确认；核对具体版本、数据目录和日志格式，分别评估复用现有 Pi、OpenCode 读取器，不预设完全兼容。补子会话 / 父子关系与去重验证，避免同一请求在底层日志和编排日志中双计；只有独立数据格式才新增读取器。
-- [ ] 若存在可离线读取的日志，优先复用已验证的解析逻辑，否则新增读取器；具备 fixture、一致性套件、增量 / 幂等 / 隐私及性能测试，并用脱敏真实日志验证后，随 0.4.x 发布。缺少字段时明确标注不可用，不虚构缓存或费用。
-- [ ] 上述工具若只能通过联网接口获取用量，则将对应的正式接入转入 0.5 的联网 harness 批次，逐项开启；0.4.x 只交付调研结论，不为赶版本引入默认联网或绕过权限的读取。
+状态与证据口径见 [`verification/v04x-harness-matrix.md`](verification/v04x-harness-matrix.md)。“协议适配 + 合成 fixture”不等同于“脱敏真实日志验证”。
+
+- [x] **ZCode、MiniMax Code、Step Code、MiMo Code：完成产品核实与离线协议适配。** 四者均为独立 harness；ZCode / MiniMax / MiMo 只读 SQLite，Step Code 读取 Pi-compatible JSONL。每个 parser 都有独立身份、显式 root、增量游标、稳定去重、隐私与 conformance 覆盖；不读取凭据、提示词或回复正文。
+- [x] **Kimi Code：完成新协议兼容。** 现有 `kimi` 身份同时支持旧 `~/.kimi` 与新 `~/.kimi-code`；新格式只计 `usage.record`，不重复计算父 wire 的 child usage 汇总。
+- [x] **Trae、Qoder：完成 0.4.x 调研结论，不新增猜测性 parser。** 官方资料没有给出稳定、可公开验证的离线 token/cache/model usage ledger；取得可审计 schema 或脱敏日志前不宣称支持。若只能在线获取用量，正式接入移到 0.5，并保持逐项授权、默认不联网。
+- [x] **ohmypi（OMP）、ohmyopencode（OMO）/ senpi：完成兼容路径。** OMP 与 senpi 复用 `pi` 会话解析；OMO 的 OpenCode plugin 模式复用 `opencode`。只读底层 assistant usage，不把 `model_usage`、child result 或编排 event log 再计一次。
+- [x] **现有 Hermes、OpenClaw、Antigravity 以及 Amp、Kiro、Zed、Codebuff、Mux：完成代码/fixture 证据审计。** 它们已有 parser 和 conformance，但仓库仍没有可审计的脱敏真实安装 fixture；不把 fixture 通过写成真实环境验证。
+- [x] **适配质量门槛：** 本批新增/扩展 reader 均有合成 fixture、golden、增量、游标稳定、幂等、隐私、缺失目录和 benchmark/conformance 覆盖；SQLite 以 read-only/query-only 打开并覆盖 WAL/sidecar 变化。
+- [ ] **真实日志发布门槛：** Kimi Code、OMP/OMO、ZCode、MiniMax Code、Step Code、MiMo Code，以及上一条列出的既有 harness，仍需由真实安装产生、检查并脱敏后提交的 fixture。当前没有此类输入，本轮不读取开发者机器的真实日志或凭据，也不伪造“已验证”结论。
 
 ### 0.5 —— 视觉
 
 - 可视化组件库：热力图、桑基图、对账瀑布图、缓存时间轴。
 - 全局动效与视觉改版。
 - 只读 MCP server（查询用量、花费、对账结果）。
+- Trae / Qoder 若仍只能从账户接口取得用量：作为显式授权、默认关闭的联网连接器逐项评估，不复用 0.4.x 离线扫描器，也不读取本地凭据绕过授权。
 - harness 第 3 批。
 
 ### 以后

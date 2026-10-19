@@ -54,19 +54,23 @@
 | `grok` | 否 | 工具无子代理概念 |
 | `hermes` | 是 | sqlite |
 | `kilo` | 是 | 原地重写的任务 JSON（经 `clinetask`） |
-| `kimi` | 是 | 追加式 JSONL |
+| `kimi` | 是 | 旧 Kimi 与 Kimi Code 追加式 JSONL；新协议只计 `usage.record`，避开父/子 wire 汇总双计 |
 | `kiro` | 否 | 五种布局；token 按字符/4 估算，无缓存信号；CLI `Clear` → `BoundaryClear`；未在真实数据上验证 |
+| `mimo-code` | 是 | query-only SQLite；解析 assistant message usage，共享 OpenCode SQLite 核心但使用独立身份与去重命名空间 |
+| `minimax-code` | 否 | query-only SQLite `local_runtime_token_usage`；兼容 `.minimax` / `.mavis` |
 | `mux` | 是 | 追加式 JSONL；子代理 transcript 的父会话是所在 workspace；未在真实数据上验证 |
 | `openclaude` | 是 | 追加式 JSONL |
 | `openclaw` | 否 | 解析器不产出 `ParentID`（`internal/harness/openclaw/openclaw.go:45`） |
-| `opencode` | 是 | sqlite；`parentID` 指向父会话 |
-| `pi` | 是 | JSONL；run-log 记录父会话 |
+| `opencode` | 是 | SQLite；`parentID` 指向父会话；OMO plugin 模式复用此身份 |
+| `pi` | 是 | JSONL；run-log 记录父会话；OMP 与 OMO/senpi 兼容路径复用此身份 |
 | `qwen` | 否 | 工具无子代理概念 |
 | `roo` | 是 | 原地重写的任务 JSON（经 `clinetask`） |
+| `step-code` | 是 | Pi-compatible JSONL，但保持独立 root、身份与去重命名空间 |
 | `workbuddy` | 是 | 追加式 JSONL |
+| `zcode` | 否 | query-only SQLite；只计完成行，按 schema 探测可选 cache 列 |
 | `zed` | 是 | sqlite `threads.db`；`parent_id`；累计用量与逐请求之差补一条余量事件；未在真实数据上验证 |
 
-上面 28 个 harness 都已注册进 `internal/app/app.go` 的空导入，`mytoken doctor`
+上面 32 个 harness 都已注册进 `internal/app/app.go` 的空导入，`mytoken doctor`
 会列出它们。接入一个新 harness 的最后一步就是那次空导入：漏了它
 `harness.All()` 里就没有这个 harness，`doctor`、`scan`、`stats` 都看不见它，
 而单包测试仍然是绿的——最容易漏的一步。
@@ -120,8 +124,16 @@
   用 `harness.Title()` 归一化（空白折叠、最多 60 个 rune）。增量解析时只报告本批次
   知道的信息即可：store 的 upsert 会保留非空字段、`started_at` 取最小值、
   `updated_at` 取最大值（`internal/store/store.go:113`）。
-- 有金额字段就用它（opencode 这类日志会写 provider 报的费用），否则置空由价格表估算；
-  0 表示「未知」而不是「免费」（`internal/harness/opencode/opencode.go:895-897`）。
+- 有可信金额字段就用它，否则把 `CostUSD` 置为 `nil` 交给价格表估算。`CostUSD` 的三种状态在
+  model 层是固定的：`nil` = 未知（走估价），非 nil 的 `0` = 日志/上游明确报告的零成本，
+  非 nil 正数 = 报告金额（`internal/scan/scanner.go:489-493`；`docs/SPEC.md:217` 的
+  log/estimate/unpriced 分类同样以 `log_cost != NULL`（含 0）为 log）。但**日志里的 0 是不是
+  权威零，只能按上游 schema 各自解释，不能统一**：MiniMax Code 的官方 writer 只在 provider
+  报了零价时才写 `cost_usd=0`（缺失写作 NULL），所以 0 是可信零
+  （`internal/harness/minimax/minimax.go:504-518`）；OpenCode/MiMo Code 的 MessageV2 `cost` 里
+  0 是「未知」哨兵，parser 把 0、负数与非有限数一并映射成 `nil` 再交给价格表
+  （`sqlitecore.ReportedCost`，`internal/harness/opencode/sqlitecore/sqlitecore.go:636`）。
+  缺失（NULL/没有该字段）、负数、非有限数在两个方向上都不是零成本，不得悄悄写成零。
 
 ### 4.1 压缩/清空边界（`model.Boundary`）
 

@@ -24,9 +24,10 @@
 
 一切都在你自己的机器上完成。没有账号、没有遥测、没有上传：默认只发两类请求：价格表，和每天一次到 github.com 检查更新（设置里可关）；中转站对账需逐站开启，只用你已交给该站点的 Key 访问该站点本身。
 
-- **一个窗口里看二十八个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
+- **一个窗口里看三十二个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
   Cline、Roo Code、Kilo Code、Claude Desktop、WorkBuddy、CodeBuddy、Hermes、Qwen Code、Kimi、
-  OpenClaude、Grok、OpenClaw、Droid、Goose、Forge、Amp、Kiro、Zed、Antigravity、Codebuff、Mux。
+  OpenClaude、Grok、OpenClaw、Droid、Goose、Forge、Amp、Kiro、Zed、Antigravity、Codebuff、Mux、
+  ZCode、MiniMax Code、MiMo Code、Step Code。
 - **会话 × 供应商 × 模型** —— 五类 token 分开统计（input、output、cache read、cache write、
   reasoning），同时给出缓存命中率、按项目 / 按天的拆分，以及子代理树。
 - **可审计的归因** —— 每个供应商都标注了它是怎么确定的：`log`、`cc-switch`、`config-timeline`、
@@ -62,7 +63,7 @@ MyToken!!!!! 读取每个 harness 本来就保留的日志，只读、不回写�
 | Claude Code | `claude-code` | `~/.claude/projects/**/*.jsonl`（`$CLAUDE_CONFIG_DIR/projects`），以及存在时的 `~/.config/claude/projects` |
 | Codex CLI | `codex` | `$CODEX_HOME/sessions` 与 `$CODEX_HOME/archived_sessions`（默认 `~/.codex`） |
 | DSH — DeepSeek Harness | `dsh` | `$DSH_HOME/sessions`（默认 `~/.dsh/sessions`） |
-| pi | `pi` | `$PI_HOME/agent/sessions`（默认 `~/.pi/agent/sessions`） |
+| pi / OMP / OMO-senpi | `pi` | 设置 `$PI_HOME` 时读 `$PI_HOME/sessions`；否则读 `~/.pi/agent/sessions` 及检测到的 OMP、OMO/senpi agent roots |
 | Gemini CLI | `gemini` | `$GEMINI_CLI_HOME/tmp`（默认 `~/.gemini/tmp`） |
 | opencode | `opencode` | `$OPENCODE_DATA_HOME`，否则 `$XDG_DATA_HOME/opencode`，否则 `~/.local/share/opencode` |
 | Crush | `crush` | `$CRUSH_GLOBAL_DATA`，否则 `$XDG_DATA_HOME/crush`，否则 `~/.local/share/crush` |
@@ -74,7 +75,7 @@ MyToken!!!!! 读取每个 harness 本来就保留的日志，只读、不回写�
 | CodeBuddy | `codebuddy` | `$CODEBUDDY_HOME/projects`（默认 `~/.codebuddy/projects`） |
 | Hermes | `hermes` | `$HERMES_HOME`（默认 `~/.hermes`），SQLite |
 | Qwen Code | `qwen` | `$QWEN_DATA_DIR/projects`（默认 `~/.qwen/projects`） |
-| Kimi | `kimi` | `$KIMI_SHARE_DIR/sessions`（默认 `~/.kimi/sessions`） |
+| Kimi / Kimi Code | `kimi` | 旧版 `$KIMI_SHARE_DIR/sessions`（`~/.kimi/sessions`）及 `$KIMI_CODE_HOME/sessions`（`~/.kimi-code/sessions`） |
 | OpenClaude | `openclaude` | `$CODEBURN_OPENCLAUDE_DIR/projects`，否则 `~/.openclaude/projects` |
 | Grok | `grok` | `$GROK_HOME`（默认 `~/.grok`） |
 | OpenClaw | `openclaw` | `~/.openclaw/agents`，以及 `~/.moltbot`、`~/.moldbot`、`~/.clawdbot` 三种拼写 |
@@ -87,8 +88,17 @@ MyToken!!!!! 读取每个 harness 本来就保留的日志，只读、不回写�
 | Antigravity | `antigravity` | `$GEMINI_CLI_HOME/antigravity{,-cli,-ide}/conversations` 及对应的 `implicit` 目录（默认 `~/.gemini`），只读 `*.db` |
 | Codebuff | `codebuff` | `$CODEBUFF_DATA_DIR`，否则 `~/.config/manicode`、`~/.config/manicode-dev`、`~/.config/manicode-staging` |
 | Mux | `mux` | `$CODEBURN_MUX_DIR` 或 `$MUX_ROOT`，否则 `~/.mux`、`~/.mux-dev`、`~/.cmux` |
+| ZCode | `zcode` | `$MYTOKEN_ZCODE_DIRS`，否则 `~/.zcode/cli/db/db.sqlite`，只读 SQLite |
+| MiniMax Code | `minimax-code` | `$MINIMAX_DATA_DIR` / `$MAVIS_DATA_DIR`，否则 `~/.minimax/v2/sqlite/runtime-state.sqlite`（兼容旧 `~/.mavis`） |
+| MiMo Code | `mimo-code` | `$MIMOCODE_HOME/data`；否则所有平台均按上游 `xdg-basedir` 取 `$XDG_DATA_HOME/mimocode` 或 `~/.local/share/mimocode`，只读 SQLite |
+| Step Code | `step-code` | `$STEP_CODING_AGENT_SESSION_DIR`、`$STEP_CODING_AGENT_DIR/sessions`，否则 `~/.stepcode/agent/sessions` |
 
-Amp、Kiro、Zed、Antigravity、Codebuff、Mux 这 6 个已接线并有一致性测试覆盖，但尚未在真实数据上验证。
+ZCode、MiniMax Code、MiMo Code、Step Code 已按上游源码与合成 fixture 做协议和一致性验证；Kimi Code
+及 OMP/OMO 兼容路径同属这一证据等级。本批没有可提交的脱敏真实安装 fixture，因此明确保留“真实日志未验证”
+门槛，详见 [`docs/verification/v04x-harness-matrix.md`](docs/verification/v04x-harness-matrix.md)。
+
+Amp、Kiro、Zed、Antigravity、Codebuff、Mux、Hermes、OpenClaw 同样有一致性覆盖，但仍没有仓库内可审计的
+脱敏真实日志 fixture。
 
 VS Code 系扩展的 `…/globalStorage` 会按平台和编辑器解析 —— 编辑器：VS Code、VS Code Insiders、
 Cursor、Windsurf、VSCodium、Trae；平台：macOS 是 `~/Library/Application Support/<编辑器>/User/globalStorage`，
@@ -103,7 +113,9 @@ Linux 是 `~/.config/<编辑器>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…
 | `CLAUDE_CONFIG_DIR` | 用该目录替代 `~/.claude` 作为 Claude Code 配置目录 |
 | `CODEX_HOME` | 用该目录替代 `~/.codex` 作为 Codex 数据目录 |
 | `DSH_HOME` | 用该目录替代 `~/.dsh` 作为 DSH 数据目录 |
-| `PI_HOME` | 用该目录替代 `~/.pi` 作为 pi 数据目录 |
+| `PI_HOME`, `MYTOKEN_PI_DIRS` | pi 数据目录，或显式的 pi-compatible session roots（路径列表） |
+| `PI_CODING_AGENT_DIR`、`OMP_PROFILE`、`PI_PROFILE`、`PI_CONFIG_DIR` | OMP agent / profile 根目录，由 `pi` 读取器复用 |
+| `OMO_CODING_AGENT_DIR`、`SENPI_CODING_AGENT_DIR` | OMO / senpi agent 根目录，由 `pi` 读取器复用 |
 | `GEMINI_CLI_HOME` | 用该目录替代 `~/.gemini` 作为 Gemini CLI 数据目录 |
 | `MYTOKEN_GEMINI_DIRS` | 直接指定 Gemini CLI 日志目录（路径列表） |
 | `OPENCODE_DATA_HOME` | opencode 数据目录 |
@@ -116,7 +128,7 @@ Linux 是 `~/.config/<编辑器>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…
 | `WORKBUDDY_HOME`、`CODEBUDDY_HOME` | 用该目录替代 `~/.workbuddy` / `~/.codebuddy` 作为 WorkBuddy / CodeBuddy 主目录 |
 | `HERMES_HOME` | 用该目录替代 `~/.hermes` 作为 Hermes 主目录 |
 | `QWEN_DATA_DIR`、`MYTOKEN_QWEN_DIRS` | Qwen Code 数据目录，或直接指定目录（路径列表） |
-| `KIMI_SHARE_DIR`、`MYTOKEN_KIMI_DIRS` | Kimi share 目录，或直接指定目录（路径列表） |
+| `KIMI_SHARE_DIR`、`KIMI_CODE_HOME`、`MYTOKEN_KIMI_DIRS` | Kimi / Kimi Code 数据目录，或直接指定目录（路径列表） |
 | `CODEBURN_OPENCLAUDE_DIR`、`MYTOKEN_OPENCLAUDE_DIRS` | OpenClaude 数据目录，或直接指定目录（路径列表） |
 | `GROK_HOME`、`MYTOKEN_GROK_DIRS` | Grok 主目录，或直接指定目录（路径列表） |
 | `MYTOKEN_OPENCLAW_DIRS` | 直接指定 OpenClaw agent 目录（路径列表） |
@@ -129,6 +141,10 @@ Linux 是 `~/.config/<编辑器>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…
 | `MYTOKEN_ANTIGRAVITY_DIRS` | 直接指定 Antigravity 会话目录（路径列表） |
 | `CODEBUFF_DATA_DIR`、`MYTOKEN_CODEBUFF_DIRS` | Codebuff 数据目录，或直接指定目录（路径列表） |
 | `CODEBURN_MUX_DIR`、`MUX_ROOT`、`MYTOKEN_MUX_DIRS` | Mux 数据目录，或直接指定目录（路径列表） |
+| `MYTOKEN_ZCODE_DIRS` | 直接指定 ZCode 数据库文件或所在目录（路径列表） |
+| `MINIMAX_DATA_DIR`、`MAVIS_DATA_DIR`、`MYTOKEN_MINIMAX_DIRS` | MiniMax Code 数据根、旧数据根或直接指定根目录（路径列表） |
+| `MIMOCODE_HOME`、`MIMOCODE_DB`、`MYTOKEN_MIMO_CODE_DIRS` | MiMo Code 数据根、精确数据库文件或直接指定根目录（路径列表） |
+| `STEP_CODING_AGENT_SESSION_DIR`、`STEP_CODING_AGENT_DIR`、`MYTOKEN_STEP_CODE_DIRS` | Step Code 会话根、agent 根或直接指定根目录（路径列表） |
 
 ## 供应商归因
 

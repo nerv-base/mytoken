@@ -38,6 +38,8 @@ import (
 	_ "github.com/zzstar101/mytoken/internal/harness/kilo"
 	_ "github.com/zzstar101/mytoken/internal/harness/kimi"
 	_ "github.com/zzstar101/mytoken/internal/harness/kiro"
+	_ "github.com/zzstar101/mytoken/internal/harness/mimocode"
+	_ "github.com/zzstar101/mytoken/internal/harness/minimax"
 	_ "github.com/zzstar101/mytoken/internal/harness/mux"
 	_ "github.com/zzstar101/mytoken/internal/harness/openclaude"
 	_ "github.com/zzstar101/mytoken/internal/harness/openclaw"
@@ -45,7 +47,9 @@ import (
 	_ "github.com/zzstar101/mytoken/internal/harness/pi"
 	_ "github.com/zzstar101/mytoken/internal/harness/qwen"
 	_ "github.com/zzstar101/mytoken/internal/harness/roo"
+	_ "github.com/zzstar101/mytoken/internal/harness/stepcode"
 	_ "github.com/zzstar101/mytoken/internal/harness/workbuddy"
+	_ "github.com/zzstar101/mytoken/internal/harness/zcode"
 	_ "github.com/zzstar101/mytoken/internal/harness/zed"
 	"github.com/zzstar101/mytoken/internal/instance"
 	"github.com/zzstar101/mytoken/internal/model"
@@ -375,8 +379,8 @@ func TestFallbackWithoutProvenanceIsTreatedAsPlatformDefault(t *testing.T) {
 // fallback, and a config that claims every harness suppresses them all.
 func TestDefaultFallbacksAreProvenanceAware(t *testing.T) {
 	fbs := instance.DefaultFallbacks()
-	if len(fbs) < 28 {
-		t.Fatalf("DefaultFallbacks = %d entries, want at least 28", len(fbs))
+	if len(fbs) < 32 {
+		t.Fatalf("DefaultFallbacks = %d entries, want at least 32", len(fbs))
 	}
 	for _, fb := range fbs {
 		if _, ok := fb.(instance.Provenanced); !ok {

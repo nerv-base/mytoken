@@ -36,6 +36,10 @@ const (
 	Mux           Harness = "mux"
 	Zed           Harness = "zed"
 	Antigravity   Harness = "antigravity"
+	ZCode         Harness = "zcode"
+	MiniMaxCode   Harness = "minimax-code"
+	MiMoCode      Harness = "mimo-code"
+	StepCode      Harness = "step-code"
 )
 
 // DisplayName is the human label of a harness.
@@ -97,6 +101,14 @@ func (h Harness) DisplayName() string {
 		return "Zed"
 	case Antigravity:
 		return "Antigravity"
+	case ZCode:
+		return "ZCode"
+	case MiniMaxCode:
+		return "MiniMax Code"
+	case MiMoCode:
+		return "MiMo Code"
+	case StepCode:
+		return "Step Code"
 	}
 	return string(h)
 }

@@ -3,6 +3,20 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## Unreleased
+
+- **Four more coding agents can be counted offline.** ZCode, MiniMax Code, MiMo Code and Step Code
+  now have their own source identities and readers. SQLite databases are opened read-only and
+  query-only; JSONL readers keep incremental cursors and stable request identities.
+- **Kimi Code is covered by the existing Kimi source.** The reader understands the current
+  `~/.kimi-code` agent-wire protocol as well as legacy Kimi logs, and avoids counting a child
+  agent once in its own wire and again in the parent's summary.
+- **Pi and OpenCode recognize their compatible orchestrators.** Pi can discover Oh My Pi and
+  Oh My OpenAgent/senpi sessions; OpenCode remains the identity for OMO plugin-mode sessions.
+  Aggregate `model_usage`, child-result and orchestration event logs are not counted a second time.
+- **Unsupported products stay honest.** Trae and Qoder do not expose a stable, publicly verifiable
+  offline usage ledger, so this release does not guess at private databases or add network access.
+
 ## 0.4.1
 
 - **A leftover backup no longer blocks an upgrade.** If an earlier attempt

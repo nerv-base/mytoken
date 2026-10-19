@@ -536,6 +536,71 @@ func TestParseLegacyJSON(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// legacy JSON storage: tolerant projection
+// ---------------------------------------------------------------------------
+
+// writeLegacy writes one file of a legacy `storage/...` tree.
+func writeLegacy(t *testing.T, root string, parts []string, body string) {
+	t.Helper()
+	path := filepath.Join(append([]string{root}, parts...)...)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir for %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// TestLegacyJSONWithAMalformedOptionalFieldStillCounts carries the reported
+// defect into the legacy JSON generation. A legacy document is flat — the
+// MessageV2.Info fields sit beside the session fields in one file — and the file
+// cursor advanced even when the strict decode failed, so a wrong-typed optional
+// field cost the tokens there just as permanently as in the sqlite generation.
+func TestLegacyJSONWithAMalformedOptionalFieldStillCounts(t *testing.T) {
+	dir := t.TempDir()
+	// A wrong-typed `version` is a field this parser has no use for: it must not
+	// cost the session it sits in.
+	writeLegacy(t, dir, []string{"storage", "session", "proj_leg", "ses_legacy001.json"},
+		`{"id":"ses_legacy001","projectID":"proj_leg","directory":"/Users/dev/legacy","title":"Legacy session","version":42,"time":{"created":1742302000000,"updated":1742302600000}}`)
+	writeLegacy(t, dir, []string{"storage", "message", "ses_legacy001", "msg_bad_path.json"},
+		`{"id":"msg_bad_path","sessionID":"ses_legacy001","role":"assistant","modelID":"claude-opus-4-1","providerID":"anthropic","cost":0.02,"path":"/tmp/x","tokens":{"input":11,"output":2,"cache":{"read":0,"write":0}},"time":{"created":1742302100000}}`)
+	writeLegacy(t, dir, []string{"storage", "message", "ses_legacy001", "msg_bad_cost.json"},
+		`{"id":"msg_bad_cost","sessionID":"ses_legacy001","role":"assistant","modelID":"claude-opus-4-1","cost":"0.0123","tokens":{"input":21,"output":3,"cache":{"read":0,"write":0}},"time":{"created":1742302100000}}`)
+	// An unreadable `time.created` is the one metadata field the legacy gate
+	// insists on (a half-written file states no time at all). A value that is
+	// present but illegible now survives as a zero instant, and the event is
+	// dated by the file's own modification time rather than by 1970.
+	writeLegacy(t, dir, []string{"storage", "message", "ses_legacy001", "msg_bad_time.json"},
+		`{"id":"msg_bad_time","sessionID":"ses_legacy001","role":"assistant","modelID":"claude-opus-4-1","cost":0.03,"tokens":{"input":31,"output":4,"cache":{"read":0,"write":0}},"time":{"created":"whenever"}}`)
+	badTimePath := filepath.Join(dir, "storage", "message", "ses_legacy001", "msg_bad_time.json")
+	info, err := os.Stat(badTimePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := parseAll(t, NewWithRoots(dir))
+
+	wantTokens(t, "msg_bad_path", eventByKey(t, res.Events, "opencode:msg_bad_path").Tokens,
+		model.Tokens{Input: 11, Output: 2})
+	badCost := eventByKey(t, res.Events, "opencode:msg_bad_cost")
+	wantTokens(t, "msg_bad_cost", badCost.Tokens, model.Tokens{Input: 21, Output: 3})
+	if badCost.CostUSD == nil || *badCost.CostUSD != 0.0123 {
+		t.Errorf("quoted cost = %v, want 0.0123", badCost.CostUSD)
+	}
+	badTime := eventByKey(t, res.Events, "opencode:msg_bad_time")
+	wantTokens(t, "msg_bad_time", badTime.Tokens, model.Tokens{Input: 31, Output: 4})
+	if want := time.UnixMilli(info.ModTime().UnixMilli()).UTC(); !badTime.Timestamp.Equal(want) {
+		t.Errorf("timestamp = %v, want the file's modification time %v", badTime.Timestamp, want)
+	}
+	if ev := eventByKey(t, res.Events, "opencode:msg_bad_path"); ev.ProjectPath != "" {
+		t.Errorf("an unreadable path should cost only the project attribution, got %q", ev.ProjectPath)
+	}
+	if len(res.Sessions) != 1 || res.Sessions[0].Title != "Legacy session" || res.Sessions[0].Project != "/Users/dev/legacy" {
+		t.Fatalf("sessions = %+v, want the session beside the wrong-typed field", res.Sessions)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // dedupe across generations
 // ---------------------------------------------------------------------------
 
@@ -678,6 +743,81 @@ func TestParseDatabaseWithoutUsageTables(t *testing.T) {
 	}
 	if len(b.Events) != 0 || len(b.Sessions) != 0 {
 		t.Fatalf("got %d events/%d sessions", len(b.Events), len(b.Sessions))
+	}
+}
+
+// TestMalformedOptionalMetadataStillCountsTheRow reproduces the reported defect
+// against a real SQLite snapshot. `message.data` is written by OpenCode, so the
+// row can carry a wrong-typed optional field — the report's `cost:"0.0123"`, a
+// string `path`, a `time.created` that is not a number. Decoding used to treat
+// any of those as "cannot read this row"; because the `message` watermark is
+// advanced by the scan itself, the tokens were then lost permanently rather
+// than re-read.
+//
+// The last row is the boundary: a `tokens` value that is not an object states no
+// usage, so it is skipped on purpose. The second pass pins that as a decision
+// instead of an accident: the watermark moved past every row, including that
+// one. Holding it back would re-read the same unusable row (and everything
+// newer) on every pass forever, and it buys nothing, because upstream refreshes
+// `time_updated` on every UPDATE (drizzle `$onUpdate`, see the harness
+// verification doc), which is exactly the backfill TestIncrementalAppendAndBackfill
+// relies on: a repaired row re-enters the scan as a new (time_updated, id) key
+// and merges by DedupKey.
+func TestMalformedOptionalMetadataStillCountsTheRow(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "opencode.db")
+	copyFile(t, fixture(t, "v1", "opencode.db"), dbPath)
+	execSQL(t, dbPath,
+		`INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES
+		 ('msg_quoted_cost','ses_main001',1742302000000,1742302000000,
+		  '{"role":"assistant","agent":"build","cost":"0.0123","tokens":{"total":12,"input":10,"output":2,"reasoning":0,"cache":{"read":0,"write":0}},"modelID":"claude-sonnet-4-5","providerID":"anthropic","path":{"cwd":"/Users/dev/proj","root":"/Users/dev/proj"},"time":{"created":1742302000000}}')`,
+		`INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES
+		 ('msg_path_string','ses_main001',1742303000000,1742303000000,
+		  '{"role":"assistant","path":"/tmp/x","tokens":{"input":20,"output":3},"modelID":"gpt-5","providerID":"openai","time":{"created":1742303000000}}')`,
+		`INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES
+		 ('msg_time_text','ses_main001',1742304000000,1742304000000,
+		  '{"role":"assistant","time":{"created":"whenever"},"tokens":{"input":30,"output":4},"modelID":"gpt-5","providerID":"openai"}')`,
+		`INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES
+		 ('msg_tokens_scalar','ses_main001',1742305000000,1742305000000,
+		  '{"role":"assistant","tokens":5,"time":{"created":1742305000000}}')`,
+	)
+
+	p := NewWithRoots(dir)
+	first := parseAll(t, p)
+
+	want := map[string]model.Tokens{
+		"opencode:msg_quoted_cost": {Input: 10, Output: 2},
+		"opencode:msg_path_string": {Input: 20, Output: 3},
+		"opencode:msg_time_text":   {Input: 30, Output: 4},
+	}
+	for key, tokens := range want {
+		ev := eventByKey(t, first.Events, key)
+		wantTokens(t, key, ev.Tokens, tokens)
+	}
+	// A legible quoted cost is a number the row states, exactly like the quoted
+	// token counters Num has always accepted.
+	if ev := eventByKey(t, first.Events, "opencode:msg_quoted_cost"); ev.CostUSD == nil || *ev.CostUSD != 0.0123 {
+		t.Errorf("quoted cost = %v, want 0.0123", ev.CostUSD)
+	}
+	if ev := eventByKey(t, first.Events, "opencode:msg_path_string"); ev.ProjectPath != "/Users/dev/proj" {
+		t.Errorf("row with an unreadable path: ProjectPath = %q, want the session directory", ev.ProjectPath)
+	}
+	// The row states no readable timestamp, so the scan's own time_updated is
+	// the best evidence of when the request happened.
+	if ev := eventByKey(t, first.Events, "opencode:msg_time_text"); !ev.Timestamp.Equal(timeFromMS(1742304000000)) {
+		t.Errorf("row with an unreadable time: Timestamp = %v, want the row's time_updated", ev.Timestamp)
+	}
+	for _, key := range keysOf(first.Events) {
+		if key == "opencode:msg_tokens_scalar" {
+			t.Errorf("a tokens value that is not an object was counted as usage")
+		}
+	}
+
+	// Nothing about those rows is offered twice, and the unusable row does not
+	// hold the watermark: the next pass has no work at all.
+	second := parseFrom(t, p, first.Cursors)
+	if len(second.Events) != 0 {
+		t.Fatalf("second pass re-emitted %v: the watermark must not stall on the unusable row", keysOf(second.Events))
 	}
 }
 
@@ -828,10 +968,117 @@ func TestTokenClassMapping(t *testing.T) {
 			if err := json.Unmarshal([]byte(tt.raw), &p); err != nil {
 				t.Fatalf("unmarshal %s: %v", tt.raw, err)
 			}
-			wantTokens(t, "classes", p.classes(), tt.want)
-			if got, want := p.classes().Total(), tt.want.Total(); got != want {
+			wantTokens(t, "classes", p.Classes(), tt.want)
+			if got, want := p.Classes().Total(), tt.want.Total(); got != want {
 				t.Errorf("Total() = %d, want %d", got, want)
 			}
 		})
+	}
+}
+
+// TestParseFallsBackToThePayloadSession pins the first reported defect. The
+// `session_id` column is optional metadata the payload also states, and the
+// store refuses a WHOLE batch for one event without a session (an event with an
+// empty SessionID is "invalid event: harness/session/dedup key"). A row written
+// with NULL — or with an empty string — in that column used to emit an event
+// with an empty SessionID, so the write failed, the cursor never advanced, and
+// every later scan failed on the same row: the clean rows beside it were lost
+// too, not just the row itself. sqlitecore.Messages already reads the column as
+// an optional NullString, so the parser is the only place that can recover the
+// session the payload names.
+//
+// A row the payload cannot attribute is skipped rather than emitted with an
+// empty session: one uncountable row, never a batch the store rejects. Skipping
+// does not hold the watermark, so the rows after it still arrive; the
+// incremental pass at the end appends one behind the skipped rows to prove it.
+func TestParseFallsBackToThePayloadSession(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "opencode.db")
+	// The session row names the directory, so a recovered session id also
+	// proves the accumulator looked that session up.
+	session := func(id, directory, title string) string {
+		return fmt.Sprintf("INSERT INTO session (id,parent_id,directory,title,time_created,time_updated) VALUES ('%s',NULL,'%s','%s',1742500000000,1742500000000)", id, directory, title)
+	}
+	// sessionJSON is spliced into the payload: the column's own camelCase field,
+	// the snake_case variant, or nothing at all.
+	payload := func(sessionJSON string, ms int64, in int) string {
+		return fmt.Sprintf(`{"role":"assistant",%s"path":{"root":"/Users/dev/fallback"},"cost":0,"tokens":{"total":%d,"input":%d,"output":10},"modelID":"m","providerID":"p","time":{"created":%d},"text":"SENTINEL_PRIVATE_TEXT"}`, sessionJSON, in+10, in, ms)
+	}
+	column := func(v string) string {
+		if v == "" {
+			return "NULL"
+		}
+		return "'" + v + "'"
+	}
+	v2 := func(id, sid string, sessionJSON string, seq int, ms int64, in int) string {
+		return fmt.Sprintf("INSERT INTO session_message (id,session_id,type,seq,time_created,time_updated,data) VALUES ('%s',%s,'assistant',%d,%d,%d,%s)",
+			id, column(sid), seq, ms, ms, sqlQuote(payload(sessionJSON, ms, in)))
+	}
+	v1 := func(id, sid string, ms int64, in int, sessionJSON string) string {
+		return fmt.Sprintf("INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES ('%s',%s,%d,%d,%s)",
+			id, column(sid), ms, ms, sqlQuote(payload(sessionJSON, ms, in)))
+	}
+	execSQL(t, db,
+		"CREATE TABLE session (id text PRIMARY KEY, parent_id text, directory text, title text, time_created integer NOT NULL, time_updated integer NOT NULL)",
+		"CREATE TABLE message (id text PRIMARY KEY, session_id text, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)",
+		"CREATE TABLE session_message (id text PRIMARY KEY, session_id text, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)",
+		session("ses_camel", "/Users/dev/camel", "Camel"),
+		session("ses_snake", "/Users/dev/snake", "Snake"),
+		session("ses_clean", "/Users/dev/clean", "Clean"),
+		// v2: a NULL column, an empty column, an unattributable row, and a clean
+		// row after it.
+		v2("sm_camel", "", `"sessionID":"ses_camel",`, 0, 1742500010000, 100),
+		v2("sm_snake", "", `"session_id":"ses_snake",`, 1, 1742500020000, 200),
+		v2("sm_orphan", "", "", 2, 1742500030000, 300),
+		v2("sm_clean", "ses_clean", "", 3, 1742500040000, 400),
+		// v1: the same shapes, with the unattributable row between the
+		// recoverable one and the clean one.
+		v1("m_camel", "", 1742500015000, 500, `"sessionID":"ses_camel",`),
+		v1("m_orphan", "", 1742500035000, 600, ""),
+		v1("m_clean", "ses_clean", 1742500045000, 700, ""),
+	)
+
+	p := NewWithRoots(dir)
+	res := parseAll(t, p)
+
+	for _, want := range []struct{ key, session, project string }{
+		{"opencode:sm_camel", "ses_camel", "/Users/dev/camel"},
+		{"opencode:sm_snake", "ses_snake", "/Users/dev/snake"},
+		{"opencode:sm_clean", "ses_clean", "/Users/dev/clean"},
+		{"opencode:m_camel", "ses_camel", "/Users/dev/camel"},
+		{"opencode:m_clean", "ses_clean", "/Users/dev/clean"},
+	} {
+		ev := eventByKey(t, res.Events, want.key)
+		if ev.SessionID != want.session {
+			t.Errorf("%s SessionID = %q, want %q (the payload states the session the column lost)", want.key, ev.SessionID, want.session)
+		}
+		if ev.ProjectPath != want.project {
+			t.Errorf("%s ProjectPath = %q, want %q (the recovered session must resolve the session row)", want.key, ev.ProjectPath, want.project)
+		}
+	}
+	// One session-less event makes the store reject the whole batch, so no event
+	// the parser hands over may be missing a session.
+	for _, ev := range res.Events {
+		if ev.SessionID == "" || ev.DedupKey == "" {
+			t.Errorf("event %+v has no session or dedup key: the store would reject the whole batch and freeze every later scan", ev)
+		}
+	}
+	if got := len(res.Events); got != 5 {
+		t.Fatalf("got %d events, want 5: %v", got, keysOf(res.Events))
+	}
+	// The unattributable row is skipped, not emitted under an empty session and
+	// not counted under another row's key.
+	for _, key := range keysOf(res.Events) {
+		if key == "opencode:sm_orphan" || key == "opencode:m_orphan" {
+			t.Errorf("unattributable row %s was emitted: %v", key, keysOf(res.Events))
+		}
+	}
+
+	// The skipped rows must not wedge the cursor: one new row behind them
+	// arrives on the next incremental pass.
+	execSQL(t, db, v2("sm_late", "ses_clean", "", 4, 1742500050000, 800))
+	late := parseFrom(t, p, res.Cursors)
+	if len(late.Events) != 1 || late.Events[0].DedupKey != "opencode:sm_late" {
+		t.Errorf("the pass after the skipped rows delivered %v, want [opencode:sm_late]: a skipped row must not hold the watermark", keysOf(late.Events))
 	}
 }

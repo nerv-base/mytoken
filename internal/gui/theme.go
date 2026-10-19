@@ -102,6 +102,14 @@ func harnessColor(h model.Harness) ui.Color {
 		return ui.Hex("#10B981")
 	case model.Mux:
 		return ui.Hex("#64748B")
+	case model.ZCode:
+		return ui.Hex("#6D5EF5")
+	case model.MiniMaxCode:
+		return ui.Hex("#F97316")
+	case model.MiMoCode:
+		return ui.Hex("#FF6900")
+	case model.StepCode:
+		return ui.Hex("#2563EB")
 	}
 	return Anon
 }
@@ -160,7 +168,7 @@ var harnessIcons = func() map[model.Harness]brandMark {
 	}
 }()
 
-// harnessMark draws h's logo at size points, or a dot for an unknown harness.
+// harnessMark draws h's logo at size points, or a dot when no bundled mark exists.
 func harnessMark(c *ui.Context, h model.Harness, size float32) ui.Element {
 	m, ok := harnessIcons[h]
 	switch {
