@@ -114,49 +114,54 @@ func runDaily(ctx context.Context, args []string, out, errout io.Writer) int {
 		fmt.Fprintln(errout, err)
 		return 2
 	}
-	ro, q, err := openQueryReadOnly(ctx, *dbPath)
-	if err != nil {
-		fmt.Fprintln(errout, err)
-		return 1
-	}
-	defer ro.Close()
-	now := time.Now().In(loc)
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -(*days - 1))
-	pts, err := q.Daily(ctx, query.Filter{Range: query.Range{From: start, To: now}})
-	if err != nil {
-		fmt.Fprintln(errout, err)
-		return 1
-	}
-	if *js {
-		if *noCost {
-			for i := range pts {
-				pts[i].CostUSD = 0
-			}
+	// query.Daily buckets by time.Local (internal/query/service.go floor()), so
+	// --timezone must become the process zone while the points are bucketed and
+	// formatted; otherwise the JSON label and the day rows disagree with it.
+	return runInLocation(loc, func() int {
+		ro, q, err := openQueryReadOnly(ctx, *dbPath)
+		if err != nil {
+			fmt.Fprintln(errout, err)
+			return 1
 		}
-		if err := json.NewEncoder(out).Encode(map[string]any{"timezone": name, "days": pts}); err != nil {
+		defer ro.Close()
+		now := time.Now().In(loc)
+		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -(*days - 1))
+		pts, err := q.Daily(ctx, query.Filter{Range: query.Range{From: start, To: now}})
+		if err != nil {
+			fmt.Fprintln(errout, err)
+			return 1
+		}
+		if *js {
+			if *noCost {
+				for i := range pts {
+					pts[i].CostUSD = 0
+				}
+			}
+			if err := json.NewEncoder(out).Encode(map[string]any{"timezone": name, "days": pts}); err != nil {
+				fmt.Fprintln(errout, err)
+				return 1
+			}
+			return 0
+		}
+		w := newTable(out)
+		if *noCost {
+			fmt.Fprintln(w, "DATE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\tTOTAL\tCACHE HIT")
+		} else {
+			fmt.Fprintln(w, "DATE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\tTOTAL\tAPI-EQUIV\tCACHE HIT")
+		}
+		for _, p := range pts {
+			if *noCost {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", p.Day.Format("2006-01-02"), fmtInt(p.Tokens.Input), fmtInt(p.Tokens.Output), fmtInt(p.Tokens.CacheRead), fmtInt(p.Tokens.CacheWrite), fmtInt(p.Tokens.Total()), pct(p.Tokens.HitRate()))
+				continue
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", p.Day.Format("2006-01-02"), fmtInt(p.Tokens.Input), fmtInt(p.Tokens.Output), fmtInt(p.Tokens.CacheRead), fmtInt(p.Tokens.CacheWrite), fmtInt(p.Tokens.Total()), money(p.CostUSD, 0, false), pct(p.Tokens.HitRate()))
+		}
+		if err := w.Flush(); err != nil {
 			fmt.Fprintln(errout, err)
 			return 1
 		}
 		return 0
-	}
-	w := newTable(out)
-	if *noCost {
-		fmt.Fprintln(w, "DATE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\tTOTAL\tCACHE HIT")
-	} else {
-		fmt.Fprintln(w, "DATE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\tTOTAL\tAPI-EQUIV\tCACHE HIT")
-	}
-	for _, p := range pts {
-		if *noCost {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", p.Day.Format("2006-01-02"), fmtInt(p.Tokens.Input), fmtInt(p.Tokens.Output), fmtInt(p.Tokens.CacheRead), fmtInt(p.Tokens.CacheWrite), fmtInt(p.Tokens.Total()), pct(p.Tokens.HitRate()))
-			continue
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", p.Day.Format("2006-01-02"), fmtInt(p.Tokens.Input), fmtInt(p.Tokens.Output), fmtInt(p.Tokens.CacheRead), fmtInt(p.Tokens.CacheWrite), fmtInt(p.Tokens.Total()), money(p.CostUSD, 0, false), pct(p.Tokens.HitRate()))
-	}
-	if err := w.Flush(); err != nil {
-		fmt.Fprintln(errout, err)
-		return 1
-	}
-	return 0
+	})
 }
 
 func resolveReportingZone(ctx context.Context, explicit, dbOverride string) (*time.Location, string, error) {

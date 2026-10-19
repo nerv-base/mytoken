@@ -44,7 +44,7 @@ func run(args []string, out, errout io.Writer) int {
 	case "quota":
 		return runQuota(ctx, args[1:], out, errout)
 	default:
-		fmt.Fprintln(errout, "unknown command:", args[0])
+		fmt.Fprintf(errout, "unknown command: %s\nRun \"mytoken help\" for usage.\n", args[0])
 		return 2
 	}
 }
