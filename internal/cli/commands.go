@@ -252,9 +252,15 @@ func runScan(ctx context.Context, args []string, out, errout io.Writer) int {
 		return 1
 	}
 	var events, sessions int64
-	err = a.Store.DB().QueryRowContext(ctx, "SELECT count(*) FROM events").Scan(&events)
+	// Count facts directly: the events view joins every row to its dimension,
+	// which is wasted work for a count. The session count used to correlated-scan
+	// the same view per session; on 255k events that was 38.9s. Drive it through
+	// the dimension index instead, which makes it a few milliseconds.
+	err = a.Store.DB().QueryRowContext(ctx, "SELECT count(*) FROM event_data").Scan(&events)
 	if err == nil {
-		err = a.Store.DB().QueryRowContext(ctx, "SELECT count(*) FROM sessions WHERE parent_id='' AND EXISTS (SELECT 1 FROM events WHERE events.harness=sessions.harness AND events.session_id=sessions.session_id)").Scan(&sessions)
+		err = a.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM sessions s WHERE s.parent_id='' AND EXISTS (
+			SELECT 1 FROM event_dimensions d JOIN event_data e ON e.dimension_id=d.id
+			WHERE d.harness=s.harness AND d.instance_id=s.instance_id AND d.session_id=s.session_id)`).Scan(&sessions)
 	}
 	if err != nil {
 		fmt.Fprintln(errout, err)

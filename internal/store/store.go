@@ -46,7 +46,18 @@ type Resolution struct {
 	Priced   bool
 }
 type Store struct {
-	db            *sql.DB
+	db *sql.DB
+	// rdb is a separate read-only pool over the same file. Every query path that
+	// is allowed to run concurrently with a writer uses it, so a GUI refresh can
+	// read a WAL snapshot while a scan commit is in flight instead of queueing
+	// behind the single writer connection. It is opened on first use, so a store
+	// that only scans never holds a second connection (and its WAL read mark);
+	// it stays nil for :memory: databases, where a second pool would be a
+	// different database entirely.
+	rdb           *sql.DB
+	rdbOnce       sync.Once
+	memory        bool
+	path          string
 	writer        sync.Mutex
 	mu            sync.Mutex
 	subscribers   map[chan struct{}]struct{}
@@ -81,7 +92,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	st := &Store{db: db, subscribers: make(map[chan struct{}]struct{})}
+	st := &Store{db: db, path: path, memory: path == ":memory:", subscribers: make(map[chan struct{}]struct{})}
 	// Keep bulk-index pages and temporary journals in memory without changing
 	// WAL durability. A negative cache_size is a KiB budget, allocated on demand.
 	//
@@ -110,6 +121,46 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`)
 	return st, nil
 }
 func (s *Store) DB() *sql.DB { return s.db }
+
+// ReadDB is the connection pool for read queries that must not queue behind the
+// writer. It is a separate read-only (query_only) pool over the same WAL
+// database, with several connections, so a UI refresh and a session detail read
+// can overlap a scan commit. For :memory: databases it is the single writer
+// connection, because a second pool would see a different, empty database.
+func (s *Store) ReadDB() *sql.DB {
+	s.rdbOnce.Do(func() {
+		if s.memory || s.readOnly || s.db == nil {
+			return
+		}
+		path := s.path
+		if path == "" {
+			return
+		}
+		rdb, err := sql.Open("sqlite", sqlitedsn.URI(path, "_pragma=busy_timeout(5000)&_pragma=query_only(1)&_pragma=temp_store(MEMORY)&_pragma=cache_size(-16384)"))
+		if err != nil {
+			return
+		}
+		// A handful of connections is enough for the detail and list queries
+		// the UI issues; each one holds its own WAL read snapshot.
+		rdb.SetMaxOpenConns(4)
+		rdb.SetMaxIdleConns(4)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err = rdb.PingContext(ctx)
+		cancel()
+		if err != nil {
+			// Falling back to the writer keeps the store usable (for example on
+			// a filesystem where a second read-only connection is refused); it
+			// only loses read/write concurrency.
+			rdb.Close()
+			return
+		}
+		s.rdb = rdb
+	})
+	if s.rdb != nil {
+		return s.rdb
+	}
+	return s.db
+}
 func (s *Store) Close() error {
 	s.mu.Lock()
 	s.closed = true
@@ -120,7 +171,11 @@ func (s *Store) Close() error {
 	s.mu.Unlock()
 	// Closing the last writable connection checkpoints the WAL and unlinks the
 	// sidecars. A read-only handle never depends on this process owning them, so
-	// there is nothing to release here.
+	// there is nothing to release here. The reader pool goes first so no open
+	// read transaction can hold a WAL read mark past the writer's close.
+	if s.rdb != nil {
+		s.rdb.Close()
+	}
 	return s.db.Close()
 }
 func (s *Store) Exec(ctx context.Context, q string, args ...any) error {
@@ -281,6 +336,9 @@ func (s *Store) commitMany(ctx context.Context, writes []Write, report bool, rec
 	if err := tx.Commit(); err != nil {
 		return CommitOutcome{}, err
 	}
+	// Every committed write advances at least a cursor, so it is a data change a
+	// reader may observe; Subscribe coalesces the wakeups, so a burst of small
+	// commits still costs one refresh.
 	s.notify()
 	return outcome, nil
 }

@@ -52,7 +52,7 @@ type loadMode struct {
 
 func (s *service) load(ctx context.Context, f Filter, mode ...loadMode) (data, error) {
 	d := data{meta: map[sessionKey]model.SessionMeta{}}
-	tx, e := s.st.DB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, e := s.st.ReadDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if e != nil {
 		return d, e
 	}
@@ -69,7 +69,20 @@ func (s *service) load(ctx context.Context, f Filter, mode ...loadMode) (data, e
 // single consistent read snapshot instead of three separate transactions.
 func (s *service) loadTx(ctx context.Context, tx *sql.Tx, f Filter, mode ...loadMode) (data, error) {
 	d := data{meta: map[sessionKey]model.SessionMeta{}}
-	rows, e := tx.QueryContext(ctx, "SELECT harness,instance_id,session_id,parent_id,title,project,started_at,updated_at FROM sessions")
+	// A session detail only needs the sessions of one harness (and instance),
+	// not the whole table: with a few thousand sessions that is the difference
+	// between reading one index range and reading every source's rows.
+	metaSQL := "SELECT harness,instance_id,session_id,parent_id,title,project,started_at,updated_at FROM sessions"
+	var metaArgs []any
+	if len(mode) > 0 && mode[0].sessionID != "" {
+		metaSQL += " WHERE harness=?"
+		metaArgs = append(metaArgs, f.Harnesses[0])
+		if mode[0].scoped {
+			metaSQL += " AND instance_id=?"
+			metaArgs = append(metaArgs, mode[0].instance)
+		}
+	}
+	rows, e := tx.QueryContext(ctx, metaSQL, metaArgs...)
 	if e != nil {
 		return d, e
 	}
@@ -161,67 +174,218 @@ func (s *service) loadTx(ctx context.Context, tx *sql.Tx, f Filter, mode ...load
 				}
 			}
 		}
-		// Limit detail I/O to this session and descendants (including grandchildren).
+		// Limit detail I/O to this session and descendants (including
+		// grandchildren). Index children once: scanning every session per
+		// discovered id was quadratic in the number of sessions.
 		ids := []string{root}
 		seen := map[string]bool{root: true}
+		children := map[string][]string{}
+		for k, m := range d.meta {
+			if k.h == f.Harnesses[0] && (scope == "" || k.instance == scope) && m.ParentID != "" {
+				children[m.ParentID] = append(children[m.ParentID], k.id)
+			}
+		}
 		for i := 0; i < len(ids); i++ {
-			for k, m := range d.meta {
-				if m.ParentID == ids[i] && k.h == f.Harnesses[0] && (scope == "" || k.instance == scope) && !seen[k.id] {
-					ids = append(ids, k.id)
-					seen[k.id] = true
+			for _, id := range children[ids[i]] {
+				if !seen[id] {
+					ids = append(ids, id)
+					seen[id] = true
 				}
 			}
 		}
-		// Drive the fact lookup through dimension IDs. A view predicate on
-		// harness alone otherwise tempts SQLite into scanning its dedup index.
-		where := " WHERE rowid IN (SELECT rowid FROM event_data WHERE dimension_id IN (SELECT id FROM event_dimensions WHERE harness=?"
-		args := []any{f.Harnesses[0]}
+		// Read the fact table directly instead of the `events` compatibility
+		// view: the view expands every dimension column for every fact, which is
+		// what made an 8k-event detail take ~111ms. Resolving the handful of
+		// dimensions in memory and scanning event_data takes ~14ms.
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		dimArgs := []any{f.Harnesses[0]}
+		dimWhere := " WHERE harness=?"
 		if scope != "" {
-			where += " AND instance_id=?"
-			args = append(args, scope)
+			dimWhere += " AND instance_id=?"
+			dimArgs = append(dimArgs, scope)
 		}
-		where += " AND session_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + ")))"
+		dimWhere += " AND session_id IN (" + marks + ")"
 		for _, id := range ids {
-			args = append(args, id)
+			dimArgs = append(dimArgs, id)
 		}
-		rows, e = tx.QueryContext(ctx, `SELECT harness,instance_id,dedup_key,session_id,parent_id,project,timestamp,model,provider,base_url,input,output,cache_read,cache_write,cache_write_1h,reasoning,log_cost,resolved_provider,attrib,cost,priced,request_id,boundary,bill_amount,bill_unit FROM events`+where+" ORDER BY timestamp,harness,dedup_key", args...)
+		dimRows, e := tx.QueryContext(ctx, `SELECT id,instance_id,session_id,parent_id,project,model,provider,base_url,resolved_provider,attrib FROM event_dimensions`+dimWhere, dimArgs...)
 		if e != nil {
 			return d, e
 		}
-		loadedInstances := map[string]bool{}
-		for rows.Next() {
-			var v AttributedEvent
-			var instance string
-			var at int64
-			var cost, billAmount sql.NullFloat64
-			var billUnit string
-			if e = rows.Scan(&v.Harness, &instance, &v.DedupKey, &v.SessionID, &v.ParentID, &v.ProjectPath, &at, &v.Model, &v.Provider, &v.BaseURL, &v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.Tokens.CacheWrite1h, &v.Tokens.Reasoning, &cost, &v.ResolvedProvider, &v.Attrib, &v.Cost, &v.Priced, &v.RequestID, &v.Boundary, &billAmount, &billUnit); e != nil {
-				rows.Close()
+		type dimAttrs struct {
+			instance, session, parent, project, model, provider, baseURL, resolved, attrib string
+		}
+		dims := map[int64]dimAttrs{}
+		rootDims := []int64{}
+		for dimRows.Next() {
+			var id int64
+			var a dimAttrs
+			if e = dimRows.Scan(&id, &a.instance, &a.session, &a.parent, &a.project, &a.model, &a.provider, &a.baseURL, &a.resolved, &a.attrib); e != nil {
+				dimRows.Close()
 				return d, e
 			}
-			v.InstanceID = store.NormalizeInstanceID(instance)
-			v.Timestamp = time.Unix(0, at).UTC()
-			if cost.Valid {
-				x := cost.Float64
-				v.CostUSD = &x
+			dims[id] = a
+			if a.session == root {
+				rootDims = append(rootDims, id)
 			}
-			if billAmount.Valid {
-				v.Bill = &model.Bill{Amount: billAmount.Float64, Unit: billUnit}
-			}
-			eventSource(&v)
-			loadedInstances[v.InstanceID] = true
-			loaded = append(loaded, v)
 		}
-		e = rows.Err()
-		rows.Close()
+		e = dimRows.Err()
+		dimRows.Close()
 		if e != nil {
 			return d, e
+		}
+		// Descendant sessions only feed the children summary, never the returned
+		// event list, so their facts are aggregated in SQL instead of loaded.
+		// Every descendant fact belongs to a dimension, and a dimension already
+		// fixes session/model/provider/attribution, so grouping by dimension id
+		// is exactly the per-breakdown aggregate we need. The alternative --
+		// filtering facts by the sessions table -- made SQLite scan the fact
+		// table instead of the dimension index.
+		desc := make([]int64, 0, len(dims))
+		for id, a := range dims {
+			if a.session != root {
+				desc = append(desc, id)
+			}
+		}
+		type aggQueryer interface {
+			QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+		}
+		aggQuery := func(db aggQueryer) ([]AttributedEvent, error) {
+			aggArgs := make([]any, len(desc))
+			for i, id := range desc {
+				aggArgs[i] = id
+			}
+			aggRows, e := db.QueryContext(ctx, `SELECT dimension_id,`+
+				`COALESCE(SUM(input),0),COALESCE(SUM(output),0),COALESCE(SUM(cache_read),0),COALESCE(SUM(cache_write),0),COALESCE(SUM(cache_write_1h),0),COALESCE(SUM(reasoning),0),`+
+				`COALESCE(SUM(cost),0),SUM(CASE WHEN priced=0 AND log_cost IS NULL THEN 1 ELSE 0 END),COUNT(*)`+
+				` FROM event_data WHERE dimension_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(desc)), ",")+`) GROUP BY dimension_id`, aggArgs...)
+			if e != nil {
+				return nil, e
+			}
+			out := make([]AttributedEvent, 0, len(desc))
+			for aggRows.Next() {
+				var v AttributedEvent
+				var dim int64
+				if e = aggRows.Scan(&dim, &v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.Tokens.CacheWrite1h, &v.Tokens.Reasoning, &v.Cost, &v.unpriced, &v.requests); e != nil {
+					aggRows.Close()
+					return nil, e
+				}
+				a := dims[dim]
+				// An empty DedupKey keeps data.rows from treating the aggregate
+				// as one timestamped request: tokens, cost and counts still roll
+				// up, while session start/end stay the sessions-table min/max.
+				v.Harness = f.Harnesses[0]
+				v.InstanceID = store.NormalizeInstanceID(a.instance)
+				v.SessionID, v.ParentID = a.session, a.parent
+				v.Model, v.Provider, v.BaseURL = a.model, a.provider, a.baseURL
+				v.ResolvedProvider, v.Attrib = a.resolved, model.AttribSource(a.attrib)
+				v.Priced = true
+				out = append(out, v)
+			}
+			e = aggRows.Err()
+			aggRows.Close()
+			return out, e
+		}
+		// The aggregate scan and the root fact scan are independent index
+		// ranges, so overlap them: the aggregate runs on a pooled read
+		// connection while the root facts stream from this transaction. The two
+		// see the same data unless a scan commits in the middle of this call,
+		// in which case the children summary is a moment newer than the event
+		// list -- never stale, and corrected by the next refresh.
+		type aggResult struct {
+			events []AttributedEvent
+			err    error
+		}
+		aggCh := make(chan aggResult, 1)
+		aggAsync := len(desc) > 0 && s.st.ReadDB() != s.st.DB()
+		if aggAsync {
+			go func() {
+				evs, e := aggQuery(s.st.ReadDB())
+				aggCh <- aggResult{evs, e}
+			}()
+		}
+		loadedInstances := map[string]bool{}
+		rootStart := len(loaded)
+		if len(rootDims) > 0 {
+			args := make([]any, len(rootDims))
+			for i, id := range rootDims {
+				args[i] = id
+			}
+			factRows, e := tx.QueryContext(ctx, `SELECT dimension_id,timestamp,dedup_key,input,output,cache_read,cache_write,cache_write_1h,reasoning,log_cost,cost,priced,request_id,boundary,bill_amount,bill_unit FROM event_data WHERE dimension_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(rootDims)), ",")+`) ORDER BY timestamp`, args...)
+			if e != nil {
+				return d, e
+			}
+			for factRows.Next() {
+				var v AttributedEvent
+				var dim, at int64
+				var logCost, billAmount sql.NullFloat64
+				var billUnit string
+				if e = factRows.Scan(&dim, &at, &v.DedupKey, &v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.Tokens.CacheWrite1h, &v.Tokens.Reasoning, &logCost, &v.Cost, &v.Priced, &v.RequestID, &v.Boundary, &billAmount, &billUnit); e != nil {
+					factRows.Close()
+					return d, e
+				}
+				a := dims[dim]
+				v.Harness = f.Harnesses[0]
+				v.InstanceID = store.NormalizeInstanceID(a.instance)
+				v.SessionID, v.ParentID, v.ProjectPath = a.session, a.parent, a.project
+				v.Model, v.Provider, v.BaseURL = a.model, a.provider, a.baseURL
+				v.ResolvedProvider, v.Attrib = a.resolved, model.AttribSource(a.attrib)
+				v.Timestamp = time.Unix(0, at).UTC()
+				if logCost.Valid {
+					x := logCost.Float64
+					v.CostUSD = &x
+				}
+				if billAmount.Valid {
+					v.Bill = &model.Bill{Amount: billAmount.Float64, Unit: billUnit}
+				}
+				eventSource(&v)
+				loadedInstances[v.InstanceID] = true
+				loaded = append(loaded, v)
+			}
+			e = factRows.Err()
+			factRows.Close()
+			if e != nil {
+				return d, e
+			}
+		}
+		// ORDER BY timestamp is already satisfied by the index scan and may
+		// merge several dimensions, so only the rare same-nanosecond groups
+		// need the dedup-key tiebreak the previous view query asked SQLite to
+		// compute with a temp b-tree over every row.
+		ties := false
+		for i := rootStart + 1; i < len(loaded); i++ {
+			if loaded[i].Timestamp.Equal(loaded[i-1].Timestamp) {
+				ties = true
+				break
+			}
+		}
+		if ties {
+			sort.Slice(loaded[rootStart:], func(i, j int) bool {
+				a, b := loaded[rootStart+i], loaded[rootStart+j]
+				if !a.Timestamp.Equal(b.Timestamp) {
+					return a.Timestamp.Before(b.Timestamp)
+				}
+				return a.DedupKey < b.DedupKey
+			})
+		}
+		if len(desc) > 0 {
+			var res aggResult
+			if aggAsync {
+				res = <-aggCh
+			} else {
+				res.events, res.err = aggQuery(tx)
+			}
+			if res.err != nil {
+				return d, res.err
+			}
+			loaded = append(loaded, res.events...)
 		}
 		// Without a known instance the facts themselves must agree on one.
 		if scope == "" && len(loadedInstances) > 1 {
 			return d, ErrAmbiguousInstance
 		}
 	}
+	d.events = make([]AttributedEvent, 0, len(loaded))
 	for _, v := range loaded {
 		if target, ok := aliasLookup[[2]string{v.ResolvedProvider, v.Model}]; ok {
 			v.Model = target

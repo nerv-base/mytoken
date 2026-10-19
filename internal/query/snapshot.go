@@ -84,7 +84,7 @@ func ReadEnvelope(ctx context.Context, st *store.Store, f Filter, opts ...Envelo
 		o = opts[0]
 	}
 	s := &service{st: st}
-	tx, err := st.DB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := st.ReadDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return out, err
 	}

@@ -84,7 +84,6 @@ type queryCase struct {
 	run  func() error
 }
 
-
 func benchmarkCases(q Service, start time.Time) []queryCase {
 	f := Filter{Range: Range{From: start, To: start.Add(7 * 24 * time.Hour)}}
 	return []queryCase{
@@ -142,5 +141,54 @@ func TestQueryPerformanceBudget(t *testing.T) {
 				t.Errorf("query exceeded 50MiB allocation budget: %d", allocated)
 			}
 		})
+	}
+}
+
+// detailFixture is a miniature of the real corpus's worst case: one root
+// session with thousands of events and a few descendant sessions whose facts
+// only feed the children summary.
+func detailFixture(tb testing.TB) (Service, model.Harness, string) {
+	tb.Helper()
+	st, err := store.Open(filepath.Join(tb.TempDir(), "detail.db"))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() { st.Close() })
+	ctx := context.Background()
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.Local)
+	const root = "detail-root"
+	for child := 0; child < 3; child++ {
+		events := make([]model.UsageEvent, 400)
+		res := make([]store.Resolution, 400)
+		for j := range events {
+			events[j] = model.UsageEvent{DedupKey: fmt.Sprintf("%s-%04d", root, j), SessionID: root, ParentID: "", Timestamp: start.Add(time.Duration(j) * time.Second), Model: "model-0", Tokens: model.Tokens{Input: 100, Output: 20, CacheRead: 200, CacheWrite: 10, CacheWrite1h: 2, Reasoning: 5}}
+			res[j] = store.Resolution{Provider: "provider-0", Attrib: model.AttribLog, Cost: .001, Priced: true}
+		}
+		if err = st.Commit(ctx, model.Codex, root, harness.Batch{Events: events}, res); err != nil {
+			tb.Fatal(err)
+		}
+		id := fmt.Sprintf("detail-child-%d", child)
+		for j := range events {
+			events[j].DedupKey = fmt.Sprintf("%s-%04d", id, j)
+			events[j].SessionID = id
+			events[j].ParentID = root
+			events[j].Timestamp = start.Add(time.Duration(j) * time.Second)
+		}
+		if err = st.Commit(ctx, model.Codex, id, harness.Batch{Events: events}, res); err != nil {
+			tb.Fatal(err)
+		}
+	}
+	return NewService(st), model.Codex, root
+}
+
+func BenchmarkSessionDetail(b *testing.B) {
+	q, h, id := detailFixture(b)
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, _, err := q.Session(ctx, h, id); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

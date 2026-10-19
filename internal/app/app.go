@@ -285,7 +285,7 @@ func (a *App) parserSet(ctx context.Context) ([]harness.Parser, map[model.Harnes
 
 // ListSources reports every compiled harness with its settings and usage.
 func (a *App) ListSources(ctx context.Context) ([]Source, error) {
-	rows, err := a.Store.DB().QueryContext(ctx, `SELECT harness, count(*), max(timestamp) FROM events GROUP BY harness`)
+	rows, err := a.Store.ReadDB().QueryContext(ctx, `SELECT harness, count(*), max(timestamp) FROM event_data GROUP BY harness`)
 	if err != nil {
 		return nil, err
 	}
@@ -540,12 +540,12 @@ func (a *App) Info(ctx context.Context) (DBInfo, error) {
 	if fi, err := osStat(a.Path); err == nil {
 		out.Bytes = fi
 	}
-	row := a.Store.DB().QueryRowContext(ctx, `SELECT count(*), coalesce(min(timestamp),0), coalesce(max(timestamp),0) FROM events`)
+	row := a.Store.ReadDB().QueryRowContext(ctx, `SELECT count(*), coalesce(min(timestamp),0), coalesce(max(timestamp),0) FROM event_data`)
 	var oldest, newest int64
 	if err := row.Scan(&out.Events, &oldest, &newest); err != nil {
 		return out, err
 	}
-	if err := a.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM sessions`).Scan(&out.Sessions); err != nil {
+	if err := a.Store.ReadDB().QueryRowContext(ctx, `SELECT count(*) FROM sessions`).Scan(&out.Sessions); err != nil {
 		return out, err
 	}
 	if oldest > 0 {

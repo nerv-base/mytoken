@@ -172,7 +172,7 @@ func (s *settingsService) SetModelAliases(ctx context.Context, aliases []ModelAl
 }
 
 func (s *settingsService) Providers(ctx context.Context) ([]string, error) {
-	rows, err := s.st.DB().QueryContext(ctx, "SELECT DISTINCT resolved_provider FROM events WHERE resolved_provider!='' ORDER BY resolved_provider")
+	rows, err := s.st.ReadDB().QueryContext(ctx, "SELECT DISTINCT resolved_provider FROM events WHERE resolved_provider!='' ORDER BY resolved_provider")
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func (s *settingsService) SearchCatalog(ctx context.Context, q string, limit int
 	return s.p.SearchCatalog(q, limit), nil
 }
 func (s *settingsService) UnpricedModels(ctx context.Context) ([]UnpricedModel, error) {
-	rows, err := s.st.DB().QueryContext(ctx, "SELECT model,resolved_provider,count(*),sum(input+output+cache_read+cache_write+reasoning) FROM events WHERE priced=0 GROUP BY model,resolved_provider")
+	rows, err := s.st.ReadDB().QueryContext(ctx, "SELECT model,resolved_provider,count(*),sum(input+output+cache_read+cache_write+reasoning) FROM events WHERE priced=0 GROUP BY model,resolved_provider")
 	if err != nil {
 		return nil, err
 	}
