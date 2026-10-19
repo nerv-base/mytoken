@@ -327,7 +327,7 @@ func (a *App) sourcesSettings(c *ui.Context, pal palette) {
 		}
 	}
 	card(c, pal).Gap(6).Children(func() {
-		cardTitle(c, pal, trf("sourcesFound", len(found)), func() {
+		cardTitle(c, pal, trn("sourcesFound", len(found)), func() {
 			if ui.Button(c, tr("rescan")).Disabled(st.act.running).Clicked() {
 				a.act(tr("rescanDone"), a.d.Sources.Rescan)
 			}

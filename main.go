@@ -25,12 +25,14 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
-	// The IANA database travels with the binary: a budget period is resolved
-	// in a named zone the user typed, and a shipped build cannot rely on the
+	// The IANA database travels with the binary: days are counted in the
+	// zone picked in Settings, and a shipped build cannot rely on the
 	// machine having one installed.
 	_ "time/tzdata"
 
 	"github.com/egoist/mygo"
+	// MyGo's own texts (menus, dialogs, the update window) in Chinese.
+	_ "github.com/egoist/mygo/locales/zh-Hans"
 	"github.com/egoist/mygo/plugins/updater"
 	"github.com/egoist/mygo/plugins/updater/native"
 	"github.com/egoist/mygo/ui"
@@ -96,6 +98,16 @@ func main() {
 		main.Show()
 		main.Focus()
 	}
+	if demoBuild {
+		// The demo never touches the real index: it opens an empty one
+		// of its own and shows synthetic data.
+		home, err := os.MkdirTemp("", "mytoken-demo-")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer os.RemoveAll(home)
+		os.Setenv("MYTOKEN_HOME", home)
+	}
 	// A separate MYTOKEN_HOME is a separate index, so a development or
 	// test run beside the installed app does not hand itself over to it.
 	if os.Getenv("MYTOKEN_HOME") == "" && !mygo.App.RequestSingleInstanceLock() {
@@ -108,7 +120,11 @@ func main() {
 	// package, never check.
 	mygo.Use(native.Plugin)
 
-	a, err := app.Open()
+	open := app.Open
+	if demoBuild {
+		open = app.OpenLocal // no price download, no quota fetches
+	}
+	a, err := open()
 	if err != nil {
 		// Opening the index failed (a migration refused to run, a leftover
 		// backup, a full disk, a locked file). The CLI reports this on stderr
@@ -122,7 +138,7 @@ func main() {
 	defer a.Close()
 
 	// MYTOKEN_PPROF=127.0.0.1:6060 serves net/http/pprof, to measure the
-	// app against its CPU and memory budgets (docs/ROADMAP.md).
+	// app against its CPU and memory budgets (docs/ARCHITECTURE.md#performance-budgets).
 	if addr := os.Getenv("MYTOKEN_PPROF"); addr != "" {
 		go func() { log.Printf("mytoken: pprof: %v", http.ListenAndServe(addr, nil)) }()
 	}
@@ -140,8 +156,10 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := a.StartScanning(ctx); err != nil {
-		log.Printf("mytoken: scan: %v", err)
+	if !demoBuild {
+		if err := a.StartScanning(ctx); err != nil {
+			log.Printf("mytoken: scan: %v", err)
+		}
 	}
 	setLangFromSystem()
 
@@ -198,8 +216,9 @@ func main() {
 			tray.SetToolTip(tip)
 		}
 	}
+	deps = demoDeps(deps)
 	ui2 := gui.New(deps)
-	if a.Quota != nil {
+	if a.Quota != nil && !demoBuild {
 		a.Quota.SetOnChange(func([]plan.Snapshot) { ui2.QuotasChanged() })
 	}
 
@@ -259,7 +278,15 @@ func main() {
 			Vibrancy:        mygo.VibrancyMenu,
 			Content:         ui.View(ui2.PanelView),
 		})
-		panel.OnBlur(func() { panel.Hide() })
+		if demoBuild && os.Getenv("MYTOKEN_DEMO_PANEL") != "" {
+			// For the README images: the panel open on its own, and
+			// staying open.
+			time.AfterFunc(2*time.Second, func() {
+				mygo.RunOnMain(func() { panel.SetPosition(1500, 80); panel.Show() })
+			})
+		} else {
+			panel.OnBlur(func() { panel.Hide() })
+		}
 		ready = true
 		ui2.Start()
 

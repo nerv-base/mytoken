@@ -257,7 +257,7 @@ func (a *App) deckFront(c *ui.Context, pal palette, s activeSession, moving, hov
 						ui.Text(c, tr("tpsUnit")).FontSize(12).TextColor(pal.muted).NoWrap().Padding(0, 0, 4, 0)
 					})
 				})
-				ui.Text(c.Key("pace"), trf("perHour", fmtUSD(s.perHour))+"  ·  "+tr("hitRate")+" "+fmtPct(s.hit)+"  ·  "+trf("reqIn10m", s.requests)).
+				ui.Text(c.Key("pace"), trf("perHour", fmtUSD(s.perHour))+"  ·  "+tr("hitRate")+" "+fmtPct(s.hit)+"  ·  "+trn("reqIn10m", s.requests)).
 					FontSize(12).TextColor(pal.muted).FontFeatures("tnum").SingleLine().Ellipsis("…").
 					ContentTransition(ui.ContentTransition{Numeric: true})
 			})

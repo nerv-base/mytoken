@@ -128,7 +128,7 @@ func (a *App) sessionCount() string {
 	if s.total > len(s.rows) {
 		return trf("sessionsNewest", len(s.rows), s.total)
 	}
-	return trf("sessionsCount", s.total)
+	return trn("sessionsCount", s.total)
 }
 
 // sessionTitle is a session's title, or its tool and id without one.
@@ -308,7 +308,7 @@ func (a *App) requestTable(c *ui.Context, pal palette) {
 		return
 	}
 	a.rcard(c, pal, "sessions4", 3, false).Gap(8).Children(func() {
-		cardTitle(c, pal, trf("requestsN", n), nil)
+		cardTitle(c, pal, trn("requestsN", n), nil)
 		head := func() {
 			ui.Row(c).Gap(10).Padding(0, 4).Children(func() {
 				col := func(s string, w float32) {

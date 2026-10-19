@@ -65,6 +65,17 @@ func tr(key string) string {
 
 func trf(key string, args ...any) string { return fmt.Sprintf(tr(key), args...) }
 
+// trn formats a count with key, or key+"1" when n is 1 and that key exists
+// (English singulars; Chinese uses the same string for both).
+func trn(key string, n int) string {
+	if n == 1 {
+		if _, ok := strs[key+"1"]; ok {
+			key += "1"
+		}
+	}
+	return trf(key, n)
+}
+
 // strs holds each string in English and Chinese.
 var strs = map[string][2]string{
 	// Navigation
@@ -107,6 +118,7 @@ var strs = map[string][2]string{
 	"addOnCredits":    {"Add-on pack", "加油包"},
 	"dollarUsage":     {"Usage", "用量"},
 	"accountsN":       {"%d accounts", "%d 个账户"},
+	"accountsN1":      {"%d account", "%d 个账户"},
 	"nearlyOutN":      {"%d nearly out", "%d 个快用完"},
 	"nearlyOut":       {"Nearly out", "快用完"},
 	"aheadOfPace":     {"Ahead of pace", "用得偏快"},
@@ -117,6 +129,7 @@ var strs = map[string][2]string{
 	"dailyUse14":      {"Use per day, last 14 days", "最近 14 天每日用量"},
 	"avgPerDay":       {"~%s a day", "日均约 %s"},
 	"runwayDays":      {"lasts ~%d days", "约可用 %d 天"},
+	"runwayDays1":     {"lasts ~%d day", "约可用 %d 天"},
 	"noRecentUse":     {"No use in the last week", "最近一周没有消耗"},
 	"historyBuilding": {"Daily use appears after a day or two", "每日用量需要记录一两天后显示"},
 	"expiresOn":       {"Expires %s", "%s 到期"},
@@ -131,6 +144,7 @@ var strs = map[string][2]string{
 	"resetsInHM": {"resets in %dh %dm", "%d 小时 %d 分后重置"},
 	"resetsInD":  {"resets in %dd", "%d 天后重置"},
 	"daysN":      {"%d days", "%d 天"},
+	"daysN1":     {"%d day", "%d 天"},
 
 	// Ranges
 	"range":    {"Range", "范围"},
@@ -158,6 +172,7 @@ var strs = map[string][2]string{
 	"tpsUnit":       {"tok/s (est.)", "tok/s · 约"},
 	"tpsShort":      {"~%s tok/s", "约 %s tok/s"},
 	"reqIn10m":      {"%d requests in 10 min", "10 分钟 %d 次请求"},
+	"reqIn10m1":     {"%d request in 10 min", "10 分钟 %d 次请求"},
 	"running":       {"Running", "进行中"},
 	"runningAgo":    {"Running · %s", "进行中 · %s"},
 	"now":           {"now", "现在"},
@@ -167,6 +182,7 @@ var strs = map[string][2]string{
 	"tokensN":       {"%s tokens", "%s Token"},
 	"requests":      {"Requests", "请求"},
 	"requestsN":     {"%d requests", "%d 次请求"},
+	"requestsN1":    {"%d request", "%d 次请求"},
 	"sessionsN":     {"Sessions", "会话"},
 	"hitRate":       {"Cache hit", "缓存命中"},
 	"hitRateLong":   {"of input read from cache", "的输入来自缓存"},
@@ -206,6 +222,7 @@ var strs = map[string][2]string{
 	"searchSessions":  {"Search title, project, tool, model", "搜索标题、项目、工具、模型"},
 	"noSessions":      {"No sessions", "没有会话"},
 	"sessionsCount":   {"%d sessions", "%d 个会话"},
+	"sessionsCount1":  {"%d session", "%d 个会话"},
 	"sessionsMatch":   {"%d of %d sessions", "%d / %d 个会话"},
 	"sessionsNewest":  {"Newest %d of %d sessions", "最近 %d 个，共 %d 个会话"},
 	"pickSession":     {"Choose a session", "选择一个会话"},
@@ -275,6 +292,7 @@ var strs = map[string][2]string{
 	"builtinCatalog":    {"built in", "内置"},
 	"catalogInfo":       {"Price list %s · %d models", "价格表 %s · %d 个模型"},
 	"sourcesFound":      {"Found %d tools", "已检测到 %d 个工具"},
+	"sourcesFound1":     {"Found %d tool", "已检测到 %d 个工具"},
 	"sourcesHint":       {"MyToken finds tools where they keep their data. Turn one off to stop reading it; choose a folder only if a tool keeps its data somewhere else.", "MyToken 会在工具默认的位置查找数据。关闭开关即不再读取；只有工具把数据放在别处时才需要手动选择目录。"},
 	"installOthers":     {"Install other agents (%d)", "安装其他 Agent（%d）"},
 	"installOthersHint": {"Not found on this computer. Once installed and used, they show up above by themselves.", "这些工具没有在本机找到。安装并用过之后，会自动出现在上面。"},

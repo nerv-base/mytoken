@@ -130,7 +130,7 @@ func (a *App) panelQuota(c *ui.Context, pal palette, q Quota, now time.Time) {
 					} else if days < 7 {
 						col = pal.warn
 					}
-					ui.Text(c, trf("runwayDays", int(math.Floor(days)))).FontSize(11).TextColor(col).NoWrap()
+					ui.Text(c, trn("runwayDays", int(math.Floor(days)))).FontSize(11).TextColor(col).NoWrap()
 				}
 				return
 			}

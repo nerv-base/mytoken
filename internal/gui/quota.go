@@ -238,7 +238,7 @@ func (a *App) quotaCard(c *ui.Context, pal palette) {
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, tr("planQuota")).FontSize(14).FontWeight(650).TextColor(pal.ink)
 			ui.Spacer(c)
-			ui.Text(c, trf("accountsN", len(qs))).FontSize(12.5).TextColor(pal.muted)
+			ui.Text(c, trn("accountsN", len(qs))).FontSize(12.5).TextColor(pal.muted)
 			if low > 0 {
 				ui.Text(c, trf("nearlyOutN", low)).FontSize(12).FontWeight(650).TextColor(pal.bad).Padding(3, 9).Radius(10).Background(pal.bad.Alpha(0.12)).NoWrap()
 			}
@@ -555,7 +555,7 @@ func (a *App) balanceBody(c *ui.Context, pal palette, q Quota, w QuotaWindow, de
 			}
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, trf("avgPerDay", fmtAmount(perDay, w.Unit))).FontSize(12).TextColor(pal.muted).SingleLine().Shrink(1).MinWidth(0)
-				ui.Text(c, trf("runwayDays", int(math.Floor(days)))).FontSize(12).FontWeight(650).TextColor(col).NoWrap()
+				ui.Text(c, trn("runwayDays", int(math.Floor(days)))).FontSize(12).FontWeight(650).TextColor(col).NoWrap()
 			})
 		}
 		if !w.ExpiresAt.IsZero() {

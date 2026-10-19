@@ -14,6 +14,11 @@ import (
 
 // demo is an in-memory Query over synthetic, deterministic usage, so pages
 // can be rendered and timed without a database.
+// Synthetic data: 400 days of six tools, three sessions running now and a
+// set of plan quotas. The screenshot tests draw it, and a `go build -tags
+// demo` binary runs the real app on it (see Demo) for the README images;
+// release builds never reference it, so the linker leaves it out.
+
 type demo struct {
 	now      time.Time
 	sessions []demoSession
@@ -31,18 +36,18 @@ type demoTool struct {
 }
 
 var demoTools = []demoTool{
-	{model.Codex, []string{"gpt-5.5", "gpt-5.5-mini"}, 5},
-	{model.ClaudeCode, []string{"claude-opus-4-6", "claude-sonnet-4-6"}, 3},
-	{model.DSH, []string{"deepseek-v4", "claude-opus-4-6"}, 2},
-	{model.OpenCode, []string{"kimi-k2.5"}, 0.7},
-	{model.Pi, []string{"gemini-3-pro"}, 0.5},
-	{model.Gemini, []string{"gemini-3-flash"}, 0.3},
+	{model.Codex, []string{"gpt-6-astra", "gpt-6-sol"}, 5},
+	{model.ClaudeCode, []string{"claude-opus-5-5", "claude-sonnet-5"}, 3},
+	{model.DSH, []string{"deepseek-v4", "claude-opus-5-5"}, 2},
+	{model.OpenCode, []string{"kimi-k3"}, 0.7},
+	{model.Pi, []string{"gemini-3.5-pro"}, 0.5},
+	{model.Gemini, []string{"gemini-3.5-flash"}, 0.3},
 }
 
 // demoPrice is USD per 1M input tokens; output is 5x, cache read 0.1x.
 var demoPrice = map[string]float64{
-	"gpt-5.5": 1.25, "gpt-5.5-mini": 0.25, "claude-opus-4-6": 5, "claude-sonnet-4-6": 3,
-	"deepseek-v4": 0.3, "kimi-k2.5": 0.6, "gemini-3-pro": 2, "gemini-3-flash": 0.3,
+	"gpt-6-astra": 1.25, "gpt-6-sol": 0.25, "claude-opus-5-5": 5, "claude-sonnet-5": 3,
+	"deepseek-v4": 0.3, "kimi-k3": 0.6, "gemini-3.5-pro": 2, "gemini-3.5-flash": 0.3,
 }
 
 var demoProjects = []string{
@@ -84,10 +89,11 @@ func newDemo(now time.Time) *demo {
 		}
 	}
 	// Three sessions running right now, for the live card and the tray.
+	// Long sessions over a big context, so they are the busy ones.
 	d.sessions = append(d.sessions,
-		live(makeSession(r, n, demoTools[0], now.Add(-40*time.Minute), now), now.Add(-20*time.Second)),
-		live(makeSession(r, n+1, demoTools[1], now.Add(-12*time.Minute), now), now.Add(-70*time.Second)),
-		live(makeSession(r, n+2, demoTools[2], now.Add(-25*time.Minute), now), now.Add(-4*time.Minute)))
+		live(makeSessionOf(r, n, demoTools[1], now.Add(-70*time.Minute), now, 64, 30000), now.Add(-20*time.Second)),
+		live(makeSessionOf(r, n+1, demoTools[0], now.Add(-50*time.Minute), now, 48, 24000), now.Add(-70*time.Second)),
+		live(makeSessionOf(r, n+2, demoTools[2], now.Add(-40*time.Minute), now, 40, 20000), now.Add(-4*time.Minute)))
 	return d
 }
 
@@ -120,6 +126,12 @@ func pickTool(r *rand.Rand) demoTool {
 }
 
 func makeSession(r *rand.Rand, n int, tool demoTool, start, now time.Time) demoSession {
+	return makeSessionOf(r, n, tool, start, now, 4+r.IntN(60), int64(8000+r.IntN(20000)))
+}
+
+// makeSessionOf makes a session of up to reqs requests over a context
+// that starts at ctxTokens.
+func makeSessionOf(r *rand.Rand, n int, tool demoTool, start, now time.Time, reqs int, ctxTokens int64) demoSession {
 	id := strings.Repeat("0", 4) + string(rune('a'+n%26)) + time.Duration(n).String()
 	meta := model.SessionMeta{
 		Harness: tool.h, SessionID: id, Title: demoTitles[n%len(demoTitles)],
@@ -127,8 +139,6 @@ func makeSession(r *rand.Rand, n int, tool demoTool, start, now time.Time) demoS
 	}
 	s := demoSession{meta: meta}
 	t := start
-	reqs := 4 + r.IntN(60)
-	ctxTokens := int64(8000 + r.IntN(20000))
 	for i := range reqs {
 		t = t.Add(time.Duration(4+r.IntN(40)) * time.Second)
 		if t.After(now) {
@@ -475,7 +485,7 @@ func (demoSources) Rescan(context.Context) error                          { retu
 type demoPrices struct{}
 
 func (demoPrices) Unpriced(context.Context) ([]query.UnpricedModel, error) {
-	return []query.UnpricedModel{{Model: "my-gateway/opus", Provider: "custom", Requests: 312, Tokens: 4_200_000, Suggestions: []string{"claude-opus-4-6"}}}, nil
+	return []query.UnpricedModel{{Model: "my-gateway/opus", Provider: "custom", Requests: 312, Tokens: 4_200_000, Suggestions: []string{"claude-opus-5-5"}}}, nil
 }
 func (demoPrices) Aliases(context.Context) ([]query.ModelAlias, error) {
 	return []query.ModelAlias{{From: "glm-4.6-air", To: "glm-4.6"}}, nil
@@ -503,3 +513,21 @@ type memPrefs map[string]string
 
 func (p memPrefs) Pref(k string) string      { return p[k] }
 func (p memPrefs) SetPref(k, v string) error { p[k] = v; return nil }
+
+// Demo swaps d's data for the synthetic set: nothing is read from or
+// written to an index. Its clock starts at 15:30 today, a busy afternoon,
+// and runs on from there. Preferences live in memory and start in lang
+// ("en", "zh" or "" for the system's).
+func Demo(d Deps, lang string) Deps {
+	t := time.Now()
+	now := time.Date(t.Year(), t.Month(), t.Day(), 15, 30, 0, 0, time.Local)
+	d.Now = func() time.Time { return now.Add(time.Since(t)) }
+	d.Query = newDemo(now)
+	d.Quotas = func() []Quota { return demoQuotas(now) }
+	d.Sources = demoSources{}
+	d.Prices = demoPrices{}
+	d.Maint = demoMaint{}
+	d.Prefs = memPrefs{PrefLang: lang}
+	d.Export = nil
+	return d
+}

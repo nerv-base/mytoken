@@ -105,9 +105,9 @@ func (a *App) heatmapCard(c *ui.Context, pal palette) {
 	a.rcard(c, pal, "ranking2", 1, false).Children(func() {
 		cardTitle(c, pal, tr("yearActivity"), nil)
 		ui.Row(c).Gap(28).Wrap().Children(func() {
-			streakStat(c, pal, tr("streakNow"), trf("daysN", rk.streak))
-			streakStat(c, pal, tr("streakBest"), trf("daysN", rk.best))
-			streakStat(c, pal, tr("activeDays"), trf("daysN", rk.activeDays))
+			streakStat(c, pal, tr("streakNow"), trn("daysN", rk.streak))
+			streakStat(c, pal, tr("streakBest"), trn("daysN", rk.best))
+			streakStat(c, pal, tr("activeDays"), trn("daysN", rk.activeDays))
 			if rk.topDay.CostUSD > 0 {
 				streakStat(c, pal, tr("topDay"), fmtUSD(rk.topDay.CostUSD)+" · "+fmtDate(rk.topDay.Day))
 			}
