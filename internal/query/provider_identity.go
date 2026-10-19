@@ -237,8 +237,6 @@ func (s *service) ProviderGroups(ctx context.Context, f Filter) ([]ProviderGroup
 		g.value.Requests += v.requests
 		g.value.Unpriced += v.unpriced
 		g.value.CostUSD += v.Cost
-		g.value.CostLogUSD += v.costLog
-		g.value.CostEstimateUSD += v.costEstimate
 		g.sessions[d.root(sessionKey{v.Harness, v.InstanceID, v.SessionID})] = true
 		g.members[ProviderMember{v.Harness, v.ResolvedProvider}] = true
 	}

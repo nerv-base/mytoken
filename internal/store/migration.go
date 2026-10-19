@@ -41,6 +41,18 @@ func (s *Store) migrate() error {
 	if instanceAware {
 		sc = instanceRollupSchema
 	}
+	// 0.5 removes the relay and cache-ledger tables and columns. Keep exactly one
+	// pre-migration copy before the destructive step, then do the whole cleanup
+	// in the migration transaction below.
+	cleanup, err := s.needsCleanup(context.Background())
+	if err != nil {
+		return err
+	}
+	if cleanup {
+		if err = s.backupBeforeCleanup(context.Background()); err != nil {
+			return err
+		}
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -123,44 +135,23 @@ func (s *Store) migrate() error {
 	if err = migrateEventBranches(tx); err != nil {
 		return err
 	}
+	cacheWrite1h, err := migrateCacheWrite1h(tx)
+	if err != nil {
+		return err
+	}
 	if err = migrateSignals(tx, sc); err != nil {
 		return err
 	}
-	if err = migrateCache(tx, sc); err != nil {
-		return err
+	if cacheWrite1h {
+		if err = rebuildEventsView(tx, sc); err != nil {
+			return err
+		}
 	}
 	if err = migrateEventIndexes(tx); err != nil {
 		return err
 	}
 	if err = migrateDaily(tx, sc); err != nil {
 		return err
-	}
-	if _, err = tx.Exec(relaySchema); err != nil {
-		return err
-	}
-	// Official APIs quote balances in their own currency (DeepSeek: CNY).
-	var hasCurrency int
-	if err = tx.QueryRow(`SELECT count(*) FROM pragma_table_info('relay_balances') WHERE name='currency'`).Scan(&hasCurrency); err != nil {
-		return err
-	}
-	if hasCurrency == 0 {
-		if _, err = tx.Exec(`ALTER TABLE relay_balances ADD COLUMN currency TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
-	}
-	// 1-hour cache writes are priced apart from 5-minute ones (new-api logs
-	// cache_creation_tokens_1h). Old bills are fetched again to fill them in.
-	var has1h int
-	if err = tx.QueryRow(`SELECT count(*) FROM pragma_table_info('relay_bill_data') WHERE name='cache_write_1h'`).Scan(&has1h); err != nil {
-		return err
-	}
-	if has1h == 0 {
-		if _, err = tx.Exec(`ALTER TABLE relay_bill_data ADD COLUMN cache_write_1h INTEGER NOT NULL DEFAULT 0; DROP VIEW relay_bills; UPDATE relay_cursors SET last_bill_id=0;`); err != nil {
-			return err
-		}
-		if _, err = tx.Exec(relaySchema); err != nil {
-			return err
-		}
 	}
 	if identityMigration {
 		if err = migrateProviderEndpoints(tx); err != nil {
@@ -177,6 +168,11 @@ func (s *Store) migrate() error {
 	// rollups together.
 	if instanceMigration {
 		if err = s.migrateInstance(context.Background(), tx); err != nil {
+			return err
+		}
+	}
+	if cleanup {
+		if err = dropObsolete(context.Background(), tx, sc); err != nil {
 			return err
 		}
 	}
@@ -200,7 +196,7 @@ func (s *Store) migrate() error {
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	if compacted {
+	if compacted || cleanup {
 		if _, err = s.db.Exec("VACUUM"); err != nil {
 			return err
 		}

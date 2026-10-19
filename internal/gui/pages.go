@@ -240,14 +240,8 @@ func (s *State) settingsPage(c *ui.Context, pal palette) {
 						settingRow(c, pal, tr("dataDir"), s.Hooks.DataDir, nil)
 					}
 				})
-				s.sourcesInstancesCard(c, pal)
-				s.claudeQuotaCard(c, pal)
-				s.offlineQuotaCard(c, pal)
-				s.pricingCards(c, pal)
-				s.budgetCard(c, pal)
 			})
 			ui.Column(c).Width(360).Shrink(0).Gap(14).Children(func() {
-				s.sourcesCard(c, pal)
 				// Liner notes.
 				pane(c, pal).Clip().Padding(22, 22, 20, 22).Gap(10).Draw(func(p *ui.Painter, r ui.Rect) {
 					softGlow(p, r.X+r.W*0.85, r.Y+r.H*0.1, r.W*0.5, Tomori.Alpha(0.14))
@@ -279,6 +273,13 @@ func settingRow(c *ui.Context, pal palette, title, sub string, control func()) {
 			control()
 		}
 	})
+}
+
+func aboutVersion(v string) string {
+	if v == "" {
+		return "MyToken"
+	}
+	return "MyToken " + v
 }
 
 func exists(p string) bool {

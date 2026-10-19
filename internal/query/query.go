@@ -53,11 +53,9 @@ type Filter struct {
 
 // Totals is the aggregate over a filter.
 type Totals struct {
-	Tokens          model.Tokens `json:"tokens"`
-	CostUSD         float64      `json:"costUsd"`
-	CostLogUSD      float64      `json:"costLogUsd"`
-	CostEstimateUSD float64      `json:"costEstimateUsd"`
-	Requests        int64        `json:"requests"`
+	Tokens   model.Tokens `json:"tokens"`
+	CostUSD  float64      `json:"costUsd"`
+	Requests int64        `json:"requests"`
 	Sessions        int64        `json:"sessions"`
 	// Unpriced counts requests with neither a log cost nor a known price;
 	// CostUSD excludes them. The UI shows "—" when Unpriced == Requests.
@@ -78,11 +76,9 @@ type Point struct {
 type Bucket struct {
 	Key             string       `json:"key"`
 	Label           string       `json:"label"`
-	Tokens          model.Tokens `json:"tokens"`
-	CostUSD         float64      `json:"costUsd"`
-	CostLogUSD      float64      `json:"costLogUsd"`
-	CostEstimateUSD float64      `json:"costEstimateUsd"`
-	Requests        int64        `json:"requests"`
+	Tokens   model.Tokens `json:"tokens"`
+	CostUSD  float64      `json:"costUsd"`
+	Requests int64        `json:"requests"`
 	Sessions        int64        `json:"sessions"`
 	Unpriced        int64        `json:"unpriced"` // see Totals.Unpriced
 }
@@ -143,7 +139,6 @@ const (
 	CostSourceLog       CostSource = "log"
 	CostSourceEstimate  CostSource = "estimate"
 	CostSourceUnpriced  CostSource = "unpriced"
-	CostSourceRelayBill CostSource = "relay-bill"
 )
 
 // AttributedEvent is a usage event with its resolved provider and cost.
@@ -186,14 +181,7 @@ type Service interface {
 	// Subscribe notifies (throttled to ≤1/s) whenever new data is committed.
 	Subscribe() (<-chan struct{}, func())
 
-	// 0.3 缓存账本 (docs/CACHE.md §6). CacheTotals aggregates Expected/Read/Miss/MissUSD
-	// and a per-cause breakdown over a filter. CacheDaily emits one point per local day.
-	// CacheBy buckets by a CacheDim; CacheBySession keys are harness+"/"+session_id.
-	// SessionCache returns the per-request cache verdicts of one session, time-ordered.
-	CacheTotals(ctx context.Context, f Filter) (CacheTotals, error)
-	CacheDaily(ctx context.Context, f Filter) ([]CachePoint, error)
-	CacheBy(ctx context.Context, f Filter, dim CacheDim) ([]CacheBucket, error)
-	SessionCache(ctx context.Context, h model.Harness, session string) ([]CacheStep, error)
+
 }
 
 // ErrAmbiguousInstance reports that a session id exists in more than one
@@ -212,8 +200,6 @@ type InstanceService interface {
 	Service
 	// SessionIn is Session for one explicit instance.
 	SessionIn(ctx context.Context, h model.Harness, instance, id string) (SessionRow, []SessionRow, []AttributedEvent, error)
-	// SessionCacheIn is SessionCache for one explicit instance.
-	SessionCacheIn(ctx context.Context, h model.Harness, instance, session string) ([]CacheStep, error)
 }
 
 // SessionIn resolves one session in one explicit instance. It is a free
@@ -226,13 +212,4 @@ func SessionIn(ctx context.Context, s Service, h model.Harness, instance, id str
 		return SessionRow{}, nil, nil, fmt.Errorf("query: %T does not support instance-aware session lookups", s)
 	}
 	return is.SessionIn(ctx, h, instance, id)
-}
-
-// SessionCacheIn resolves one session's cache steps in one explicit instance.
-func SessionCacheIn(ctx context.Context, s Service, h model.Harness, instance, session string) ([]CacheStep, error) {
-	is, ok := s.(InstanceService)
-	if !ok {
-		return nil, fmt.Errorf("query: %T does not support instance-aware cache lookups", s)
-	}
-	return is.SessionCacheIn(ctx, h, instance, session)
 }

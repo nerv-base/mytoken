@@ -22,7 +22,7 @@ const legacyFactColumns = "harness,dedup_key,dimension_id,timestamp,input,output
 const legacySignalFactColumns = legacyFactColumns + ",request_id,boundary,bill_amount,bill_unit"
 
 const dimensionColumns = "harness,instance_id,session_id,parent_id,project,model,provider,base_url,resolved_provider,attrib,raw_project"
-const factColumns = "harness,instance_id,dedup_key,dimension_id,timestamp,input,output,cache_read,cache_write,reasoning,log_cost,cost,priced,request_id,boundary,bill_amount,bill_unit"
+const factColumns = "harness,instance_id,dedup_key,dimension_id,timestamp,input,output,cache_read,cache_write,cache_write_1h,reasoning,log_cost,cost,priced,request_id,boundary,bill_amount,bill_unit"
 
 // withInstance inserts the instance column directly after harness in a
 // comma-separated dimension list. Every dimension list in the schema starts with
@@ -59,8 +59,8 @@ func migrateCompact(tx *sql.Tx) (bool, error) {
 // The compatibility view is assembled from these fragments so the legacy and
 // instance generations expose the same read surface, with instance_id added
 // directly after dedup_key. request_id onward are the signals columns.
-const legacyEventsViewHead = `CREATE VIEW events AS SELECT e.rowid AS rowid,e.harness,e.dedup_key,d.session_id,d.parent_id,d.project,e.timestamp,d.model,d.provider,d.base_url,e.input,e.output,e.cache_read,e.cache_write,e.reasoning,e.log_cost,d.resolved_provider,d.attrib,e.cost,e.priced,d.raw_project`
-const instanceEventsViewHead = `CREATE VIEW events AS SELECT e.rowid AS rowid,e.harness,e.instance_id,e.dedup_key,d.session_id,d.parent_id,d.project,e.timestamp,d.model,d.provider,d.base_url,e.input,e.output,e.cache_read,e.cache_write,e.reasoning,e.log_cost,d.resolved_provider,d.attrib,e.cost,e.priced,d.raw_project`
+const legacyEventsViewHead = `CREATE VIEW events AS SELECT e.rowid AS rowid,e.harness,e.dedup_key,d.session_id,d.parent_id,d.project,e.timestamp,d.model,d.provider,d.base_url,e.input,e.output,e.cache_read,e.cache_write,e.cache_write_1h,e.reasoning,e.log_cost,d.resolved_provider,d.attrib,e.cost,e.priced,d.raw_project`
+const instanceEventsViewHead = `CREATE VIEW events AS SELECT e.rowid AS rowid,e.harness,e.instance_id,e.dedup_key,d.session_id,d.parent_id,d.project,e.timestamp,d.model,d.provider,d.base_url,e.input,e.output,e.cache_read,e.cache_write,e.cache_write_1h,e.reasoning,e.log_cost,d.resolved_provider,d.attrib,e.cost,e.priced,d.raw_project`
 const eventsViewSignalsTail = `,e.request_id,e.boundary,e.bill_amount,e.bill_unit`
 const eventsViewCacheTail = eventsViewSignalsTail + `,e.cache_expected,e.cache_miss,e.miss_cause,e.miss_cost`
 const eventsViewJoin = ` FROM event_data e JOIN event_dimensions d ON d.id=e.dimension_id;`

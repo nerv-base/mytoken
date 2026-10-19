@@ -184,7 +184,7 @@ func (s *service) loadTx(ctx context.Context, tx *sql.Tx, f Filter, mode ...load
 		for _, id := range ids {
 			args = append(args, id)
 		}
-		rows, e = tx.QueryContext(ctx, `SELECT harness,instance_id,dedup_key,session_id,parent_id,project,timestamp,model,provider,base_url,input,output,cache_read,cache_write,reasoning,log_cost,resolved_provider,attrib,cost,priced,request_id,boundary,bill_amount,bill_unit FROM events`+where+" ORDER BY timestamp,harness,dedup_key", args...)
+		rows, e = tx.QueryContext(ctx, `SELECT harness,instance_id,dedup_key,session_id,parent_id,project,timestamp,model,provider,base_url,input,output,cache_read,cache_write,cache_write_1h,reasoning,log_cost,resolved_provider,attrib,cost,priced,request_id,boundary,bill_amount,bill_unit FROM events`+where+" ORDER BY timestamp,harness,dedup_key", args...)
 		if e != nil {
 			return d, e
 		}
@@ -195,7 +195,7 @@ func (s *service) loadTx(ctx context.Context, tx *sql.Tx, f Filter, mode ...load
 			var at int64
 			var cost, billAmount sql.NullFloat64
 			var billUnit string
-			if e = rows.Scan(&v.Harness, &instance, &v.DedupKey, &v.SessionID, &v.ParentID, &v.ProjectPath, &at, &v.Model, &v.Provider, &v.BaseURL, &v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.Tokens.Reasoning, &cost, &v.ResolvedProvider, &v.Attrib, &v.Cost, &v.Priced, &v.RequestID, &v.Boundary, &billAmount, &billUnit); e != nil {
+			if e = rows.Scan(&v.Harness, &instance, &v.DedupKey, &v.SessionID, &v.ParentID, &v.ProjectPath, &at, &v.Model, &v.Provider, &v.BaseURL, &v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.Tokens.CacheWrite1h, &v.Tokens.Reasoning, &cost, &v.ResolvedProvider, &v.Attrib, &v.Cost, &v.Priced, &v.RequestID, &v.Boundary, &billAmount, &billUnit); e != nil {
 				rows.Close()
 				return d, e
 			}
@@ -314,8 +314,6 @@ func totalsOf(d data) Totals {
 	for _, v := range d.events {
 		out.Tokens = out.Tokens.Add(v.Tokens)
 		out.CostUSD += v.Cost
-		out.CostLogUSD += v.costLog
-		out.CostEstimateUSD += v.costEstimate
 		out.Unpriced += v.unpriced
 		out.Requests += v.requests
 		sessions[d.root(sessionKey{v.Harness, v.InstanceID, v.SessionID})] = true
@@ -446,8 +444,6 @@ func bucketsOf(d data, kind string) []Bucket {
 		}
 		b.Tokens = b.Tokens.Add(v.Tokens)
 		b.CostUSD += v.Cost
-		b.CostLogUSD += v.costLog
-		b.CostEstimateUSD += v.costEstimate
 		b.Unpriced += v.unpriced
 		b.Requests += v.requests
 		seen[key][d.root(sessionKey{v.Harness, v.InstanceID, v.SessionID})] = true

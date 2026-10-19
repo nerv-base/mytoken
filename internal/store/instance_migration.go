@@ -22,7 +22,7 @@ const instanceSchemaVersion = "instance.v1"
 // marker (providerRollupVersion), which is what rejects a half-applied endpoint
 // rollup, so dropping just those two tables is a recoverable shape that the
 // provider rollup migration rebuilds rather than a corrupt instance schema.
-var instanceTables = []string{"event_data", "event_dimensions", "sessions", "cursors", "daily_usage", "cache_daily"}
+var instanceTables = []string{"event_data", "event_dimensions", "sessions", "cursors", "daily_usage"}
 
 // The canonical instance-aware DDL. The base migrations are reproduced byte for
 // byte with instance_id added directly after harness (or after dedup_key for a
@@ -35,10 +35,9 @@ const instanceEventDimensionsDDL = `CREATE TABLE event_dimensions__instance(
 
 const instanceEventDataDDL = `CREATE TABLE event_data__instance(
  harness TEXT NOT NULL,instance_id TEXT NOT NULL DEFAULT '` + DefaultInstanceID + `',dedup_key TEXT NOT NULL,dimension_id INTEGER NOT NULL REFERENCES event_dimensions(id),
- timestamp INTEGER NOT NULL,input INTEGER NOT NULL,output INTEGER NOT NULL,cache_read INTEGER NOT NULL,cache_write INTEGER NOT NULL,reasoning INTEGER NOT NULL,
+ timestamp INTEGER NOT NULL,input INTEGER NOT NULL,output INTEGER NOT NULL,cache_read INTEGER NOT NULL,cache_write INTEGER NOT NULL,cache_write_1h INTEGER NOT NULL DEFAULT 0,reasoning INTEGER NOT NULL,
  log_cost REAL,cost REAL NOT NULL,priced INTEGER NOT NULL,
  request_id TEXT NOT NULL DEFAULT '',boundary TEXT NOT NULL DEFAULT '',bill_amount REAL,bill_unit TEXT NOT NULL DEFAULT '',
- cache_expected INTEGER NOT NULL DEFAULT 0,cache_miss INTEGER NOT NULL DEFAULT 0,miss_cause TEXT NOT NULL DEFAULT '',miss_cost REAL NOT NULL DEFAULT 0,
  PRIMARY KEY(harness,instance_id,dedup_key))`
 
 const instanceSessionsDDL = `CREATE TABLE sessions__instance(
@@ -164,9 +163,7 @@ func (s *Store) triggerSQL(ctx context.Context, name string) (string, error) {
 // maintenance triggers that keep it in step with event_data.
 var instanceRollupTriggers = []struct{ prefix, table string }{
 	{"daily", "daily_usage"},
-	{"cache", "cache_daily"},
 	{"provider_daily", "provider_daily"},
-	{"provider_cache", "provider_cache_daily"},
 }
 
 func (s *Store) hasInstanceColumn(ctx context.Context, table string) (bool, error) {
@@ -242,7 +239,7 @@ func (s *Store) checkInstanceSchemaComplete(ctx context.Context) error {
 			return instanceSchemaInconsistent("the marker " + instanceSchemaVersion + " is set but " + table + " has no instance_id column")
 		}
 	}
-	for _, table := range []string{"event_data", "sessions", "cursors", "daily_usage", "cache_daily"} {
+	for _, table := range []string{"event_data", "sessions", "cursors", "daily_usage"} {
 		if err := s.requireInstanceKey(ctx, table); err != nil {
 			return err
 		}
@@ -444,8 +441,8 @@ func requireColumns(tx *sql.Tx, table string, columns ...string) error {
 // whole transaction back, so facts, DDL and marker move together.
 func (s *Store) migrateInstance(ctx context.Context, tx *sql.Tx) error {
 	if err := requireColumns(tx, "event_data",
-		"harness", "dedup_key", "dimension_id", "timestamp", "input", "output", "cache_read", "cache_write", "reasoning", "log_cost", "cost", "priced",
-		"request_id", "boundary", "bill_amount", "bill_unit", "cache_expected", "cache_miss", "miss_cause", "miss_cost"); err != nil {
+		"harness", "dedup_key", "dimension_id", "timestamp", "input", "output", "cache_read", "cache_write", "cache_write_1h", "reasoning", "log_cost", "cost", "priced",
+		"request_id", "boundary", "bill_amount", "bill_unit"); err != nil {
 		return err
 	}
 	if err := requireColumns(tx, "event_dimensions",
@@ -500,8 +497,8 @@ func (s *Store) migrateInstance(ctx context.Context, tx *sql.Tx) error {
 		},
 		{
 			table: "event_data", ddl: instanceEventDataDDL,
-			columns:    factColumns + ",cache_expected,cache_miss,miss_cause,miss_cost",
-			selectList: "harness,'" + DefaultInstanceID + "',dedup_key,dimension_id,timestamp,input,output,cache_read,cache_write,reasoning,log_cost,cost,priced,request_id,boundary,bill_amount,bill_unit,cache_expected,cache_miss,miss_cause,miss_cost",
+			columns:    factColumns,
+			selectList: "harness,'" + DefaultInstanceID + "',dedup_key,dimension_id,timestamp,input,output,cache_read,cache_write,cache_write_1h,reasoning,log_cost,cost,priced,request_id,boundary,bill_amount,bill_unit",
 			from:       "event_data",
 		},
 		{
@@ -540,13 +537,13 @@ func (s *Store) migrateInstance(ctx context.Context, tx *sql.Tx) error {
 
 	// Recreate the compatibility view and its write triggers, then every derived
 	// rollup with its instance-aware key and maintenance triggers.
-	if _, err = tx.ExecContext(ctx, eventsViewHead(true)+eventsViewCacheTail+eventsViewJoin); err != nil {
+	if _, err = tx.ExecContext(ctx, eventsViewHead(true)+eventsViewSignalsTail+eventsViewJoin); err != nil {
 		return err
 	}
 	if err = createEventsTriggers(tx, instanceRollupSchema); err != nil {
 		return err
 	}
-	for _, table := range []string{"daily_usage", "cache_daily", "provider_daily", "provider_cache_daily"} {
+	for _, table := range []string{"daily_usage", "provider_daily"} {
 		if _, err = tx.ExecContext(ctx, "DROP TABLE IF EXISTS "+table); err != nil {
 			return err
 		}
@@ -554,13 +551,7 @@ func (s *Store) migrateInstance(ctx context.Context, tx *sql.Tx) error {
 	if err = migrateDaily(tx, instanceRollupSchema); err != nil {
 		return err
 	}
-	if err = migrateCacheDaily(tx, instanceRollupSchema); err != nil {
-		return err
-	}
 	if err = migrateProviderDaily(tx, instanceRollupSchema); err != nil {
-		return err
-	}
-	if err = migrateProviderCacheDaily(tx, instanceRollupSchema); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO daily_usage("+dailyDimensions+","+dailyMetrics+") SELECT "+bareDimList(dailyDimensions, nil)+
@@ -571,13 +562,7 @@ func (s *Store) migrateInstance(ctx context.Context, tx *sql.Tx) error {
 		"count(*),sum(NOT priced) FROM events GROUP BY "+groupByPositions(dailyDimensions)); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, "DELETE FROM cache_daily; "+cacheRollupInsert(cacheDimensions)); err != nil {
-		return err
-	}
 	if _, err = tx.ExecContext(ctx, "DELETE FROM provider_daily; "+providerDailyRollupInsert(providerDailyDimensions)); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, "DELETE FROM provider_cache_daily; "+providerCacheRollupInsert(providerCacheDimensions)); err != nil {
 		return err
 	}
 

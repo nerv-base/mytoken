@@ -40,9 +40,8 @@ MyToken 不做供应商切换、本地路由、MCP、Skills、提示词管理。
 
 | 标签 | 含义 |
 | --- | --- |
-| `relay-bill` | 中转站扣费记录（L3） |
 | `log` | harness 日志自带的费用 |
-| `local-estimate` | 本地按价格表 × 倍率估算 |
+| `local-estimate` | 本地按价格表或自定义单价估算（API 等价） |
 | `inferred` | 供应商由模型名推断 |
 | `unpriced` | 找不到价格，不计为 0 |
 
@@ -86,6 +85,16 @@ CI 在三个平台上跑 200K 事件的查询基准（`internal/query/bench_test
 
 ## 版本
 
+### 0.5 —— 收敛（当前）
+
+- **删除**中转站对账（`internal/relay`、`internal/reconcile`、Relays 页面、`docs/RELAY.md`）、缓存账本（`internal/ledger`、`cache_daily`、Cache 页面、`docs/CACHE.md`）、预算与告警（`internal/budget`）、多实例（`internal/instance`、sources.json、实例选择器）。
+- **删除**供应商倍率、推断倍率与 cc-switch 价格导入；费用统一为 **API 等价**，只保留按模型的自定义单价（USD / 1M tokens）。
+- 指标口径：token 主数字不含 cache read；input / output / cache read / cache write 分开；命中率 = `cache_read / (input + cache_read + cache_write)`；1 小时缓存写入按 input 2 倍、其余缓存写入按 1.25 倍。
+- harness 数据源改为设置项 `harness.<name>.enabled` / `harness.<name>.root`，自动检测、手动指定目录并即时校验，改动无需重启。
+- 套餐额度统一走 `internal/quota/plan`：本地日志可读的（Codex）优先，已登录凭据的工具自动查询，不再有单独授权步骤。
+- 数据库原地迁移：删除 relay / instance / budget / ledger 表与列、无效设置，新增 `cache_write_1h`，全量重算价格，VACUUM，保留全部历史与一份迁移前备份。
+- CLI 只保留：默认今日/本月费用摘要、`daily`、`quota`、`scan`、`statusline`、`doctor`、`version`；只读命令不迁移、不重算价格。
+
 ### 0.1.x —— 打地基
 
 - ✅ **修倍率 bug**：[`internal/pricing/rules.go`](../internal/pricing/rules.go) 的 `effective()` 在 `{provider,model}`、`{"",model}`、`{provider,""}` 中取第一条命中并用它的 `Multiplier`，导致模型价格规则（倍率 1）覆盖供应商倍率（例：网关 0.3 × sonnet $3/M，1M 输入算成 $3 而非 $0.9）。改为**价格按模型优先、倍率按供应商优先，分开查**；用户规则同样受影响。
@@ -97,9 +106,9 @@ CI 在三个平台上跑 200K 事件的查询基准（`internal/query/bench_test
 - ✅ **CLI 对齐**：补 `--until`、`--last`、`--timezone`、`--offline`、`--no-cost`，以及 CSV 导出（目前只有 `--since`）。
 - ✅ **新增 harness 流程标准化**：事件补 `RequestID`、compact 边界、harness 自带账单（`Bill`）三类信号；`internal/harness/harnesstest` 一致性套件（golden / 增量 / 游标稳定 / 幂等 / 隐私 / 缺目录）覆盖现有 10 个 harness，接入规范见 [HARNESS.md](HARNESS.md)。顺带修了 Claude 游标空转重写、opencode 新旧两张表共用水位线漏行两个 parser bug。
 
-### 0.2 —— 对账 v1
+### 0.2 —— 对账 v1（0.5 已删除该功能，以下仅存档）
 
-> 状态：0.2.0 发布，接口契约见 [RELAY.md](RELAY.md)。已在真实 new-api（kamiapi、rinnebeat）、sub2api（kksk、xlabapi）和 DeepSeek 官方余额上端到端验证；「手填倍率」沿用定价设置里的供应商倍率。
+> 状态：0.2.0 发布。契约文档 RELAY.md 已在 0.5 删除，以下仅存档。已在真实 new-api（kamiapi、rinnebeat）、sub2api（kksk、xlabapi）和 DeepSeek 官方余额上端到端验证；「手填倍率」沿用定价设置里的供应商倍率。
 >
 > 0.2.x 遗留：
 > - 倍率变化点按最新账单 / 同步时间定日期，不是真实变化时刻（应遍历账单找变化点）。
@@ -120,9 +129,9 @@ CI 在三个平台上跑 200K 事件的查询基准（`internal/query/bench_test
 - ✅ **对账视图**：应扣 vs 实扣、差额拆解、来源标签。
 - ✅ harness 第 1 批（12 个）。WorkBuddy 的日志实际是 CodeBuddy 格式，不是 Claude 格式，所以单独写了读取器（CodeBuddy 复用它）；每请求积分直接取日志里的 `rawUsage.credit` 作为 harness 自带账单（比 `workbuddy.db` 的 `credit_json` 更完整）。
 
-### 0.3 —— 缓存账本
+### 0.3 —— 缓存账本（0.5 已删除该功能，以下仅存档）
 
-> 状态：实现完成，契约见 [CACHE.md](CACHE.md)，判定规则的真实数据校准见 [CALIBRATION.md](../internal/ledger/CALIBRATION.md)。真实库（21.6 万请求）：全量重建约 3 s（旧库首次打开含迁移约 9 s），增量 ≤ 42 ms/会话，查询 9–22 ms，库增长约 5 B/请求。
+> 状态：实现完成（0.5 已删除）。契约 CACHE.md 与 ledger 校准文档随功能删除，以下仅存档。真实库（21.6 万请求）：全量重建约 3 s（旧库首次打开含迁移约 9 s），增量 ≤ 42 ms/会话，查询 9–22 ms，库增长约 5 B/请求。
 
 - ✅ 只用 token 数，所有 harness 通用：按会话链判定，应命中前缀取历史上同一分支的提示长度（不是机械地取上一轮——旁路短请求、分支切换不算未命中）；未命中 = 应命中 − `cache_read`；多花 = 实际费用 − 「全部命中」的反事实费用。
 - ✅ 未命中归因四类：

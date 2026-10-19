@@ -28,10 +28,10 @@ internal/harness/dsh/       # DeepSeek Harness                         [step]
 internal/harness/pi/        # pi coding agent                          [step]
 internal/harness/{gemini,opencode,crush,cline}/   # M2                 [flash/step]
 internal/attrib/            # 供应商归因链                             [astra]
-internal/pricing/           # 价格表 + 倍率                            [astra]
+internal/pricing/           # 价格表 + 自定义单价                      [astra]
 internal/scan/              # 扫描调度、fsnotify、增量偏移             [astra]
 internal/query/             # UI/CLI 读取 API（§5，冻结）              [astra 实现]
-internal/cli/               # stats 子命令                             [astra]
+internal/cli/               # summary/daily/quota/statusline/doctor      [astra]
 internal/gui/               # 全部原生 UI（避免与 mygo ui 包同名）       [lead]
 testdata/<harness>/         # 脱敏后的真实日志 fixture                 [各解析器作者]
 ```
@@ -168,11 +168,11 @@ type Point struct { Day time.Time; Tokens model.Tokens; CostUSD float64 }
 type Bucket struct {
     Key, Label string
     Tokens model.Tokens
-    CostUSD, CostLogUSD, CostEstimateUSD float64
+    CostUSD float64
     Requests, Sessions, Unpriced int64
 }
 
-type CostSource string // "log", "estimate", "unpriced"；"relay-bill" 保留，尚不产生
+type CostSource string // "log", "estimate", "unpriced"
 type AttributedEvent struct {
     model.UsageEvent
     ResolvedProvider string
@@ -214,14 +214,14 @@ type Service interface {
 - 所有时间范围为 `[From, To)`；日/小时按当前本地时区切分，显式范围零填充。跨 DST 的一天按日历 `AddDate` 推进，不假定一天总是 24 小时。
 - `Sessions` 只列顶层会话；父会话 token、费用、请求数和 Breakdown 递归包含后代。Totals/Bucket 的 Sessions 是匹配事件归属的顶层会话去重数。会话详情仍只返回自身事件，后代另列。
 - 模型原名持久化，别名在查询时应用（供应商专用别名优先于全局）；别名/展示设置无需重写事实或预聚合。
-- `CostUSD = CostLogUSD + CostEstimateUSD`（允许浮点累计误差）。日志 `log_cost != NULL`（包括 0）是 `log`，本地已知单价×倍率是 `estimate`，其余是 `unpriced`。无价请求仍计 token / 请求数 / 会话数，但费用不混入 0 价已知请求。`relay-bill` 仅预留类型值，不表示已有账单接入。
+- `CostUSD` 是 API 等价费用。日志 `log_cost != NULL`（包括 0）是 `log`，按本地价格表或自定义单价算出的费用是 `estimate`，无价请求是 `unpriced`。无价请求仍计 token / 请求数 / 会话数，但不按 0 混入费用；界面显示“未定价”。0.5 起不再拆分 `CostLogUSD` / `CostEstimateUSD`，也不再产生中转账单费用。
 - 事实存储为 `event_data`：完整原始 dedup_key、稳定 rowid、时间、5 类 token、日志金额、推算费用及 priced。`event_dimensions` 将重复的 harness/session/parent/project/raw_project/model/provider/base_url/resolved_provider/attrib 字符串组成无损字典。`events` 是等价解码视图，保留 INSERT/UPDATE/DELETE 兼容触发器；原 dedup key 不截断、不哈希。
 - 索引只保留事实的 timestamp、dimension_id×timestamp、原 dedup 唯一键，以及小型维度/会话索引。旧 model/provider/time、逐事件 raw_project 索引被移除；会话详情通过维度 id 定位事实，避免全库扫描。
 - `daily_usage` 是本地日 × harness × session × resolved_provider × **原始** model × project × attrib 的 WITHOUT ROWID 汇总，存 5 类 token、总金额、log/estimate 金额、requests/unpriced。事实表 INSERT/UPDATE/DELETE 触发器在同一事务维护增减，覆盖去重覆盖、归因、重算单价和删除；从日汇总读取完整天，任意范围两端不足一天的部分按时间索引查询事实。
 - 日汇总记录 `settings.daily_timezone`（时区名及历史/当前季节偏移指纹）。正常打开数据库时检测系统时区变化并原子重建**仅派生汇总**。查询在读快照内检查时区；CLI `--timezone` 临时展示时区若不同，只读回退到事实 SQL GROUP BY，绝不改写持久汇总。小时查询按时间索引聚合事实，使用 Go 时区规则而非 SQLite 固定 UTC 偏移。
 - 旧库在一个事务中无损复制到事实/字典结构，提交后执行一次 VACUUM 回收旧页；取消或失败不会留下半套 schema。首次升级需要额外临时磁盘空间（SQLite 新旧表及 WAL）。连接建立即配置 `busy_timeout=5000`，保留 WAL、单连接快照与单写者。
 - “重建索引/全量重扫”只清 cursors、重新解析仍存在的源并 upsert，**不删除 events 或 sessions**；被 Claude Code 等工具轮转清理的历史永久保留。源日志消失不代表用户要求删历史。
-- 价格重算按事件 timestamp 选择当时生效的价格快照；日志金额不受本地规则或倍率覆盖。价格 UPDATE 与日汇总费用在同一事务中可见。
+- 价格重算按事件 timestamp 选择当时生效的价格快照；日志金额不受本地自定义单价覆盖。价格 UPDATE 与日汇总费用在同一事务中可见。
 
 ## 6. 供应商归因链（`internal/attrib`）
 
@@ -236,19 +236,20 @@ type Service interface {
 
 - 价格表：models.dev 优先，LiteLLM 兜底；缓存 24h；内置一份离线快照。
 - 单价按 Tokens 五类分别计；Reasoning 无单价时按 Output。
-- 每个供应商可设倍率或自定义单价；可从 cc-switch `model_pricing` / `providers.cost_multiplier` 导入。
+- 0.5 起只按模型设置自定义单价（USD / 1M tokens：input、output、cache read、cache write）；不再支持供应商倍率、推断折扣或 cc-switch 价格导入。自定义价格复用 `PriceRule` 存储，`Source` 为 `user`。
+- 1 小时缓存写入（`CacheWrite1h`，是 `CacheWrite` 的子集）按 input 单价 2 倍计价，其余 `CacheWrite` 按 1.25 倍；价格表带明确 cache write 单价时以价格表为准。
 - 日志自带费用优先于计算值。
 
 ## 8. UI（lead 负责）
 
 - 主题：Liquid Glass（glass plugin，macOS 26 原生玻璃；其他平台回退半透明模糊）+ MyGO!!!!! 克制彩蛋：五人代表色调色盘（图表系列色）、自绘 SVG 星星/音符/吉他拨片装饰、台词梗空状态文案；不内置任何官方立绘。
 - 托盘面板：今日 token / 费用、24h 小时柱图、Top 3 模型、正在进行的会话。
-- 主窗口侧边栏：概览（趋势、年度热力图、缓存命中、harness 占比）、会话（虚拟列表 + 详情：供应商×模型拆分、子代理树、请求时间线）、排行（供应商 / 模型）、项目、设置（数据源开关与路径、归因规则、价格与倍率、语言、自启、重建索引）。
+- 主窗口侧边栏：概览（趋势、年度热力图、缓存命中、harness 占比）、会话（虚拟列表 + 详情：供应商×模型拆分、子代理树、请求时间线）、排行（供应商 / 模型）、项目、设置（harness 开关与路径、归因规则、自定义单价、语言、自启、重建索引）。
 
 ## 9. 里程碑
 
 - **M1**：骨架 + store + scan + Claude Code / Codex / DSH / Pi 解析器 + 归因链 + 托盘面板 + 概览 / 会话页；用本机真实数据截图验收。
-- **M2**：Gemini / OpenCode / Crush / Cline / Roo / Kilo + 排行 / 项目页 + 定价与倍率设置。
+- **M2**：Gemini / OpenCode / Crush / Cline / Roo / Kilo + 排行 / 项目页 + 定价设置。
 - **M3**：动画打磨、彩蛋、CLI、Win/Linux CI、Release。
 
 ## 10. 质量门
@@ -279,7 +280,8 @@ type Service interface {
 ### 10.3 0.3 缓存账本测量（同机，真实库副本 216,036 events / 2,191 sessions）
 
 - 迁移：`event_data` 增 4 缓存列（`cache_expected/cache_miss/miss_cause/miss_cost`），新建汇总表 `cache_daily`（按 天×harness×会话×resolved_provider×模型×项目×原因，只收 `cache_expected>=0` 的可缓存事件），`event_data` 上挂 cache_insert/update/delete 触发器随缓存列增量维护；`events` 解码视图重建纳入缓存列。`uncacheable` 用 `cache_expected=-1`。
-- 全量重建（含 ledger 的 O(n log n) Analyze）：仅重建 **3.14s**；旧库首次打开（迁移+重建）**~9.2s**；页热强制重建 **~5s**。性能关键：会话链查询必须走 `event_dimensions ⋈ event_data` 覆盖索引，按 harness 全表扫会把重建放大到 **21m37s**（已修）。
+> 0.5 已删除缓存账本（`cache_daily`、`provider_cache_daily`、miss 判定列及 `mytoken cache`）。以下为 0.3 的历史测量，仅作存档。
+- 全量重建：仅重建 **3.14s**；旧库首次打开（迁移+重建）**~9.2s**；页热强制重建 **~5s**。性能关键：会话链查询必须走 `event_dimensions ⋈ event_data` 覆盖索引，按 harness 全表扫会把重建放大到 **21m37s**（已修）。
 - 增量：`CommitMany` 后 `recomputeSessions` 只重算被写会话整链，中位会话 **0.24ms**、最大单会话（8,307 events）**31–42ms**（<50ms）。
 - 查询：cache 查询 **9–22ms**（<50ms）；200K fixture 的 strict-perf gate（<100ms/<50MiB）全过；热运行 `cache --by cause` **0.18–0.40s**。cache 基准已并入 `internal/query/bench_test.go`。
 - 库增长：**1.7 B/事件**（刚迁移）/**~5 B/事件**（重建物化后），远低于 20 B/事件预算。

@@ -257,33 +257,10 @@ func (s *Store) commitMany(ctx context.Context, writes []Write, report bool, rec
 		}
 		return stmt, err
 	}
-	touched := map[string][3]string{}
 	for i, w := range writes {
-		instance := normalizeInstance(w.InstanceID)
 		if len(w.Batch.Events) > 0 && len(w.Resolutions) == 0 {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM settings WHERE key='pricing_fingerprint'"); err != nil {
 				return CommitOutcome{}, err
-			}
-		}
-		for _, e := range w.Batch.Events {
-			h := e.Harness
-			if h == "" {
-				h = w.Harness
-			}
-			if e.SessionID != "" {
-				touched[string(h)+"\x00"+instance+"\x00"+e.SessionID] = [3]string{string(h), instance, e.SessionID}
-			}
-			if e.ParentID != "" {
-				touched[string(h)+"\x00"+instance+"\x00"+e.ParentID] = [3]string{string(h), instance, e.ParentID}
-			}
-		}
-		for _, m := range w.Batch.Sessions {
-			h := m.Harness
-			if h == "" {
-				h = w.Harness
-			}
-			if m.SessionID != "" {
-				touched[string(h)+"\x00"+instance+"\x00"+m.SessionID] = [3]string{string(h), instance, m.SessionID}
 			}
 		}
 		var stats *commitCollector
@@ -301,11 +278,6 @@ func (s *Store) commitMany(ctx context.Context, writes []Write, report bool, rec
 			}
 		}
 	}
-	// Re-Analyze only the touched sessions' whole chains, patching just the events
-	// whose verdict changed, before the commit becomes visible.
-	if err := s.recomputeSessions(ctx, tx, touched); err != nil {
-		return CommitOutcome{}, err
-	}
 	if err := tx.Commit(); err != nil {
 		return CommitOutcome{}, err
 	}
@@ -319,7 +291,7 @@ func (s *Store) commit(ctx context.Context, h model.Harness, instance, path stri
 	instance = normalizeInstance(instance)
 	var err error
 
-	const row = `(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	const row = `(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 	const suffix = ` ON CONFLICT(harness,instance_id,dedup_key) DO UPDATE SET dimension_id=excluded.dimension_id,timestamp=excluded.timestamp,input=excluded.input,output=excluded.output,cache_read=excluded.cache_read,cache_write=excluded.cache_write,reasoning=excluded.reasoning,log_cost=excluded.log_cost,cost=excluded.cost,priced=excluded.priced,request_id=coalesce(nullif(excluded.request_id,''),event_data.request_id),boundary=coalesce(nullif(excluded.boundary,''),event_data.boundary),bill_amount=coalesce(excluded.bill_amount,event_data.bill_amount),bill_unit=CASE WHEN excluded.bill_amount IS NOT NULL THEN excluded.bill_unit ELSE event_data.bill_unit END WHERE (event_data.dimension_id,event_data.timestamp,event_data.input,event_data.output,event_data.cache_read,event_data.cache_write,event_data.reasoning,event_data.log_cost,event_data.cost,event_data.priced,event_data.request_id,event_data.boundary,event_data.bill_amount,event_data.bill_unit) IS NOT (excluded.dimension_id,excluded.timestamp,excluded.input,excluded.output,excluded.cache_read,excluded.cache_write,excluded.reasoning,excluded.log_cost,excluded.cost,excluded.priced,coalesce(nullif(excluded.request_id,''),event_data.request_id),coalesce(nullif(excluded.boundary,''),event_data.boundary),coalesce(excluded.bill_amount,event_data.bill_amount),CASE WHEN excluded.bill_amount IS NOT NULL THEN excluded.bill_unit ELSE event_data.bill_unit END) AND (SELECT old.session_id=new.session_id OR (old.parent_id!='' AND new.parent_id='') FROM event_dimensions old JOIN event_dimensions new ON new.id=excluded.dimension_id WHERE old.id=event_data.dimension_id)`
 	const batchSize = 128
 	var values []any
@@ -396,7 +368,7 @@ func (s *Store) commit(ctx context.Context, h model.Harness, instance, path stri
 				}
 			}
 		}
-		query := `INSERT INTO event_data(` + factColumns + `) VALUES ` + strings.TrimSuffix(strings.Repeat(row+",", len(values)/17), ",") + suffix
+		query := `INSERT INTO event_data(` + factColumns + `) VALUES ` + strings.TrimSuffix(strings.Repeat(row+",", len(values)/18), ",") + suffix
 		stmt, e := prepare(query)
 		if e == nil {
 			_, e = stmt.ExecContext(ctx, values...)
@@ -506,7 +478,7 @@ func (s *Store) commit(ctx context.Context, h model.Harness, instance, path stri
 			billAmount = e.Bill.Amount
 			billUnit = e.Bill.Unit
 		}
-		values = append(values, e.Harness, instance, e.DedupKey, id, stamp(e.Timestamp), e.Tokens.Input, e.Tokens.Output, e.Tokens.CacheRead, e.Tokens.CacheWrite, e.Tokens.Reasoning, e.CostUSD, r.Cost, r.Priced, e.RequestID, e.Boundary, billAmount, billUnit)
+		values = append(values, e.Harness, instance, e.DedupKey, id, stamp(e.Timestamp), e.Tokens.Input, e.Tokens.Output, e.Tokens.CacheRead, e.Tokens.CacheWrite, e.Tokens.CacheWrite1h, e.Tokens.Reasoning, e.CostUSD, r.Cost, r.Priced, e.RequestID, e.Boundary, billAmount, billUnit)
 		// The branch a log stated rides in the same transaction as its fact, so
 		// metadata and usage commit or roll back together.
 		if err = upsertBranch(string(e.Harness), instance, e.DedupKey, e.GitBranch); err != nil {
@@ -517,7 +489,7 @@ func (s *Store) commit(ctx context.Context, h model.Harness, instance, path stri
 			chunkOutput = append(chunkOutput, e.Tokens.Output)
 			chunkTime = append(chunkTime, e.Timestamp)
 		}
-		if len(values) == batchSize*17 {
+		if len(values) == batchSize*18 {
 			if err = flush(); err != nil {
 				return err
 			}

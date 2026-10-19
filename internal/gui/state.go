@@ -42,33 +42,8 @@ type Hooks struct {
 	// endpoint's identity, attribution and prices stay as they are. nil
 	// hides the alias editor.
 	SetProviderAlias func(ctx context.Context, id, label string) error
-	// Relays reconciles relays; nil hides the page's data.
-	Relays Relays
-	// Budget edits the persisted budget rules; nil hides the budget card.
-	Budget Budget
-	// Calendar reads and writes the stats timezone; nil hides that row.
-	Calendar Calendar
-	// Location is the stats timezone every calendar period is resolved in
-	// (app.App.Location). A nil hook, or a nil result, means no fixed calendar
-	// is configured: the machine's zone is then a display preview only, never
-	// the persisted choice a fixed calendar implies.
+	// Location is the stats timezone every calendar period is resolved in.
 	Location func() *time.Location
-	// Sources administers the instance configuration (sources.json): the
-	// settings page's add, move, remove and promote actions. nil hides the
-	// editor and shows the read-only summary only.
-	Sources SourceAdmin
-	// Diagnostics reads the collection evidence the store recorded for one
-	// harness instance (app.SourceDiagnostics). It is read in the background,
-	// in the same pass as the configuration, so a frame never touches the
-	// store; nil hides the evidence rather than showing zeros.
-	Diagnostics DiagnosticsReader
-	// ClaudeQuota is the opt-in Claude subscription-quota panel; nil hides
-	// the panel. Nothing is requested until the user enables a source.
-	ClaudeQuota ClaudeQuota
-	// QuotaStore reads the persisted provider-quota observations the offline
-	// quota cards show; nil hides those cards. It is a plain key/value read
-	// of the app's own store, never a network call.
-	QuotaStore QuotaStore
 	// IngestRate reports how many output tokens the scanner committed over
 	// the trailing ingestrate.Window ending at now (scan.Scanner.IngestRate).
 	// This is ingestion throughput, not generation speed; nil shows "—".
@@ -131,13 +106,6 @@ type State struct {
 
 	rankTab int
 	pv      providerView
-	pr      pricingState
-	bg      budgetState
-	rl      relayState
-	ch      cacheState
-	src     sourceState
-	cq      claudeQuotaState
-	oq      offlineQuotaState
 
 	// stale is set by data changes not reloaded yet; lastReload and
 	// waiting pace the reloads (see reloadGap).
@@ -233,18 +201,7 @@ func (s *State) enterPage() {
 
 // invalidateAux drops the cached loads that only the settings page shows. The
 // next frame that builds that page reloads them; no other page is affected.
-func (s *State) invalidateAux() {
-	// Pricing is only on the settings page: elsewhere, load it when shown.
-	s.pr.loaded = false
-	// The source editor's rows and configured sources, their diagnostics
-	// included: refreshed on entry, on a rebuild, and after every edit.
-	s.src.rowsLoaded, s.src.cfgLoaded = false, false
-	// The quota cards and the source editor only exist on the settings page.
-	s.cq.loaded = false
-	s.oq.loaded = false
-	// The budget card only exists on the settings page: reload it when shown.
-	s.bg.loaded = false
-}
+func (s *State) invalidateAux() {}
 
 func (s *State) refresh() {
 	if !s.stale || s.waiting || (s.Hooks.Visible != nil && !s.Hooks.Visible()) {
@@ -283,7 +240,6 @@ func (s *State) rebuild() {
 	// returns, with no goroutine and no clock.
 	if s.sync {
 		s.Hooks.Rebuild()
-		s.src.rowsLoaded, s.src.cfgLoaded = false, false
 		s.changed()
 		return
 	}
@@ -292,7 +248,6 @@ func (s *State) rebuild() {
 	go func() {
 		s.Hooks.Rebuild()
 		s.post(func() {
-			s.src.rowsLoaded, s.src.cfgLoaded = false, false
 			s.changed()
 		})
 	}()
@@ -305,11 +260,7 @@ func (s *State) rebuild() {
 // permanent bottleneck.
 func (s *State) Reload() {
 	s.reloadCore()
-	// The relay page loads when drawn; the report shown stays until replaced.
-	s.rl.loaded, s.rl.want = false, ""
 	s.invalidateAux()
-	// The cache page reloads when drawn; what it shows stays until replaced.
-	s.ch.want = ""
 }
 
 // reloadCore refreshes the data the visible pages stay current on: the overview

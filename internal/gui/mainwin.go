@@ -36,10 +36,6 @@ func (s *State) MainView(c *ui.Context) {
 						s.rankingPage(c, pal)
 					case "projects":
 						s.projectsPage(c, pal)
-					case "cache":
-						s.cachePage(c, pal)
-					case "relays":
-						s.relaysPage(c, pal)
 					case "settings":
 						s.settingsPage(c, pal)
 					default:
@@ -57,7 +53,7 @@ var navItems = []struct {
 	id  string
 	ic  *ui.SVG
 	col ui.Color
-}{{"overview", icOverview, Tomori}, {"sessions", icSessions, Anon}, {"ranking", icRanking, Rana}, {"projects", icProjects, Soyo}, {"cache", icCache, cacheColor}, {"relays", icScale, relayColor}, {"settings", icSettings, Taki}}
+}{{"overview", icOverview, Tomori}, {"sessions", icSessions, Anon}, {"ranking", icRanking, Rana}, {"projects", icProjects, Soyo}, {"settings", icSettings, Taki}}
 
 // SidebarInset is the window padding around the sidebar card. The main
 // window puts the close button TrafficLightX, TrafficLightY from its corner:
@@ -453,7 +449,7 @@ func (s *State) recentCard(c *ui.Context, pal palette, rows []query.SessionRow) 
 
 // unpricedBanner nudges towards mapping models the price list doesn't know.
 func (s *State) unpricedBanner(c *ui.Context, pal palette) {
-	n := len(s.pr.unpriced)
+	n := 0
 	if n == 0 || s.ov.Totals.Unpriced == 0 {
 		return
 	}

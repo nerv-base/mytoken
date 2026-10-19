@@ -38,13 +38,12 @@ func (p *Pricer) Fingerprint() string {
 		return aliases[i].Model < aliases[j].Model
 	})
 	raw, _ := json.Marshal(struct {
-		Version     int
-		Prices      map[string]Price
-		Overrides   map[string]map[string]Price
-		Multipliers map[string]float64
-		Rules       []Rule
-		Aliases     []alias
-	}{fingerprintVersion, p.prices, p.overrides, p.multipliers, rules, aliases})
+		Version   int
+		Prices    map[string]Price
+		Overrides map[string]map[string]Price
+		Rules     []Rule
+		Aliases   []alias
+	}{fingerprintVersion + 1, p.prices, p.overrides, rules, aliases})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }

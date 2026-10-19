@@ -49,12 +49,7 @@ func (s *State) TrayView(c *ui.Context) {
 				})
 				ui.Column(c).Gap(8).Children(func() {
 					kicker(c, pal, tr("topModels"))
-					// Balances take a row at the bottom: one model fewer.
-					n := 3
-					if len(s.balanceSites()) > 0 {
-						n = 2
-					}
-					s.bucketList(c, pal, t.Models, n, true, false)
+					s.bucketList(c, pal, t.Models, 3, true, false)
 				})
 				// What is playing now, one line each.
 				ui.Column(c).Gap(4).Grow(1).Basis(0).Clip().Children(func() {
@@ -89,7 +84,6 @@ func (s *State) TrayView(c *ui.Context) {
 					}
 				})
 			}
-			s.trayBalances(c, pal)
 			s.trayRate(c, pal)
 			ui.Row(c).Gap(8).Children(func() {
 				b := trayButton(c, pal, icWindow, tr("openMain"), true).Grow(1)

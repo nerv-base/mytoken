@@ -3,45 +3,35 @@ package query
 import (
 	"context"
 	"time"
-
-	"github.com/zzstar101/mytoken/internal/pricing"
 )
 
 // PriceRule adjusts computed costs (docs/SPEC.md §7). Rules never touch a
 // cost the log itself reported.
 //
-//   - Provider != "" && Model == "": Multiplier scales every computed cost of
-//     that provider (e.g. a relay selling at 0.3× list price); its rates are
-//     the last custom-price fallback for that provider's models.
 //   - Model != "": a custom per-1M-token price for that model (optionally only
 //     under Provider), used instead of the catalog price.
+//   - Provider != "" && Model == "": provider-wide rates, used as the last
+//     custom-price fallback for that provider's models.
 //
-// Unit prices and multipliers are looked up separately:
-//
-//   - Prices walk provider+model → model → provider → catalog, class by class,
-//     so a narrower rule overrides one rate while a wider one fills the rest.
-//   - Multipliers prefer the provider-scoped rule: provider+model → provider →
-//     model → 1. So a model rule with Multiplier 0 — "unset" — never cancels a
-//     provider's multiplier.
-//
+// Prices walk provider+model → model → provider → catalog, class by class, so
+// a narrower rule overrides one rate while a wider one fills the rest.
 // From is when the rule starts applying (zero = always). Several rules may
 // share (provider, model); the one with the latest From ≤ the event's
 // timestamp wins.
 type PriceRule struct {
-	Provider   string  `json:"provider,omitempty"`
-	Model      string  `json:"model,omitempty"`
-	Multiplier float64 `json:"multiplier"` // 0 = 未设置，不覆盖别处的倍率
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
 	// Custom prices in USD per 1M tokens; nil = use the catalog's.
 	Input      *float64  `json:"input,omitempty"`
 	Output     *float64  `json:"output,omitempty"`
 	CacheRead  *float64  `json:"cacheRead,omitempty"`
 	CacheWrite *float64  `json:"cacheWrite,omitempty"`
-	Source     string    `json:"source,omitempty"` // "user" | "cc-switch"
+	Source     string    `json:"source,omitempty"` // "user" (legacy rows are normalized)
 	From       time.Time `json:"from,omitzero"`    // zero = always effective
 }
 
 // ModelAlias maps a model name as the harness logged it (often a user-defined
-// alias in a relay or config, e.g. "claude-opus-5-5-high", "deepseek-v41") to
+// alias in a gateway or config, e.g. "claude-opus-5-5-high", "deepseek-v41") to
 // the catalog model it really is. An alias affects pricing AND display: every
 // query (ByModel, Breakdown, events' Model) reports To instead of From, so the
 // two merge in rankings. The raw name stays in the index; removing the alias
@@ -67,17 +57,6 @@ type Settings interface {
 	PriceRules(ctx context.Context) ([]PriceRule, error)
 	// SetPriceRules replaces all rules.
 	SetPriceRules(ctx context.Context, rules []PriceRule) error
-	// RelayRules returns the rules imported from gateways (Source "relay:*"),
-	// most recently effective first.
-	RelayRules(ctx context.Context) ([]PriceRule, error)
-	// AppendRelayRules merges gateway rules into the stored rules: a rule for
-	// the same selector and source is replaced only when one of its prices
-	// moved by more than 1%, so a jittering ratio does not rewrite the table.
-	// Reprices and notifies when anything changed.
-	AppendRelayRules(ctx context.Context, rules []pricing.Rule) error
-	// ImportCCSwitch reads cc-switch's pricing (read-only) and upserts rules
-	// with Source "cc-switch"; returns how many rules it imported.
-	ImportCCSwitch(ctx context.Context) (int, error)
 	ModelAliases(ctx context.Context) ([]ModelAlias, error)
 	// SetModelAliases replaces all aliases; reprices and notifies.
 	SetModelAliases(ctx context.Context, aliases []ModelAlias) error
@@ -89,4 +68,16 @@ type Settings interface {
 	SearchCatalog(ctx context.Context, q string, limit int) ([]string, error)
 	// Providers lists every resolved provider seen in the index, for pickers.
 	Providers(ctx context.Context) ([]string, error)
+}
+
+// aliasMap indexes aliases by (provider, from) and by ("", from).
+func aliasMap(aliases []ModelAlias) map[[2]string]string {
+	out := make(map[[2]string]string, len(aliases)*2)
+	for _, a := range aliases {
+		if a.From == "" || a.To == "" {
+			continue
+		}
+		out[[2]string{a.Provider, a.From}] = a.To
+	}
+	return out
 }

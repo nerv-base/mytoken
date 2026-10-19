@@ -61,7 +61,7 @@ func assertLegacyFactsPreserved(t *testing.T, db *sql.DB) {
 
 func assertInstanceSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
-	for _, table := range []string{"event_data", "event_dimensions", "sessions", "cursors", "daily_usage", "cache_daily", "provider_daily", "provider_cache_daily"} {
+	for _, table := range []string{"event_data", "event_dimensions", "sessions", "cursors", "daily_usage", "provider_daily"} {
 		var n int
 		if err := db.QueryRow("SELECT count(*) FROM pragma_table_info(?) WHERE name='instance_id'", table).Scan(&n); err != nil {
 			t.Fatalf("%s: %v", table, err)
@@ -113,7 +113,7 @@ func TestInstanceMigrationLegacyDiskBacksUpAndPreservesFacts(t *testing.T) {
 		t.Fatalf("%d facts left outside the default instance", n)
 	}
 	// Derived rollups must be split by instance too, even with one instance.
-	for _, table := range []string{"daily_usage", "cache_daily", "provider_daily", "provider_cache_daily"} {
+	for _, table := range []string{"daily_usage", "provider_daily"} {
 		if n := count(t, st, `SELECT count(*) FROM `+table+` WHERE instance_id<>?`, DefaultInstanceID); n != 0 {
 			t.Fatalf("%s rows outside the default instance: %d", table, n)
 		}
@@ -442,19 +442,9 @@ func assertAllRollupsMatchFacts(t *testing.T, st *Store) {
 			`SELECT mytoken_day(timestamp),harness,instance_id,session_id,resolved_provider,model,project,attrib,sum(input),sum(output),sum(cache_read),sum(cache_write),sum(reasoning),sum(CASE WHEN priced THEN cost ELSE 0 END),sum(CASE WHEN log_cost IS NOT NULL THEN cost ELSE 0 END),sum(CASE WHEN log_cost IS NULL AND priced THEN cost ELSE 0 END),count(*),sum(NOT priced) FROM events GROUP BY 1,2,3,4,5,6,7,8`,
 		},
 		{
-			"cache_daily",
-			`SELECT day,harness,instance_id,session_id,resolved_provider,model,project,cause,requests,cacheable,expected,read,miss,miss_cost FROM cache_daily`,
-			`SELECT mytoken_day(timestamp),harness,instance_id,session_id,resolved_provider,model,project,miss_cause,count(*),sum(cache_expected>=0),sum(max(cache_expected,0)),sum(CASE WHEN cache_expected>=0 THEN cache_read ELSE 0 END),sum(cache_miss),sum(miss_cost) FROM events GROUP BY 1,2,3,4,5,6,7,8`,
-		},
-		{
 			"provider_daily",
 			`SELECT day,harness,instance_id,session_id,resolved_provider,model,project,base_url,attrib,input,output,cache_read,cache_write,reasoning,cost,cost_log,cost_estimate,requests,unpriced FROM provider_daily`,
 			`SELECT mytoken_day(timestamp),harness,instance_id,session_id,resolved_provider,model,project,base_url,attrib,sum(input),sum(output),sum(cache_read),sum(cache_write),sum(reasoning),sum(CASE WHEN priced THEN cost ELSE 0 END),sum(CASE WHEN log_cost IS NOT NULL THEN cost ELSE 0 END),sum(CASE WHEN log_cost IS NULL AND priced THEN cost ELSE 0 END),count(*),sum(NOT priced) FROM events GROUP BY 1,2,3,4,5,6,7,8,9`,
-		},
-		{
-			"provider_cache_daily",
-			`SELECT day,harness,instance_id,session_id,resolved_provider,model,project,base_url,cause,requests,cacheable,expected,read,miss,miss_cost FROM provider_cache_daily`,
-			`SELECT mytoken_day(timestamp),harness,instance_id,session_id,resolved_provider,model,project,base_url,miss_cause,count(*),sum(cache_expected>=0),sum(max(cache_expected,0)),sum(CASE WHEN cache_expected>=0 THEN cache_read ELSE 0 END),sum(cache_miss),sum(miss_cost) FROM events GROUP BY 1,2,3,4,5,6,7,8,9`,
 		},
 	}
 	for _, p := range pairs {

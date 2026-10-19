@@ -225,11 +225,6 @@ func (s *State) detailView(c *ui.Context, pal palette) {
 				})
 			}
 			// Cache ledger.
-			if cacheJudged(d.Cache) > 1 {
-				card(c, pal, tr("cacheTimeline"), func() { cacheSummary(c, pal, d.Cache) }, func() {
-					cacheTimeline(c.Key("ctl"+s.sel.key()), pal, d.Cache, 150, tr("cacheTimeline"))
-				})
-			}
 			// Subagents.
 			if len(d.Children) > 0 {
 				card(c, pal, tr("subagents"), func() {

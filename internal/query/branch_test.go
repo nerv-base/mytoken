@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 
@@ -118,8 +117,8 @@ func TestBranchGroupsRepositoryAndBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plain.Totals != env.Totals || !reflect.DeepEqual(plain.Cache, env.Cache) {
-		t.Fatalf("grouped envelope changed totals or cache: %+v/%+v vs %+v/%+v", env.Totals, env.Cache, plain.Totals, plain.Cache)
+	if plain.Totals != env.Totals {
+		t.Fatalf("grouped envelope changed totals: %+v vs %+v", env.Totals, plain.Totals)
 	}
 }
 

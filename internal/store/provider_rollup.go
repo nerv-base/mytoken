@@ -24,12 +24,10 @@ const providerRollupVersion = "provider.endpoint-rollup.v1"
 // original rollups keep their primary keys and consumers untouched, and the
 // instance generation adds instance_id in the same position as the base rollups.
 const legacyProviderDailyDimensions = "day,harness,session_id,resolved_provider,model,project,base_url,attrib"
-const legacyProviderCacheDimensions = "day,harness,session_id,resolved_provider,model,project,base_url,cause"
 
 var providerDailyDimensions = withInstance(legacyProviderDailyDimensions)
-var providerCacheDimensions = withInstance(legacyProviderCacheDimensions)
 
-var providerRollupTables = []string{"provider_daily", "provider_cache_daily"}
+var providerRollupTables = []string{"provider_daily"}
 
 // providerDailyValues builds the per-event contribution for provider_daily. It
 // is dailyValues with base_url inserted, so the token, cost-source, request and
@@ -38,16 +36,6 @@ var providerRollupTables = []string{"provider_daily", "provider_cache_daily"}
 func providerDailyValues(prefix, dims string) string {
 	parts := dimValues(prefix, dims, nil)
 	parts = append(parts, dailyMetricValues(prefix)...)
-	return strings.Join(parts, ",")
-}
-
-// providerCacheValues is cacheValues with base_url inserted.
-func providerCacheValues(prefix, dims string) string {
-	p := prefix + "."
-	parts := dimValues(prefix, dims, map[string]string{"cause": p + "miss_cause"})
-	parts = append(parts,
-		"1,("+p+"cache_expected>=0),max("+p+"cache_expected,0)",
-		"CASE WHEN "+p+"cache_expected>=0 THEN "+p+"cache_read ELSE 0 END,"+p+"cache_miss,"+p+"miss_cost")
 	return strings.Join(parts, ",")
 }
 
@@ -61,15 +49,6 @@ func providerDailyRollupInsert(dims string) string {
 		"sum(CASE WHEN log_cost IS NOT NULL THEN cost ELSE 0 END)," +
 		"sum(CASE WHEN log_cost IS NULL AND priced THEN cost ELSE 0 END)," +
 		"count(*),sum(NOT priced) FROM events GROUP BY " + groupByPositions(dims)
-}
-
-// providerCacheRollupInsert rebuilds provider_cache_daily from scratch over the
-// events view, including the cache verdict columns.
-func providerCacheRollupInsert(dims string) string {
-	return "INSERT INTO provider_cache_daily(" + dims + "," + cacheMetrics + ") SELECT " +
-		bareDimList(dims, map[string]string{"cause": "miss_cause"}) +
-		",count(*),sum(cache_expected>=0),sum(max(cache_expected,0))," +
-		"sum(CASE WHEN cache_expected>=0 THEN cache_read ELSE 0 END),sum(cache_miss),sum(miss_cost) FROM events GROUP BY " + groupByPositions(dims)
 }
 
 // migrateProviderDaily creates provider_daily and its event_data maintenance
@@ -88,22 +67,6 @@ func migrateProviderDaily(tx *sql.Tx, sc rollupSchema) error {
 	}, nil)
 }
 
-// migrateProviderCacheDaily creates provider_cache_daily and its triggers,
-// mirroring migrateCacheDaily. The cache verdicts live in the same group as
-// cache_daily plus base_url, so an endpoint-filtered cache query never has to
-// merge two tenants or read facts.
-func migrateProviderCacheDaily(tx *sql.Tx, sc rollupSchema) error {
-	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS provider_cache_daily (
- ` + dimColumnDecls(sc.providerCache) + `,
- requests INTEGER NOT NULL,cacheable INTEGER NOT NULL,expected INTEGER NOT NULL,read INTEGER NOT NULL,miss INTEGER NOT NULL,miss_cost REAL NOT NULL,
- PRIMARY KEY(` + sc.providerCache + `)) WITHOUT ROWID;`); err != nil {
-		return err
-	}
-	return installRollupTriggers(tx, "provider_cache", "provider_cache_daily", sc.providerCache, cacheMetrics, sc.dimensionColumns, func(prefix string) string {
-		return providerCacheValues(prefix, sc.providerCache)
-	}, map[string]string{"cause": "OLD.miss_cause"})
-}
-
 // migrateProviderRollup creates both endpoint-aware rollups, backfills them from
 // the events view and records the marker. It is additive: it creates derived
 // tables and triggers only, and never rewrites an event, a session, an endpoint
@@ -112,13 +75,7 @@ func migrateProviderRollup(tx *sql.Tx, sc rollupSchema) error {
 	if err := migrateProviderDaily(tx, sc); err != nil {
 		return err
 	}
-	if err := migrateProviderCacheDaily(tx, sc); err != nil {
-		return err
-	}
 	if _, err := tx.Exec("DELETE FROM provider_daily; " + providerDailyRollupInsert(sc.providerDaily)); err != nil {
-		return err
-	}
-	if _, err := tx.Exec("DELETE FROM provider_cache_daily; " + providerCacheRollupInsert(sc.providerCache)); err != nil {
 		return err
 	}
 	_, err := tx.Exec("INSERT INTO settings(key,value) VALUES(?,'1') ON CONFLICT(key) DO UPDATE SET value=excluded.value", providerRollupVersion)
@@ -214,9 +171,6 @@ Recovery requires an explicit operator decision. Stop every MyToken process firs
 // events view. Callers hold the writer lock; triggers must already be recreated.
 func rebuildProviderRollups(ctx context.Context, tx *sql.Tx, sc rollupSchema) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM provider_daily; "+providerDailyRollupInsert(sc.providerDaily)); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM provider_cache_daily; "+providerCacheRollupInsert(sc.providerCache)); err != nil {
 		return err
 	}
 	return nil

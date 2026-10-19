@@ -3,9 +3,16 @@ package app
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/zzstar101/mytoken/internal/attrib"
-	"github.com/zzstar101/mytoken/internal/budget"
-	"github.com/zzstar101/mytoken/internal/claudequota"
 	"github.com/zzstar101/mytoken/internal/harness"
 	_ "github.com/zzstar101/mytoken/internal/harness/amp"
 	_ "github.com/zzstar101/mytoken/internal/harness/antigravity"
@@ -39,54 +46,74 @@ import (
 	_ "github.com/zzstar101/mytoken/internal/harness/workbuddy"
 	_ "github.com/zzstar101/mytoken/internal/harness/zcode"
 	_ "github.com/zzstar101/mytoken/internal/harness/zed"
-	"github.com/zzstar101/mytoken/internal/instance"
+	"github.com/zzstar101/mytoken/internal/ingestrate"
+	"github.com/zzstar101/mytoken/internal/model"
 	"github.com/zzstar101/mytoken/internal/paths"
 	"github.com/zzstar101/mytoken/internal/pricing"
 	"github.com/zzstar101/mytoken/internal/query"
-	"github.com/zzstar101/mytoken/internal/reconcile"
+	"github.com/zzstar101/mytoken/internal/quota/plan"
+	"github.com/zzstar101/mytoken/internal/quota/providers"
 	"github.com/zzstar101/mytoken/internal/scan"
 	"github.com/zzstar101/mytoken/internal/store"
-	"sync"
-	"time"
 )
 
+var (
+	// ErrClosed reports a scan operation on a closed app.
+	ErrClosed = errors.New("app: closed")
+	// ErrNoScanner reports an app with no live scanner.
+	ErrNoScanner = errors.New("app: no scanner is available")
+)
+
+const (
+	// EnabledKey is the settings key that toggles one harness. A missing row
+	// means enabled; the literal value "false" disables it.
+	EnabledKey = "harness.%s.enabled"
+	// RootKey is the settings key that overrides one harness's scan roots.
+	RootKey = "harness.%s.root"
+)
+
+// DBInfo describes the index file and the history it holds.
+type DBInfo struct {
+	Path     string    `json:"path"`
+	Bytes    int64     `json:"bytes"`
+	Events   int64     `json:"events"`
+	Sessions int64     `json:"sessions"`
+	Oldest   time.Time `json:"oldest"`
+	Newest   time.Time `json:"newest"`
+}
+
+// Source is one harness row in the settings' data-source panel.
+type Source struct {
+	Harness  model.Harness `json:"harness"`
+	Detected bool          `json:"detected"`
+	Enabled  bool          `json:"enabled"`
+	Roots    []string      `json:"roots"`
+	Override string        `json:"override"`
+	Problem  string        `json:"problem"`
+	Requests int64         `json:"requests"`
+	LastSeen time.Time     `json:"lastSeen"`
+}
+
+// CustomPrice is a per-model override in USD per 1M tokens.
+type CustomPrice struct {
+	Model      string  `json:"model"`
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite"`
+}
+
+// App owns the index, the scan lifecycle and the plan-quota service.
 type App struct {
-	cancel   context.CancelFunc
-	workers  sync.WaitGroup
+	Path     string
 	Store    *store.Store
 	Scanner  *scan.Scanner
 	Settings query.Settings
 	Query    query.Service
 	Resolver *attrib.Resolver
 	Pricing  *pricing.Pricer
-	// Sources is every instance the loaded sources.json resolved to, in
-	// resolution order, including the disabled and backup-copy entries the
-	// scanner ignores. It is the diagnostics surface for the GUI/CLI; see
-	// Source.
-	Sources []Source
-	// SourceProblems is every non-fatal resolution problem (a missing built-in
-	// default root, a deduplicated default root). Fatal problems never reach a
-	// built App: Open and OpenLocal return them as *SourceError instead.
-	SourceProblems []instance.Problem
-	// Relays reconciles relays the user turned on (see StartRelaySync).
-	Relays      *reconcile.Service
-	relayCancel context.CancelFunc
-	// Budget evaluates the persisted budget rules against local estimated cost
-	// and delivers notifications. It exists even without a notifier; only
-	// StartBudget starts its loop.
-	Budget *budget.Service
+	Quota    *plan.Service
 
-	// claudeQuota is the opt-in Claude Code subscription-quota service. It is
-	// always constructed (the GUI needs it to read consent state) but it stays
-	// inert until a persisted consent exists; offline apps never auto refresh.
-	// Use ClaudeQuotaInfo/EnableClaudeQuota/DisableClaudeQuota/
-	// RefreshClaudeQuota/SnapshotClaudeQuota, not the field directly.
-	claudeQuota *claudequota.Service
-
-	// zoneMu guards the stats timezone adopted from the store (see
-	// EnsureStatsTimezone and Location). zoneConfigured is false while the
-	// calendar is unresolved: zoneLoc is then nil and ZoneName is empty, so no
-	// caller can mistake the system zone for a fixed persisted choice.
 	zoneMu            sync.Mutex
 	zoneName          string
 	zoneLoc           *time.Location
@@ -94,75 +121,28 @@ type App struct {
 	zoneConfigured    bool
 	zoneSystemPreview string
 
-	// scanMu guards the live scan lifecycle: the scanner a source reload last
-	// installed, the resolution it was built from, and the watcher goroutine.
-	//
-	// Scanner, Sources and SourceProblems above are written once by open and
-	// never again, so a CLI command that reads them directly can never race a
-	// reload; the GUI reads the accessors in scanlife.go and sources.go, which
-	// follow a reload.
-	scanMu      sync.Mutex
-	scanner     *scan.Scanner
-	sources     []Source
-	sourceProbs []instance.Problem
-	scanWanted  bool
-	scanRunning bool
-	scanCancel  context.CancelFunc
-	scanDone    chan struct{}
-	scanFailed  error
-	// reloadMu serializes whole source reloads against each other, against
-	// StartScanning and against Close. scanMu alone cannot: a reload must wait
-	// for the watcher it cancelled, and that watcher takes scanMu itself, so a
-	// reload cannot hold scanMu across the wait. Without reloadMu two
-	// overlapping reloads can each install a scanner and then race to start
-	// one watcher, leaving the other scanner with nothing running it — or
-	// start two watchers over the same sources — and a reload can start a
-	// watcher after Close has already stopped the scan. It is always taken
-	// before scanMu, never the other way round.
+	cancel  context.CancelFunc
+	workers sync.WaitGroup
+
+	scanMu     sync.Mutex
+	scanner    *scan.Scanner
+	scanWanted bool
+	scanCancel context.CancelFunc
+	scanDone   chan struct{}
+	scanFailed error
+
 	reloadMu sync.Mutex
-	// closed is set by Close under reloadMu. A reload or a start that runs
-	// after it owns nothing: the store is closing, so it must not install a
-	// scanner or start a watcher over it (see ErrClosed).
-	closed bool
-
-	// claudeMu guards the Claude quota service, which a successful source
-	// reload replaces so a stored consent is re-checked against the sources
-	// that exist now. claudeRefresh records whether this app may read a
-	// credential at all (an OpenLocal app never may).
-	claudeMu      sync.Mutex
-	claudeRefresh bool
+	closed   bool
 }
 
-// Options configure the desktop app. The zero value is the CLI's: no budget
-// notifier, so nothing is delivered even if a rule is configured.
-type Options struct {
-	// Notify delivers budget notifications. nil means the service reserves a
-	// crossed threshold and reports that no notifier is installed instead of
-	// delivering it.
-	Notify budget.Notifier
-}
+// Open opens the writable app and refreshes prices in the background.
+func Open() (*App, error) { return open(true) }
 
-func Open() (*App, error) { return open(true, Options{}) }
+// OpenLocal behaves like Open but never uses the network.
+func OpenLocal() (*App, error) { return open(false) }
 
-// OpenWith opens the desktop app with its delivery hooks installed.
-func OpenWith(o Options) (*App, error) { return open(true, o) }
-
-// OpenLocal uses the loaded offline prices without starting a network worker.
-func OpenLocal() (*App, error) { return open(false, Options{}) }
-
-func open(refresh bool, o Options) (*App, error) {
+func open(refresh bool) (*App, error) {
 	dir, e := paths.DataDir()
-	if e != nil {
-		return nil, e
-	}
-	// Resolve the configured sources before anything else. A malformed
-	// sources.json, an unusable explicit root or an unavailable parser factory
-	// must stop here, before a store, a scan or a background refresh exists.
-	cfg, e := instance.Load(dir)
-	if e != nil {
-		return nil, e
-	}
-	sources, e := resolveSources(cfg, instance.DefaultFallbacks(), harness.NewRooted)
 	if e != nil {
 		return nil, e
 	}
@@ -180,45 +160,31 @@ func open(refresh bool, o Options) (*App, error) {
 		return nil, e
 	}
 	prices := pricing.New(dir)
-	a := &App{Store: st, Resolver: resolver, Pricing: prices, Sources: sources.sources, SourceProblems: sources.problems}
-	// The live resolution starts as the one just loaded; only a successful
-	// ReloadSources replaces it.
-	a.sources, a.sourceProbs = sources.sources, sources.problems
+	a := &App{Path: db, Store: st, Resolver: resolver, Pricing: prices}
 	a.Settings = query.NewSettings(st, prices)
 	if e = query.LoadPricingSettings(context.Background(), st, prices); e != nil {
 		a.Close()
 		return nil, e
 	}
-	// An empty target list scans nothing: a configuration whose entries are all
-	// disabled or backup-copies must not fall back to default discovery.
-	a.Scanner, e = scan.NewWithInstances(st, resolver, prices, sources.targets...)
+	a.Query = query.NewService(st)
+	parsers, _ := a.parserSet(context.Background())
+	a.Scanner = scan.New(st, resolver, prices, parsers...)
+	a.scanner = a.Scanner
+	svc, e := plan.NewService(plan.Options{
+		Providers: providers.All(providers.Options{Store: st}),
+		Store:     st,
+		Offline:   !refresh,
+	})
 	if e != nil {
 		a.Close()
 		return nil, e
 	}
-	// The scanner the public field holds is the live one until a reload
-	// replaces it; a CLI command reads the field and never reloads.
-	a.scanner = a.Scanner
-	a.Query = query.NewService(st)
-	a.Relays = newRelays(a)
-	// The budget service always exists so the GUI can edit rules; its loop only
-	// runs after StartBudget (desktop startup), never for a CLI command.
-	a.Budget = budget.NewService(st, budget.QueryCosts{Q: a.Query}, o.Notify)
-	a.Budget.SetLocation(func() *time.Location { return a.Location() })
-	// No threshold is reserved and no notification is delivered while the
-	// reporting calendar is unresolved: an ambient system zone must never stand
-	// in for a fixed persisted choice (see StartBudget and EnsureStatsTimezone).
-	a.Budget.SetZoneReadiness(func() bool { return a.TimezoneState().Configured })
+	a.Quota = svc
+	svc.Start()
 	if e = st.EnsurePrices(context.Background(), prices.Fingerprint(), prices.Evaluate); e != nil {
 		a.Close()
 		return nil, e
 	}
-	// The Claude quota service is constructed for every app so consent can be
-	// read and edited, but only an online Open starts its refresh loop: an
-	// OpenLocal app never reads a credential automatically and never requests.
-	a.claudeQuota = newClaudeQuota(st, sources.sources, refresh)
-	a.claudeRefresh = refresh
-	a.claudeQuota.Start(context.Background())
 	if !refresh {
 		return a, nil
 	}
@@ -230,7 +196,6 @@ func open(refresh bool, o Options) (*App, error) {
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for {
-			// Refresh failure leaves the loaded offline table available.
 			_ = prices.Refresh(ctx)
 			if ctx.Err() != nil {
 				return
@@ -245,30 +210,31 @@ func open(refresh bool, o Options) (*App, error) {
 	}()
 	return a, nil
 }
+
+// Close stops the scanner, quota service and workers, then closes the store.
 func (a *App) Close() error {
-	if a.relayCancel != nil {
-		a.relayCancel()
-	}
 	if a.cancel != nil {
 		a.cancel()
 	}
 	a.workers.Wait()
-	// Stop the watcher and join it before the store it scans through goes
-	// away. A reload holds reloadMu for its whole resolve-swap-start sequence,
-	// so holding it here means no replacement watcher can be started between
-	// the stop below and the store closing — and the watcher a reload just
-	// started is stopped here too, instead of outliving the store.
 	a.reloadMu.Lock()
 	defer a.reloadMu.Unlock()
-	a.closed = true
-	a.stopScan()
-	// Close cancels any in-flight Claude quota request and joins its loop
-	// before the store it writes through goes away.
-	if q := a.ClaudeQuota(); q != nil {
-		q.Close()
+	if a.closed {
+		return nil
 	}
-	if a.Budget != nil {
-		a.Budget.Close()
+	a.closed = true
+	a.scanMu.Lock()
+	cancel, done := a.scanCancel, a.scanDone
+	a.scanWanted = false
+	a.scanMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+	if a.Quota != nil {
+		_ = a.Quota.Close()
 	}
 	if a.Resolver != nil {
 		_ = a.Resolver.Close()
@@ -277,4 +243,342 @@ func (a *App) Close() error {
 		return a.Store.Close()
 	}
 	return nil
+}
+
+func enabledSettingKey(h model.Harness) string { return fmt.Sprintf(EnabledKey, h) }
+func rootSettingKey(h model.Harness) string    { return fmt.Sprintf(RootKey, h) }
+
+func readSetting(ctx context.Context, st *store.Store, key string) (string, error) {
+	v, err := st.Setting(ctx, key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
+}
+
+// parserSet returns the parsers enabled by settings, applying root overrides.
+// The second return value carries per-harness problems in harness order.
+func (a *App) parserSet(ctx context.Context) ([]harness.Parser, map[model.Harness]string) {
+	problems := map[model.Harness]string{}
+	var out []harness.Parser
+	for _, p := range harness.All() {
+		h := p.Harness()
+		enabled, _ := readSetting(ctx, a.Store, enabledSettingKey(h))
+		if strings.EqualFold(strings.TrimSpace(enabled), "false") {
+			continue
+		}
+		root, _ := readSetting(ctx, a.Store, rootSettingKey(h))
+		root = strings.TrimSpace(root)
+		if root != "" {
+			if err := harness.ValidateRoot(p, root); err != nil {
+				problems[h] = err.Error()
+				continue
+			}
+			if r, ok := p.(harness.Rooted); ok {
+				p = r.WithRoots(root)
+			}
+		}
+		out = append(out, p)
+	}
+	return out, problems
+}
+
+// ListSources reports every compiled harness with its settings and usage.
+func (a *App) ListSources(ctx context.Context) ([]Source, error) {
+	rows, err := a.Store.DB().QueryContext(ctx, `SELECT harness, count(*), max(timestamp) FROM events GROUP BY harness`)
+	if err != nil {
+		return nil, err
+	}
+	type usage struct {
+		requests int64
+		last     int64
+	}
+	counts := map[model.Harness]usage{}
+	for rows.Next() {
+		var h string
+		var u usage
+		if err := rows.Scan(&h, &u.requests, &u.last); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		counts[model.Harness(h)] = u
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	parsers, problems := a.parserSet(ctx)
+	active := map[model.Harness]harness.Parser{}
+	for _, p := range parsers {
+		active[p.Harness()] = p
+	}
+	all := harness.All()
+	sort.Slice(all, func(i, j int) bool { return all[i].Harness() < all[j].Harness() })
+	out := make([]Source, 0, len(all))
+	for _, p := range all {
+		h := p.Harness()
+		enabled, _ := readSetting(ctx, a.Store, enabledSettingKey(h))
+		root, _ := readSetting(ctx, a.Store, rootSettingKey(h))
+		src := Source{Harness: h, Enabled: !strings.EqualFold(strings.TrimSpace(enabled), "false"), Override: strings.TrimSpace(root)}
+		probe := p
+		if src.Override != "" {
+			if r, ok := p.(harness.Rooted); ok {
+				probe = r.WithRoots(src.Override)
+			}
+		}
+		status := harness.Detect(probe)
+		src.Detected = status.Detected
+		src.Roots = status.Roots
+		src.Problem = status.Problem
+		if problems[h] != "" {
+			src.Problem = problems[h]
+			src.Detected = false
+		}
+		if u := counts[h]; u.requests > 0 {
+			src.Requests = u.requests
+			src.LastSeen = time.Unix(0, u.last).UTC()
+		}
+		out = append(out, src)
+	}
+	return out, nil
+}
+
+// SetSourceEnabled toggles one harness and rebuilds the scanner.
+func (a *App) SetSourceEnabled(ctx context.Context, h model.Harness, on bool) error {
+	if _, ok := harness.Get(h); !ok {
+		return fmt.Errorf("unknown harness %q", h)
+	}
+	value := "false"
+	if on {
+		value = "true"
+	}
+	if err := a.Store.SetSetting(ctx, enabledSettingKey(h), value); err != nil {
+		return err
+	}
+	return a.Rescan(ctx)
+}
+
+// SetSourceRoot saves a root override ("" = automatic roots) after validating
+// that the directory really holds data for this harness.
+func (a *App) SetSourceRoot(ctx context.Context, h model.Harness, dir string) error {
+	p, ok := harness.Get(h)
+	if !ok {
+		return fmt.Errorf("unknown harness %q", h)
+	}
+	dir = strings.TrimSpace(dir)
+	if dir != "" {
+		if err := harness.ValidateRoot(p, dir); err != nil {
+			return err
+		}
+	}
+	if err := a.Store.SetSetting(ctx, rootSettingKey(h), dir); err != nil {
+		return err
+	}
+	return a.Rescan(ctx)
+}
+
+// Rescan rebuilds the parser set from settings and replaces the live scanner.
+// An already-running watcher is restarted on the new set.
+func (a *App) Rescan(ctx context.Context) error {
+	a.reloadMu.Lock()
+	defer a.reloadMu.Unlock()
+	if a.closed {
+		return ErrClosed
+	}
+	parsers, _ := a.parserSet(ctx)
+	next := scan.New(a.Store, a.Resolver, a.Pricing, parsers...)
+	a.scanMu.Lock()
+	cancel, done := a.scanCancel, a.scanDone
+	a.scanCancel, a.scanDone = nil, nil
+	a.scanMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+	a.scanMu.Lock()
+	a.scanner = next
+	a.Scanner = next
+	wanted := a.scanWanted
+	if wanted {
+		scanCtx, cancel := context.WithCancel(context.Background())
+		a.scanCancel = cancel
+		done := make(chan struct{})
+		a.scanDone = done
+		go a.runScanner(next, scanCtx, done)
+	}
+	a.scanMu.Unlock()
+	return nil
+}
+
+func (a *App) runScanner(sc *scan.Scanner, ctx context.Context, done chan struct{}) {
+	defer close(done)
+	if err := sc.Run(ctx); err != nil {
+		a.scanMu.Lock()
+		a.scanFailed = err
+		a.scanMu.Unlock()
+	}
+}
+
+// StartScanning starts the watcher over the current scanner once.
+func (a *App) StartScanning(ctx context.Context) error {
+	a.scanMu.Lock()
+	defer a.scanMu.Unlock()
+	if a.closed {
+		return ErrClosed
+	}
+	if a.scanWanted {
+		return nil
+	}
+	a.scanWanted = true
+	scanCtx, cancel := context.WithCancel(ctx)
+	a.scanCancel = cancel
+	done := make(chan struct{})
+	a.scanDone = done
+	go a.runScanner(a.scanner, scanCtx, done)
+	return nil
+}
+
+// ScannerProgress reports the current scan's completed and total sources.
+func (a *App) ScannerProgress() (done, total int) {
+	if sc := a.CurrentScanner(); sc != nil {
+		return sc.Progress()
+	}
+	return 0, 0
+}
+
+// ScannerIngestRate reports the committed output-token rate of the live scan.
+func (a *App) ScannerIngestRate(now time.Time) ingestrate.Snapshot {
+	if sc := a.CurrentScanner(); sc != nil {
+		return sc.IngestRate(now)
+	}
+	return ingestrate.Snapshot{}
+}
+
+// CurrentScanner returns the live scanner.
+func (a *App) CurrentScanner() *scan.Scanner {
+	a.scanMu.Lock()
+	defer a.scanMu.Unlock()
+	return a.scanner
+}
+
+// ScanError reports why the watcher stopped on its own.
+func (a *App) ScanError() error {
+	a.scanMu.Lock()
+	defer a.scanMu.Unlock()
+	return a.scanFailed
+}
+
+// CustomPrices lists the stored per-model overrides.
+func (a *App) CustomPrices(ctx context.Context) ([]CustomPrice, error) {
+	rules, err := a.Settings.PriceRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CustomPrice, 0, len(rules))
+	for _, r := range rules {
+		if r.Model == "" {
+			continue // provider-wide rules are not per-model overrides
+		}
+		p := CustomPrice{Model: r.Model}
+		if r.Input != nil {
+			p.Input = *r.Input
+		}
+		if r.Output != nil {
+			p.Output = *r.Output
+		}
+		if r.CacheRead != nil {
+			p.CacheRead = *r.CacheRead
+		}
+		if r.CacheWrite != nil {
+			p.CacheWrite = *r.CacheWrite
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// SetCustomPrices replaces the per-model overrides and reprices the index.
+func (a *App) SetCustomPrices(ctx context.Context, prices []CustomPrice) error {
+	rules := make([]query.PriceRule, 0, len(prices))
+	for _, p := range prices {
+		model := strings.TrimSpace(p.Model)
+		if model == "" {
+			return errors.New("custom price requires a model")
+		}
+		in, out, cr, cw := p.Input, p.Output, p.CacheRead, p.CacheWrite
+		rules = append(rules, query.PriceRule{
+			Model:      model,
+			Input:      &in,
+			Output:     &out,
+			CacheRead:  &cr,
+			CacheWrite: &cw,
+			Source:     "user",
+		})
+	}
+	return a.Settings.SetPriceRules(ctx, rules)
+}
+
+// CatalogInfo reports the loaded price catalog version and model count.
+func (a *App) CatalogInfo() (string, int) { return a.Pricing.Catalog() }
+
+// QuotaService exposes the plan-quota service (nil-safe for callers).
+func (a *App) QuotaService() *plan.Service { return a.Quota }
+
+// RefreshQuotas fetches every detected plan now.
+func (a *App) RefreshQuotas(ctx context.Context) {
+	if a.Quota != nil {
+		a.Quota.Refresh(ctx)
+	}
+}
+
+// Info describes the index file.
+func (a *App) Info(ctx context.Context) (DBInfo, error) {
+	out := DBInfo{Path: a.Path}
+	if fi, err := osStat(a.Path); err == nil {
+		out.Bytes = fi
+	}
+	row := a.Store.DB().QueryRowContext(ctx, `SELECT count(*), coalesce(min(timestamp),0), coalesce(max(timestamp),0) FROM events`)
+	var oldest, newest int64
+	if err := row.Scan(&out.Events, &oldest, &newest); err != nil {
+		return out, err
+	}
+	if err := a.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM sessions`).Scan(&out.Sessions); err != nil {
+		return out, err
+	}
+	if oldest > 0 {
+		out.Oldest = time.Unix(0, oldest).UTC()
+	}
+	if newest > 0 {
+		out.Newest = time.Unix(0, newest).UTC()
+	}
+	return out, nil
+}
+
+// Compact rewrites the database file, reclaiming free pages.
+func (a *App) Compact(ctx context.Context) error {
+	return a.Store.Exec(ctx, "VACUUM")
+}
+
+// Rebuild empties the index and scans every enabled harness again.
+func (a *App) Rebuild(ctx context.Context) error {
+	if err := a.Store.Exec(ctx, `DELETE FROM event_data; DELETE FROM event_dimensions; DELETE FROM sessions; DELETE FROM cursors`); err != nil {
+		return err
+	}
+	sc := a.CurrentScanner()
+	if sc == nil {
+		return ErrNoScanner
+	}
+	return sc.Rebuild(ctx)
+}
+
+// osStat reports the file size of path.
+func osStat(path string) (int64, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return fi.Size(), nil
 }

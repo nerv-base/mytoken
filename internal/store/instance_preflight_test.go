@@ -180,9 +180,7 @@ func TestInstancePreflightRejectsLegacyKeys(t *testing.T) {
 		{"sessions", "sessions", "PRIMARY KEY(harness,instance_id,session_id)", "sessions"},
 		{"cursors", "cursors", "PRIMARY KEY(harness,instance_id,path)", "cursors"},
 		{"daily-usage", "daily_usage", "PRIMARY KEY(day,harness,instance_id,", "daily_usage"},
-		{"cache-daily", "cache_daily", "PRIMARY KEY(day,harness,instance_id,", "cache_daily"},
 		{"provider-daily", "provider_daily", "PRIMARY KEY(day,harness,instance_id,", "provider_daily"},
-		{"provider-cache-daily", "provider_cache_daily", "PRIMARY KEY(day,harness,instance_id,", "provider_cache_daily"},
 		{"event-dimensions-unique", "event_dimensions", "UNIQUE(harness,instance_id,", "event_dimensions"},
 	}
 	for _, tc := range cases {
@@ -245,7 +243,7 @@ func TestInstancePreflightRejectsNonInstanceEventsView(t *testing.T) {
 	execAll(t, db,
 		"PRAGMA legacy_alter_table=ON",
 		"DROP VIEW events",
-		legacyEventsViewHead+eventsViewCacheTail+eventsViewJoin,
+		legacyEventsViewHead+eventsViewSignalsTail+eventsViewJoin,
 	)
 	tx, err := db.Begin()
 	if err != nil {
@@ -263,7 +261,7 @@ func TestInstancePreflightRejectsNonInstanceEventsView(t *testing.T) {
 }
 
 func TestInstancePreflightRejectsMissingMaintenanceTriggers(t *testing.T) {
-	for _, trigger := range []string{"daily_delete", "cache_update", "provider_daily_insert", "provider_cache_delete"} {
+	for _, trigger := range []string{"daily_delete", "provider_daily_insert"} {
 		t.Run(trigger, func(t *testing.T) {
 			path := migratedIndex(t)
 			db := rawIndex(t, path)
@@ -317,8 +315,7 @@ func TestInstancePreflightAllowsProviderRollupRebuild(t *testing.T) {
 	db := rawIndex(t, path)
 	execAll(t, db,
 		"DROP TRIGGER provider_daily_insert", "DROP TRIGGER provider_daily_update", "DROP TRIGGER provider_daily_delete",
-		"DROP TRIGGER provider_cache_insert", "DROP TRIGGER provider_cache_update", "DROP TRIGGER provider_cache_delete",
-		"DROP TABLE provider_daily", "DROP TABLE provider_cache_daily",
+		"DROP TABLE provider_daily",
 		"DELETE FROM settings WHERE key='"+providerRollupVersion+"'",
 	)
 	db.Close()

@@ -31,12 +31,12 @@ func TestFingerprintTracksRuleStartTime(t *testing.T) {
 	p := New(t.TempDir())
 	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 	base := p.Fingerprint()
-	p.SetRules([]Rule{{Provider: "test", Multiplier: 0.5}})
+	p.SetRules([]Rule{{Provider: "test", Model: "m"}})
 	dated := p.Fingerprint()
 	if dated == base {
 		t.Fatal("rule did not change fingerprint")
 	}
-	p.SetRules([]Rule{{Provider: "test", Multiplier: 0.5, From: from}})
+	p.SetRules([]Rule{{Provider: "test", Model: "m", From: from}})
 	moved := p.Fingerprint()
 	if moved == dated {
 		t.Fatal("rule start time did not change fingerprint")

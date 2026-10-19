@@ -40,9 +40,7 @@ type rollupSchema struct {
 	factColumns      string
 	conflict         string
 	daily            string
-	cache            string
 	providerDaily    string
-	providerCache    string
 }
 
 var legacyRollupSchema = rollupSchema{
@@ -50,9 +48,7 @@ var legacyRollupSchema = rollupSchema{
 	factColumns:      legacySignalFactColumns,
 	conflict:         "harness,dedup_key",
 	daily:            legacyDailyDimensions,
-	cache:            legacyCacheDimensions,
 	providerDaily:    legacyProviderDailyDimensions,
-	providerCache:    legacyProviderCacheDimensions,
 }
 
 var instanceRollupSchema = rollupSchema{
@@ -61,9 +57,7 @@ var instanceRollupSchema = rollupSchema{
 	factColumns:      factColumns,
 	conflict:         "harness,instance_id,dedup_key",
 	daily:            dailyDimensions,
-	cache:            cacheDimensions,
 	providerDaily:    providerDailyDimensions,
-	providerCache:    providerCacheDimensions,
 }
 
 const legacyDailyDimensions = "day,harness,session_id,resolved_provider,model,project,attrib"
@@ -279,9 +273,6 @@ func (s *Store) EnsureLocalDays(ctx context.Context) error {
 		// unfiltered one, which is exactly the divergence these rollups exist to
 		// avoid. The endpoint-aware rollups are rebuilt from the events view too,
 		// so the backfill still reads no state that the change did not touch.
-		if _, err = tx.ExecContext(ctx, "DELETE FROM cache_daily; "+cacheRollupInsert(cacheDimensions)); err != nil {
-			return err
-		}
 		if err = rebuildProviderRollups(ctx, tx, instanceRollupSchema); err != nil {
 			return err
 		}

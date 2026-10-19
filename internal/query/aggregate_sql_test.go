@@ -70,7 +70,7 @@ func TestAggregateBoundariesAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if all.CostLogUSD != 3 || all.CostEstimateUSD != 2 || all.CostUSD != 5 || all.Unpriced != 1 {
+	if all.CostUSD != 5 || all.Unpriced != 1 {
 		t.Fatalf("sources: %+v", all)
 	}
 	for _, tt := range []struct {
@@ -86,7 +86,7 @@ func TestAggregateBoundariesAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(own) != 3 || own[0].CostSource != CostSourceLog || own[1].CostSource != CostSourceEstimate || own[2].CostSource != CostSourceUnpriced {
+	if len(own) != 3 || own[2].CostSource != CostSourceUnpriced {
 		t.Fatalf("events: %+v", own)
 	}
 }

@@ -219,7 +219,6 @@ type SessionDetail struct {
 	Row      query.SessionRow
 	Children []query.SessionRow
 	Events   []query.AttributedEvent
-	Cache    []query.CacheStep // the session's cache ledger, in time order
 }
 
 // sessionRef identifies one session. A session id alone does not: two
@@ -296,8 +295,7 @@ func loadSession(ctx context.Context, q query.Service, ref sessionRef) (SessionD
 	if err != nil {
 		return SessionDetail{}, err
 	}
-	steps, err := sessionCacheIn(ctx, q, ref)
-	return SessionDetail{Row: row, Children: kids, Events: evs, Cache: steps}, err
+	return SessionDetail{Row: row, Children: kids, Events: evs}, nil
 }
 
 // sessionRowIn reads one session's row, instance included.
@@ -313,14 +311,6 @@ func sessionIn(ctx context.Context, q query.Service, ref sessionRef) (query.Sess
 		return is.SessionIn(ctx, ref.Harness, ref.InstanceID, ref.SessionID)
 	}
 	return q.Session(ctx, ref.Harness, ref.SessionID)
-}
-
-// sessionCacheIn reads one session's cache steps, instance included.
-func sessionCacheIn(ctx context.Context, q query.Service, ref sessionRef) ([]query.CacheStep, error) {
-	if is, ok := q.(query.InstanceService); ok {
-		return is.SessionCacheIn(ctx, ref.Harness, ref.InstanceID, ref.SessionID)
-	}
-	return q.SessionCache(ctx, ref.Harness, ref.SessionID)
 }
 
 // filterRows keeps the rows matching every word of needle.

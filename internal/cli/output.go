@@ -147,10 +147,6 @@ func writeStatsTable(out io.Writer, total query.Totals, rows any, noCost bool) e
 	if _, e := io.WriteString(out, summary); e != nil {
 		return e
 	}
-	// The identity view has its own table shape (stable ID, label, members).
-	if groups, ok := rows.([]query.ProviderGroup); ok {
-		return writeProviderGroupsTable(out, groups, noCost)
-	}
 	w := newTable(out)
 	switch values := rows.(type) {
 	case []query.Bucket:
@@ -218,8 +214,6 @@ func writeStatsCSV(out io.Writer, rows any, noCost bool) error {
 			recs = append(recs, dayCSVRow(v, noCost))
 		}
 		return writeCSV(out, csvHeaderFor(dayCSVHeader, noCost), recs)
-	case []query.ProviderGroup:
-		return writeProviderGroupsCSV(out, values, noCost)
 	}
 	return fmt.Errorf("no CSV view for %T", rows)
 }

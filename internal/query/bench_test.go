@@ -11,7 +11,6 @@ import (
 
 	"github.com/zzstar101/mytoken/internal/harness"
 	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/provider"
 	"github.com/zzstar101/mytoken/internal/store"
 )
 
@@ -85,42 +84,17 @@ type queryCase struct {
 	run  func() error
 }
 
+
 func benchmarkCases(q Service, start time.Time) []queryCase {
-	ctx := context.Background()
-	f := Filter{}
-	// Provider IDs are hashed in Go, so an ID-filtered query reads facts with
-	// endpoint grouping instead of the legacy rollups. Benchmark that path.
-	endpointID, _ := provider.EndpointID(benchmarkEndpoints[0])
-	idFilter := Filter{ProviderIDs: []string{endpointID}}
+	f := Filter{Range: Range{From: start, To: start.Add(7 * 24 * time.Hour)}}
 	return []queryCase{
-		{"Totals", func() error { _, e := q.Totals(ctx, f); return e }},
-		{"TotalsIDFilter", func() error { _, e := q.Totals(ctx, idFilter); return e }},
-		{"ProviderGroups", func() error { _, e := q.ProviderGroups(ctx, f); return e }},
-		{"ProviderGroupsIDFilter", func() error { _, e := q.ProviderGroups(ctx, idFilter); return e }},
-		{"Daily", func() error { _, e := q.Daily(ctx, f); return e }},
-		{"Hourly24h", func() error {
-			_, e := q.Hourly(ctx, Filter{Range: Range{From: start, To: start.AddDate(0, 0, 1)}})
-			return e
-		}},
-		{"HourlyHarness24h", func() error {
-			_, e := q.Hourly(ctx, Filter{Range: Range{From: start, To: start.AddDate(0, 0, 1)}, Harnesses: []model.Harness{model.Codex}})
-			return e
-		}},
-		{"ByModel", func() error { _, e := q.ByModel(ctx, f); return e }},
-		{"ByProvider", func() error { _, e := q.ByProvider(ctx, f); return e }},
-		{"ByHarness", func() error { _, e := q.ByHarness(ctx, f); return e }},
-		{"ByProject", func() error { _, e := q.ByProject(ctx, f); return e }},
-		{"Sessions6", func() error { _, _, e := q.Sessions(ctx, f, "", 6, 0); return e }},
-		{"SessionsAll", func() error { _, _, e := q.Sessions(ctx, f, "", 0, 0); return e }},
-		{"Session", func() error { _, _, _, e := q.Session(ctx, model.Codex, "session-000"); return e }},
-		{"CacheTotals", func() error { _, e := q.CacheTotals(ctx, f); return e }},
-		{"CacheTotalsIDFilter", func() error { _, e := q.CacheTotals(ctx, idFilter); return e }},
-		{"CacheDaily", func() error { _, e := q.CacheDaily(ctx, f); return e }},
-		{"CacheByProvider", func() error { _, e := q.CacheBy(ctx, f, CacheByProvider); return e }},
-		{"CacheByModel", func() error { _, e := q.CacheBy(ctx, f, CacheByModel); return e }},
-		{"CacheByHarness", func() error { _, e := q.CacheBy(ctx, f, CacheByHarness); return e }},
-		{"CacheByProject", func() error { _, e := q.CacheBy(ctx, f, CacheByProject); return e }},
-		{"SessionCache", func() error { _, e := q.SessionCache(ctx, model.Codex, "session-000"); return e }},
+		{"Totals", func() error { _, e := q.Totals(context.Background(), f); return e }},
+		{"Daily", func() error { _, e := q.Daily(context.Background(), f); return e }},
+		{"ByHarness", func() error { _, e := q.ByHarness(context.Background(), f); return e }},
+		{"ByModel", func() error { _, e := q.ByModel(context.Background(), f); return e }},
+		{"ByProvider", func() error { _, e := q.ByProvider(context.Background(), f); return e }},
+		{"ByProject", func() error { _, e := q.ByProject(context.Background(), f); return e }},
+		{"Sessions", func() error { _, _, e := q.Sessions(context.Background(), f, SortRecent, 100, 0); return e }},
 	}
 }
 

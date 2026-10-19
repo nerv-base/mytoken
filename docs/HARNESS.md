@@ -13,7 +13,7 @@
 | 方法 | 责任 |
 | --- | --- |
 | `Harness() model.Harness` | 返回 harness id（与其它包、数据库里的值一致，且稳定不变） |
-| `Roots() []string` | 返回要监听的目录，环境变量与 `~` 已展开；目录不存在是允许的，忽略即可 |
+| `Roots() []string` | 返回要监听的目录，环境变量与 `~` 已展开；目录不存在是允许的，忽略即可。只返回**真正存放日志的最窄目录**（如 `~/.claude/projects` 而不是 `~/.claude`、`~/.codex/sessions` 而不是 `~/.codex`）：扫描器会为每个根及其下发现日志的祖先目录各加一个 fsnotify watch，根越宽，监听面越大 |
 | `Discover(ctx) ([]Source, error)` | 枚举日志文件/数据库，`Source{Path, Kind}`，`Kind` ∈ `jsonl` / `json` / `jsonl.zstd` / `sqlite`。根目录不存在必须返回 `0` 个源 + `nil` 错误 |
 | `Parse(ctx, src, cur) (Batch, error)` | 从游标 `cur` 增量读到文件末尾，返回 `Event`、`Session` 与新的 `Next` 游标 |
 
@@ -28,6 +28,21 @@
 - `Batch{Events, Sessions, Next}`：一次 Parse 的产出。
 - `Register(p)` 在包的 `init()` 里调用；`internal/app/app.go:7-16` 用空导入把包链进来。
   `harness.All()` / `Get(id)` 供扫描器使用。
+- `Rooted`（别名 `Rooter`，`internal/harness/detect.go:14-16`）：
+  `WithRoots(roots ...string) Parser`，返回一个只看这些目录的新实例，供设置页的手动目录
+  覆盖自动探测根。每个 parser 都必须实现；`harness.NewRooted(id, roots...)` 按 id 取实例。
+  实现要复制切片，不能改动原实例的根。
+
+### 1.2 检测与目录校验
+
+设置页对每个已编译进来的 harness 显示「已检测 / 未检测 / 已禁用 / 目录无效」，
+由 `internal/harness/detect.go` 的纯函数支撑，全部只做 `stat` 和浅层 `ReadDir`，
+不会遍历日志树：
+
+| 函数 | 语义 |
+| --- | --- |
+| `Detect(p Parser) Status` | `Status{Harness, Detected, Roots, Problem}`。某个根存在、是目录且含非隐藏条目即视为已检测；`Problem` 只在未检测时给出英文原因（未配置 / 不存在 / 为空 / 不可读）。 |
+| `ValidateRoot(p Parser, dir string) error` | 用户手选的目录是否是该 harness 的数据目录。用 `p.WithRoots(dir).Discover` 实际枚举；失败错误包裹 `ErrRootMissing`、`ErrRootNotDir`、`ErrRootNoData`（`errors.Is` 可区分），信息为英文。`~/.claude` 这类父目录会被拒绝，除非其中真有该 parser 能发现的源。 |
 
 ### 1.1 支持列表
 
@@ -40,7 +55,7 @@
 | `amp` | 否 | 整文件重写的 thread JSON；credits 记为 `Bill`；未在真实数据上验证 |
 | `antigravity` | 否 | 手写 protobuf 解码的 cascade `*.db`（`.pb` 不支持）；未在真实数据上验证 |
 | `claude-code` | 是 | 追加式 JSONL；`isSidechain` / `agentId` / `subagents/` 目录 |
-| `claude-desktop` | 是 | usage ledger + transcript；与 claude-code 的根目录不相交 |
+| `claude-desktop` | 是 | usage ledger + transcript。Code-tab 的 ledger 行在 `cliSessionId` 的 claude-code transcript 存在时丢弃（claude-code 已计）；Cowork 会话有 transcript 时以 transcript 为准、丢弃该会话的 turn 聚合行，无链接/无 transcript 时保留 ledger |
 | `cline` | 是 | 原地重写的任务 JSON（经 `internal/harness/clinetask`） |
 | `codebuddy` | 是 | 追加式 JSONL |
 | `codebuff` | 否 | chat JSON；credits 记为 `Bill`；未在真实数据上验证 |
@@ -77,17 +92,21 @@
 
 ## 2. 新增一个 harness
 
-1. 建包 `internal/harness/<name>/`，包内定义记录结构体、`New()` / `NewWithRoots(root string)`
+1. 建包 `internal/harness/<name>/`，包内定义记录结构体、`New()` / `NewWithRoots(roots ...string)`
    （`New()` 用默认根，测试用 `NewWithRoots` 指向临时目录）。
 2. 默认根用 `harness.EnvOr("<ENV>", "相对路径", ...)`：环境变量优先，否则
-   `$HOME/相对路径`。多根时全部返回。
-3. `Discover` 只匹配该 harness 真正使用的文件名/后缀，跳过目录、临时文件、非日志文件；
-   根不存在返回空切片而不是错误。
-4. `Parse` 按 §3 的游标规则增量读取；每条记录产出一个 `model.UsageEvent`
+   `$HOME/相对路径`。多根时全部返回；只返回日志所在的最窄目录（见 §1 的 `Roots`）。
+3. 实现 `WithRoots`（`Rooted`），返回使用给定根的副本，Settings 的手动目录依赖它。
+4. `Discover` 只匹配该 harness 真正使用的文件名/后缀，跳过目录、临时文件、非日志文件；
+   根不存在返回空切片而不是错误。`ValidateRoot` 直接复用它判断用户目录。
+5. `Parse` 按 §3 的游标规则增量读取；每条记录产出一个 `model.UsageEvent`
    （`DedupKey` 必须稳定且全局唯一，见 §4）。
-5. 在包 `init()` 里 `harness.Register(New())`，并在 `internal/app/app.go` 加空导入。
-6. 加 `conformance_test.go` 与 `testdata/conformance/<name>/` fixture，跑通 §6 的套件。
-7. 重新生成 golden：`go test ./internal/harness/<name> -run Conformance -update`。
+6. 在 `internal/model/model.go` 的 `Harness` 常量里加 id 并在 `DisplayName` 里加名字
+   （`Known()` 靠两者不同）；`Detect`/设置页不会显示没有名字的 harness。
+7. 在包 `init()` 里 `harness.Register(New())`，并在 `internal/app/app.go` 加空导入。
+8. 加 `conformance_test.go` 与 `testdata/conformance/<name>/` fixture，跑通 §6 的套件；
+   `go test ./internal/harness` 会检查每个注册 parser 都有 `WithRoots` 和 DisplayName。
+9. 重新生成 golden：`go test ./internal/harness/<name> -run Conformance -update`。
 
 参考实现：`internal/harness/claude/claude.go`（追加式 JSONL）、
 `internal/harness/crush/crush.go`（sqlite + 累计计数差分）、
@@ -119,6 +138,12 @@
 - token 归一化见 `docs/SPEC.md` §4：claude 的 `usage.input_tokens` 已排除缓存命中，
   `cache_creation_input_tokens` → `CacheWrite`，`cache_read_input_tokens` → `CacheRead`；
   `output_tokens` 已包含 reasoning，不要再加。
+- Anthropic 格式的 `usage.cache_creation.ephemeral_1h_input_tokens` 是 1h TTL 档，
+  是 `CacheWrite` 的**子集**：`CacheWrite` 仍取 `cache_creation_input_tokens` 全量，
+  `CacheWrite1h` 只放 1h 部分（5m 档是 `CacheWrite - CacheWrite1h`）。`Tokens.Add/Total`
+  不会把 1h 再加一遍。同一请求被多行流式记录时，merge 必须一并取两者的最大值。
+  只有真正带嵌套 `cache_creation` 的解析器能拆这一层；平铺字段的日志（zed/kimi/
+  codebuff/workbuddy 等）没有 1h 信号，`CacheWrite1h` 留空。
 - `model.SessionMeta`：`SessionID`、可选 `ParentID`（子 agent/侧链）、`Title`、
   `Project`、`StartedAt`、`UpdatedAt`。**`Title` 只能来自会话的第一条用户消息**，
   用 `harness.Title()` 归一化（空白折叠、最多 60 个 rune）。增量解析时只报告本批次

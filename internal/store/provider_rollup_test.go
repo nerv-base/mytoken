@@ -20,15 +20,12 @@ import (
 // the history it claims to summarize.
 const providerDailyOracle = `SELECT mytoken_day(timestamp),harness,instance_id,session_id,resolved_provider,model,project,base_url,attrib,sum(input),sum(output),sum(cache_read),sum(cache_write),sum(reasoning),sum(CASE WHEN priced THEN cost ELSE 0 END),sum(CASE WHEN log_cost IS NOT NULL THEN cost ELSE 0 END),sum(CASE WHEN log_cost IS NULL AND priced THEN cost ELSE 0 END),count(*),sum(NOT priced) FROM events GROUP BY 1,2,3,4,5,6,7,8,9`
 
-const providerCacheOracle = `SELECT mytoken_day(timestamp),harness,instance_id,session_id,resolved_provider,model,project,base_url,miss_cause,count(*),sum(cache_expected>=0),sum(max(cache_expected,0)),sum(CASE WHEN cache_expected>=0 THEN cache_read ELSE 0 END),sum(cache_miss),sum(miss_cost) FROM events GROUP BY 1,2,3,4,5,6,7,8,9`
-
 // assertRollupMatchesFacts diffs each rollup against its oracle in both
 // directions, so a dropped, duplicated or mislabelled group fails.
 func assertRollupMatchesFacts(t *testing.T, st *Store) {
 	t.Helper()
 	for _, tt := range []struct{ table, columns, oracle string }{
 		{"provider_daily", providerDailyDimensions + "," + dailyMetrics, providerDailyOracle},
-		{"provider_cache_daily", providerCacheDimensions + "," + cacheMetrics, providerCacheOracle},
 	} {
 		sel := "SELECT " + tt.columns + " FROM " + tt.table + " "
 		for label, q := range map[string]string{
