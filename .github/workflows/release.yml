@@ -134,6 +134,14 @@ jobs:
               *) cp "$f" "out/$base" ;;
             esac
           done < <(find dist -type f -print0)
+          # A build made for one Mac architecture (a local `mygo build`)
+          # looks for update-darwin-arm64.json or -amd64.json; point both at
+          # the universal update, or such a build never finds one.
+          if [ -e out/update-darwin-universal.json ]; then
+            for arch in arm64 amd64; do
+              cp out/update-darwin-universal.json "out/update-darwin-${arch}.json"
+            done
+          fi
           ls -l out
           gh release upload "$GITHUB_REF_NAME" out/* --clobber --repo "$GITHUB_REPOSITORY"
           gh release edit "$GITHUB_REF_NAME" --draft=false --latest --repo "$GITHUB_REPOSITORY"

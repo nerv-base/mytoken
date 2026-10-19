@@ -276,8 +276,29 @@ func (a *App) generalSettings(c *ui.Context, pal palette) {
 	card(c, pal).Children(func() {
 		cardTitle(c, pal, tr("about"), nil)
 		settingRow(c, pal, "MyToken", tr("aboutHint"), func() {
-			caption(c, pal, a.d.Version)
+			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+				caption(c, pal, a.d.Version)
+				if u := a.d.Updates; u != nil && u.Enabled() {
+					if ui.Button(c, tr("checkUpdates")).Clicked() {
+						u.Check()
+					}
+				}
+			})
 		})
+		if u := a.d.Updates; u != nil {
+			ui.Divider(c)
+			if u.Enabled() {
+				settingRow(c, pal, tr("autoUpdate"), tr("autoUpdateHint"), func() {
+					on := u.Automatic()
+					if ui.Switch(c, &on).Changed() {
+						u.SetAutomatic(on)
+					}
+				})
+			} else {
+				settingRow(c, pal, tr("autoUpdate"), tr("noSelfUpdate"), func() {})
+			}
+		}
+		ui.Divider(c)
 		settingRow(c, pal, tr("pricesFrom"), tr("pricesFromHint"), func() {
 			if a.d.Prices != nil {
 				info := a.d.Prices.Catalog()

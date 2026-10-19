@@ -30,6 +30,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
 	"github.com/egoist/mygo/plugins/updater/native"
 	"github.com/egoist/mygo/ui"
 
@@ -175,6 +176,7 @@ func main() {
 		return path, err == nil && path != ""
 	}
 	deps.Login = login{}
+	deps.Updates = updates{enabled: mygo.Updater.Enabled()}
 	deps.SetTrayTitle = func(title string) {
 		if tray != nil {
 			tray.SetTitle(title)
@@ -250,7 +252,7 @@ func main() {
 		ready = true
 		ui2.Start()
 
-		menu := trayMenu(openMain, func() { logErr("rescan", a.Rescan(context.Background())) })
+		menu := trayMenu(openMain, func() { logErr("rescan", a.Rescan(context.Background())) }, deps.Updates.Enabled())
 		opts := mygo.TrayOptions{Icon: trayIcon(), IconIsTemplate: true, ToolTip: "MyToken!!!!!"}
 		if runtime.GOOS != "darwin" {
 			// Windows shows the menu on a right click and keeps the left
@@ -310,20 +312,34 @@ func main() {
 }
 
 // trayMenu is the icon's context menu.
-func trayMenu(open, rescan func()) *mygo.Menu {
+func trayMenu(open, rescan func(), canUpdate bool) *mygo.Menu {
 	l := func(en, zh string) string {
 		if gui.Lang() == "zh" {
 			return zh
 		}
 		return en
 	}
-	return mygo.NewMenu([]*mygo.MenuItem{
+	items := []*mygo.MenuItem{
 		{Label: l("Open MyToken", "打开 MyToken"), Click: func(*mygo.MenuItem, *mygo.Window) { open() }},
 		{Label: l("Rescan logs", "重新扫描"), Click: func(*mygo.MenuItem, *mygo.Window) { go rescan() }},
-		mygo.Separator(),
-		{Label: l("Quit MyToken", "退出 MyToken"), Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
-	})
+	}
+	if canUpdate {
+		items = append(items, &mygo.MenuItem{Label: l("Check for Updates…", "检查更新…"),
+			Click: func(*mygo.MenuItem, *mygo.Window) { updater.CheckForUpdates() }})
+	}
+	items = append(items, mygo.Separator(),
+		&mygo.MenuItem{Label: l("Quit MyToken", "退出 MyToken"), Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }})
+	return mygo.NewMenu(items)
 }
+
+// updates is the updater plugin behind the settings' update rows. Whether
+// this copy can replace itself is probed once (it writes next to the app).
+type updates struct{ enabled bool }
+
+func (u updates) Enabled() bool      { return u.enabled }
+func (updates) Check()               { updater.CheckForUpdates() }
+func (updates) Automatic() bool      { return updater.AutomaticChecks() }
+func (updates) SetAutomatic(on bool) { updater.SetAutomaticChecks(on) }
 
 // login turns the login item on and off.
 type login struct{}

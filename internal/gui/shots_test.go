@@ -34,6 +34,7 @@ func newHarness(t testing.TB) *harness {
 		Maint:   demoMaint{},
 		Prefs:   prefs,
 		Version: "0.5.0-dev",
+		Updates: &demoUpdates{auto: true},
 		Now:     func() time.Time { return h.now },
 		Post: func(fn func()) {
 			h.mu.Lock()
@@ -175,3 +176,11 @@ func BenchmarkFrame(b *testing.B) {
 		})
 	}
 }
+
+// demoUpdates stands in for the updater plugin.
+type demoUpdates struct{ auto bool }
+
+func (*demoUpdates) Enabled() bool          { return true }
+func (*demoUpdates) Check()                 {}
+func (u *demoUpdates) Automatic() bool      { return u.auto }
+func (u *demoUpdates) SetAutomatic(on bool) { u.auto = on }

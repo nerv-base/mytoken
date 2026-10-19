@@ -24,6 +24,15 @@ type Login interface {
 	SetOpenAtLogin(on bool) error
 }
 
+// Updates checks for new versions of the app. Check shows the updater's
+// own window; Enabled is false for builds that cannot replace themselves.
+type Updates interface {
+	Enabled() bool
+	Check()
+	Automatic() bool
+	SetAutomatic(on bool)
+}
+
 // Exporter writes every request as CSV to path.
 type Exporter interface {
 	Export(ctx context.Context, path string) error
