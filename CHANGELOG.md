@@ -8,13 +8,16 @@ every release needs one here (`## 0.2.1`), written for the people updating.
 MyToken is now a spend and plan-quota dashboard for the AI coding tools on
 this machine. The relay-reconciliation direction of 0.2–0.4 is gone.
 
-- **A new app, rebuilt on MyGo 0.5.5.** Five pages: Overview (today's and
-  this month's spend, a month-end forecast, plan quota rings, daily spend by
-  tool), Sessions, Ranking (with the yearly heatmap and streaks), Projects
-  and Settings. The menu-bar panel shows today's spend, quota bars with reset
-  countdowns and the sessions running right now, with their estimated output
-  speed, cache hit rate and cost per hour. The menu-bar text can show any of
-  today's spend, speed, hit rate and quota.
+- **A new app, rebuilt on MyGo 0.5.5.** Five pages: Overview, Sessions,
+  Ranking (with the yearly heatmap and streaks), Projects and Settings, in a
+  calmer palette with motion: cards rise into view, figures count, selections
+  slide. Overview leads with today's spend and the sessions running now, as a
+  deck of cards that turns by itself, each with a breathing orb; then this
+  month's spend against last month with a month-end forecast, or today as a
+  24-hour clock; then plan quotas and the breakdown by tool, model and token
+  type. The menu-bar panel shows today's spend, the sessions running now with
+  their cost per hour and cache hit rate, and every quota. The menu-bar text
+  can show any of today's spend, spend per hour, hit rate and quota. New icon.
 - **Costs are official API prices, labelled "API equivalent".** Models
   without a price show as unpriced instead of $0; Settings → Prices can price
   them as another model or with your own rates. Headline token counts no
@@ -23,10 +26,16 @@ this machine. The relay-reconciliation direction of 0.2–0.4 is gone.
   now priced at 2× input (five-minute writes stay 1.25×).
 - **Claude totals are right.** Claude Desktop's Code tab no longer counts
   Claude Code sessions a second time, Cowork turns are not counted twice, and
-  ledger rows keep millisecond timestamps.
+  ledger rows keep millisecond timestamps. The tools whose reading changed
+  (Claude Code, Claude Desktop, OpenClaude, Step Code, Pi) are read again
+  once after the update, in a few seconds; requests whose logs those tools
+  have since deleted are kept as they were.
 - **Plan quota without setup.** Codex is read from its logs; Claude, Cursor,
-  Copilot and GLM are queried with the login those tools already have on this
-  machine. Tools without a detected plan show no quota card.
+  Copilot, GLM, Trae, WorkBuddy and Qoder are queried with the login those
+  tools already have on this machine (Qoder may ask once for Keychain
+  access). Percent quotas show as rings with a pace mark; credit balances,
+  which have no fixed limit, show what is left, the last 14 days of use and
+  about how many days it lasts. Tools without a detected plan show nothing.
 - **Sources are switches.** Every supported tool is detected automatically
   and can be turned off; one that is installed somewhere unusual can be
   pointed at its folder, which is checked on the spot.
@@ -45,8 +54,8 @@ this machine. The relay-reconciliation direction of 0.2–0.4 is gone.
 - **More tools.** ZCode, MiniMax Code, MiMo Code and Step Code are counted
   offline; Kimi Code is covered by the Kimi source; Pi and OpenCode recognise
   their compatible orchestrators (Oh My Pi, Oh My OpenAgent/senpi, OMO)
-  without counting aggregate logs twice. Trae and Qoder stay unsupported: they
-  have no verifiable offline usage record.
+  without counting aggregate logs twice. Trae and Qoder appear for their plan
+  credits only: they keep no usage record to count requests from.
 
 ## 0.4.1
 

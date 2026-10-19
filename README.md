@@ -42,8 +42,8 @@ contacted.
   by tool, and rankings by cost. Token counts leave cache reads out of the headline number.
 - **Plan quotas** — Codex, Claude, Cursor, Copilot and GLM windows as rings, with reset times,
   detected automatically.
-- **Menu bar** — today's spend (or output speed, cache hit rate, quota) beside the icon; the panel
-  lists sessions running now with an estimated output speed, $/hour and cache hit rate.
+- **Menu bar** — today's spend (or spend per hour, cache hit rate, quota) beside the icon; the panel
+  lists sessions running now with their cost, $/hour and cache hit rate, and every quota.
 - **CLI for scripts** — `mytoken` prints today's and this month's cost; `mytoken daily` prints a
   ccusage-style table with each cache class in its own column.
 - **Native, small, fast** — built with [MyGo](https://github.com/egoist/mygo)'s native UI package:
