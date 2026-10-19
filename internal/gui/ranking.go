@@ -25,7 +25,7 @@ func (a *App) rankingPage(c *ui.Context, pal palette) {
 		return
 	}
 	a.heatmapCard(c, pal)
-	card(c, pal).Children(func() {
+	a.rcard(c, pal, "ranking1", 0, false).Children(func() {
 		cardTitle(c, pal, tr("costRanking"), func() {
 			ui.Segmented(c, &a.rkDim, tr(rankDims[0]), tr(rankDims[1]), tr(rankDims[2])).Label(tr("rankBy"))
 		})
@@ -101,7 +101,7 @@ const cell, cellGap = 13, 3
 // heatmapCard is a year of daily cost, a week per column, with streaks.
 func (a *App) heatmapCard(c *ui.Context, pal palette) {
 	rk := &a.rk
-	card(c, pal).Children(func() {
+	a.rcard(c, pal, "ranking2", 1, false).Children(func() {
 		cardTitle(c, pal, tr("yearActivity"), nil)
 		ui.Row(c).Gap(28).Wrap().Children(func() {
 			streakStat(c, pal, tr("streakNow"), trf("daysN", rk.streak))

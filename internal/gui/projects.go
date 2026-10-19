@@ -108,7 +108,7 @@ func (a *App) projectPane(c *ui.Context, pal palette) {
 				a.projectChart(c, pal)
 			}
 			ui.Row(c).Gap(16).AlignItems(ui.Stretch).Children(func() {
-				card(c, pal).Grow(1).Basis(0).Children(func() {
+				a.rcard(c, pal, "projects1", 0, false).Grow(1).Basis(0).Children(func() {
 					cardTitle(c, pal, tr("byModel"), nil)
 					for i, b := range d.byModel {
 						if i == shareRows {
@@ -117,7 +117,7 @@ func (a *App) projectPane(c *ui.Context, pal palette) {
 						shareRow(c.Key(b.Key), pal, nil, b.Key, costText(b.CostUSD, b.Unpriced, b.Requests), fmtPct(frac(b.CostUSD, t.CostUSD)), frac(b.CostUSD, t.CostUSD), seriesAt(i))
 					}
 				})
-				card(c, pal).Grow(1).Basis(0).Children(func() {
+				a.rcard(c, pal, "projects2", 1, false).Grow(1).Basis(0).Children(func() {
 					cardTitle(c, pal, tr("byTool"), nil)
 					for i, b := range d.byTool {
 						if i == shareRows {
@@ -129,7 +129,7 @@ func (a *App) projectPane(c *ui.Context, pal palette) {
 				})
 			})
 			if len(d.sessions) > 0 {
-				card(c, pal).Gap(4).Children(func() {
+				a.rcard(c, pal, "projects3", 2, false).Gap(4).Children(func() {
 					cardTitle(c, pal, tr("topSessions"), nil)
 					now := a.now()
 					for i, r := range d.sessions {
@@ -189,7 +189,7 @@ func (a *App) projectChart(c *ui.Context, pal palette) {
 		}
 	}
 	line, accent := pal.line, pal.accent
-	card(c, pal).Children(func() {
+	a.rcard(c, pal, "projects4", 3, false).Children(func() {
 		cardTitle(c, pal, tr("dailySpend"), nil)
 		chart.Plot(c, chart.Axes{Left: yt, Bottom: xt, Label: func(_ chart.Side, t chart.Tick) {
 			ui.Text(c, t.Label).NoWrap().FontSize(11).TextColor(pal.muted).FontFeatures("tnum")

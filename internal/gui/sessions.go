@@ -193,7 +193,7 @@ func (a *App) sessionPane(c *ui.Context, pal palette) {
 				a.sessionChart(c, pal)
 			}
 			if len(r.Breakdown) > 0 {
-				card(c, pal).Children(func() {
+				a.rcard(c, pal, "sessions1", 0, false).Children(func() {
 					cardTitle(c, pal, tr("byModel"), nil)
 					for i, b := range r.Breakdown {
 						label := b.Model
@@ -205,7 +205,7 @@ func (a *App) sessionPane(c *ui.Context, pal palette) {
 				})
 			}
 			if len(d.children) > 0 {
-				card(c, pal).Children(func() {
+				a.rcard(c, pal, "sessions2", 1, false).Children(func() {
 					cardTitle(c, pal, trf("subagentsN", len(d.children)), nil)
 					for i, k := range d.children {
 						ui.Row(c.Key(i)).Gap(10).AlignItems(ui.Center).Children(func() {
@@ -251,7 +251,7 @@ func (a *App) sessionChart(c *ui.Context, pal palette) {
 		xt = append(xt, chart.Tick{At: x.At(span * f), Label: d.events[0].Timestamp.Add(time.Duration(span*f) * time.Second).Format("15:04")})
 	}
 	accent, line := pal.accent, pal.line
-	card(c, pal).Children(func() {
+	a.rcard(c, pal, "sessions3", 2, false).Children(func() {
 		cardTitle(c, pal, tr("costOverTime"), nil)
 		chart.Plot(c, chart.Axes{Left: yt, Bottom: xt, Label: func(_ chart.Side, t chart.Tick) {
 			ui.Text(c, t.Label).NoWrap().FontSize(11).TextColor(pal.muted).FontFeatures("tnum")
@@ -291,7 +291,7 @@ func (a *App) requestTable(c *ui.Context, pal palette) {
 	if n == 0 {
 		return
 	}
-	card(c, pal).Gap(8).Children(func() {
+	a.rcard(c, pal, "sessions4", 3, false).Gap(8).Children(func() {
 		cardTitle(c, pal, trf("requestsN", n), nil)
 		head := func() {
 			ui.Row(c).Gap(10).Padding(0, 4).Children(func() {
