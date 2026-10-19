@@ -232,13 +232,18 @@ func migrateDaily(tx *sql.Tx, sc rollupSchema) error {
 
 // LocalDayZone identifies the timezone rules used by local-day rollups.
 func LocalDayZone() string {
-	// Name plus seasonal offsets also identifies fixed zones and /etc/localtime.
+	// The rules, not the name: "Local" from /etc/localtime and the same zone
+	// named explicitly (a display-timezone choice, the CLI's reporting zone)
+	// bucket days identically and must share the rollups. Offsets twice a month
+	// over several years tell apart zones whose DST rules differ.
 	var b strings.Builder
-	b.WriteString(time.Local.String())
+	b.WriteString("offsets")
 	for _, year := range []int{1970, 2000, 2020, time.Now().Year(), time.Now().Year() + 1} {
-		for _, month := range []time.Month{time.January, time.April, time.July, time.October} {
-			name, offset := time.Date(year, month, 1, 0, 0, 0, 0, time.Local).Zone()
-			fmt.Fprintf(&b, "/%s:%d", name, offset)
+		for month := time.January; month <= time.December; month++ {
+			for _, day := range []int{1, 15} {
+				_, offset := time.Date(year, month, day, 12, 0, 0, 0, time.Local).Zone()
+				fmt.Fprintf(&b, "/%d", offset)
+			}
 		}
 	}
 	return b.String()

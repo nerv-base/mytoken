@@ -125,8 +125,11 @@ func runDaily(ctx context.Context, args []string, out, errout io.Writer) int {
 		}
 		defer ro.Close()
 		now := time.Now().In(loc)
-		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -(*days - 1))
-		pts, err := q.Daily(ctx, query.Filter{Range: query.Range{From: start, To: now}})
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+		start := today.AddDate(0, 0, -(*days - 1))
+		// Whole days on both ends keep the read on the day rollups; a bound
+		// inside a day makes the query re-aggregate raw events.
+		pts, err := q.Daily(ctx, query.Filter{Range: query.Range{From: start, To: today.AddDate(0, 0, 1)}})
 		if err != nil {
 			fmt.Fprintln(errout, err)
 			return 1
