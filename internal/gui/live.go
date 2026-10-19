@@ -171,7 +171,8 @@ func (a *App) deckView(c *ui.Context, pal palette, idx int, moving bool) {
 	}
 	// The cards behind are painted under the front one, which stays in the
 	// flow so that the one leaving can lift away over the deck.
-	box := ui.Column(c.Key("deck")).FillWidth().Padding(0, 0, 2*deckPeek, 0)
+	peek := deckPeek * float32(behind)
+	box := ui.Column(c.Key("deck")).FillWidth().Grow(1).Padding(0, 0, peek, 0)
 	a.deck.hover = box.Hovered()
 	shown := box.AnimateTo("behind", float32(behind), gentle)
 	dark, card0 := pal.dark, pal.card
@@ -186,7 +187,7 @@ func (a *App) deckView(c *ui.Context, pal palette, idx int, moving bool) {
 			if dark {
 				back, edge = front.Mix(card0, 0.25*kf), ui.RGBA(255, 255, 255, float32(o)*(0.10-0.025*kf))
 			}
-			rr := ui.Rect{X: r.X + 14*kf, Y: r.Y + deckPeek*kf*float32(o), W: r.W - 28*kf, H: r.H - 2*deckPeek}
+			rr := ui.Rect{X: r.X + 14*kf, Y: r.Y + deckPeek*kf*float32(o), W: r.W - 28*kf, H: r.H - peek}
 			p.Fill(ui.Rect{X: rr.X - 1, Y: rr.Y - 1, W: rr.W + 2, H: rr.H + 2}, edge, 15)
 			p.Fill(rr, back.Alpha(float32(o)), 14)
 		}
@@ -198,7 +199,7 @@ func (a *App) deckView(c *ui.Context, pal palette, idx int, moving bool) {
 		if dir == 0 {
 			dir = 1
 		}
-		card := ui.Column(c.Key("front-"+key)).FillWidth().Height(150).
+		card := ui.Column(c.Key("front-"+key)).FillWidth().Grow(1).MinHeight(150).
 			Radius(14).Background(front).Border(1, pal.line).Padding(16, 18).Gap(12).Cursor(ui.CursorPointer).
 			Transition(ui.ElementTransition{
 				Animation: &gentle,
@@ -221,8 +222,10 @@ func (a *App) deckView(c *ui.Context, pal palette, idx int, moving bool) {
 func (a *App) deckFront(c *ui.Context, pal palette, s activeSession, moving bool) {
 	key := sessionKey(s.row.Harness, s.row.SessionID)
 	ui.Row(c).Gap(16).AlignItems(ui.Center).Grow(1).Children(func() {
-		orb := ui.Box(c.Key("orb")).Size(76, 76).Shrink(0)
-		e := orb.AnimateTo("e", float32(min(s.rate/120, 1)), gentle)
+		orb := ui.Box(c.Key("orb")).Size(92, 92).Shrink(0)
+		// How lively the orb is follows how busy the session is: its
+		// requests in the last ten minutes, which the logs record.
+		e := orb.AnimateTo("e", float32(min(float64(s.requests)/30, 1)), gentle)
 		orb.Draw(func(p *ui.Painter, r ui.Rect) { drawOrb(p, r, e, moving, pal) })
 		ui.Column(c).Gap(10).Grow(1).Basis(0).MinWidth(0).Children(func() {
 			ui.Column(c).Gap(3).Children(func() {
@@ -264,7 +267,7 @@ func deckStat(c *ui.Context, pal palette, label, value string) {
 func idleBody(c *ui.Context, pal palette) {
 	ui.Row(c).Gap(16).AlignItems(ui.Center).Grow(1).Children(func() {
 		well, faint := pal.well, pal.faint
-		ui.Box(c).Size(76, 76).Shrink(0).Opacity(0.9).Draw(func(p *ui.Painter, r ui.Rect) {
+		ui.Box(c).Size(92, 92).Shrink(0).Opacity(0.9).Draw(func(p *ui.Painter, r ui.Rect) {
 			cx, cy := r.X+r.W/2, r.Y+r.H/2
 			rad := min(r.W, r.H)/2 - 6
 			p.Fill(ui.Rect{X: cx - rad, Y: cy - rad, W: rad * 2, H: rad * 2}, well, rad)
