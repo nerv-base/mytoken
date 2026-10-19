@@ -39,6 +39,7 @@ import (
 	"github.com/zzstar101/mytoken/internal/gui"
 	"github.com/zzstar101/mytoken/internal/paths"
 	"github.com/zzstar101/mytoken/internal/quota/plan"
+	"github.com/zzstar101/mytoken/internal/sysproxy"
 )
 
 // memoryLimit is the GUI's soft Go heap limit. Live data is ~20 MB on a
@@ -46,6 +47,14 @@ import (
 const memoryLimit = 64 << 20
 
 func main() {
+	// Finder, the Dock and the login item start the app with no HTTP_PROXY,
+	// HTTPS_PROXY or NO_PROXY in its environment, so Go's default transport
+	// would ignore the proxy configured in System Settings. Install teaches
+	// it the OS proxy before anything can open a socket: the updater, the
+	// pricing refresh and every quota provider use http.DefaultTransport,
+	// and so does the app the CLI opens.
+	sysproxy.Install()
+
 	// `mygo build` cannot pass -ldflags, but it embeds mygo.json's version.
 	if cli.Version == "dev" {
 		if v := mygo.App.Version(); v != "" {

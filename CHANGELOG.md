@@ -3,6 +3,18 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## 0.5.1
+
+- **Check for Updates is back.** Settings → General → About has the button
+  and the switch for the daily automatic check again (0.5.0 dropped both),
+  and the menu bar menu has a Check for Updates item.
+- **Uses the system proxy.** Update checks, plan-quota requests and price
+  refreshes now go through the proxy set in macOS or Windows settings, as a
+  browser does, so they work where GitHub or a tool's API is only reachable
+  through a proxy. `HTTPS_PROXY` / `HTTP_PROXY` still win when set.
+- Apple-silicon-only and Intel-only builds of MyToken (made locally) now find
+  updates too; they update to the universal build.
+
 ## 0.5.0
 
 MyToken is now a spend and plan-quota dashboard for the AI coding tools on

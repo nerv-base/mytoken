@@ -129,6 +129,12 @@ const DefaultMaxBytes = 64 << 10
 
 // DefaultTransport refuses every redirect, so a cross-origin redirect can
 // never receive a credential, and bounds one request by DefaultTimeout.
+//
+// Transport is deliberately nil: net/http then sends the request through
+// http.DefaultTransport at request time, which is where sysproxy.Install
+// installs the OS proxy selector. Do not replace it with a hand-built
+// transport without also setting Proxy to sysproxy.Func, or quota requests
+// would bypass the proxy.
 func DefaultTransport() Transport {
 	return &http.Client{
 		Timeout: DefaultTimeout,
