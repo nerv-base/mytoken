@@ -3,7 +3,6 @@ package query
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -101,61 +100,6 @@ func TestProviderGroupsMergeSessionsOfOneUnresolvedEndpoint(t *testing.T) {
 // identity rather than the old five-column one. A fix that changed only
 // displayProvider would leave session_id in the predicate and re-grow its
 // bound-parameter list with the session count (see the scale test).
-func TestProviderIDSelectsEverySessionOfAMergedUnresolvedEndpoint(t *testing.T) {
-	ctx := context.Background()
-	q := mergeStore(t, mergedFixture())
-
-	groups, err := q.ProviderGroups(ctx, Filter{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(groups) != 1 {
-		t.Fatalf("fixture must yield one merged identity: %+v", groups)
-	}
-	key := groups[0].Key
-
-	tot, err := q.Totals(ctx, Filter{ProviderIDs: []string{key}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tot.Requests != 3 || tot.Sessions != 3 || tot.Tokens.Input != 600 {
-		t.Fatalf("merged identity drill-down = %+v, want all three sessions", tot)
-	}
-
-	// The cache ledger goes through providerIdentityPredicate instead of the Go
-	// selector, so it independently proves the tuple matches all three sessions.
-	cache, err := q.CacheTotals(ctx, Filter{ProviderIDs: []string{key}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cache.Requests != 3 {
-		t.Fatalf("cache drill-down lost sessions: %+v", cache)
-	}
-
-	rows, total, err := q.Sessions(ctx, Filter{ProviderIDs: []string{key}}, SortRecent, 10, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if total != 3 || len(rows) != 3 {
-		t.Fatalf("session drill-down = %d rows (total %d), want all three", len(rows), total)
-	}
-
-	// The predicate is the four-column tuple: session_id would make the bound
-	// list grow with the session count again.
-	predicate, bound := identityPredicateArgs(t, q, key)
-	if strings.Contains(predicate, "session_id") {
-		t.Fatalf("unresolved predicate still enumerates sessions: %s", predicate)
-	}
-	if bound != 4 {
-		t.Fatalf("unresolved predicate bound %d parameters, want 4", bound)
-	}
-
-	// A different unresolved identity must still select nothing.
-	other := providerIDUnresolvedPrefix + "00"
-	if tot, err = q.Totals(ctx, Filter{ProviderIDs: []string{other}}); err != nil || tot.Requests != 0 {
-		t.Fatalf("foreign identity matched data: %+v %v", tot, err)
-	}
-}
 
 // The pricing name is part of the unresolved identity: two resolved providers
 // that share the instance, base URL and session shape stay two rows.

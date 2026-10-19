@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zzstar101/mytoken/internal/harness"
 	"github.com/zzstar101/mytoken/internal/store"
 )
 
@@ -23,7 +24,9 @@ func TestQuickScanSkipsUnchangedFiles(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer st.Close()
-	sc := New(st, nil, nil, testParser{dir})
+	// The WAL step below is about a SQLite source, whose writes land in a
+	// side WAL; give the fixture that kind so the scan stats the WAL.
+	sc := New(st, nil, nil, walTestParser{testParser{dir}})
 	ctx := context.Background()
 	parses := func() int { sc.mu.Lock(); defer sc.mu.Unlock(); return sc.parses }
 	step := func(quick bool, want int, why string) {
@@ -61,6 +64,17 @@ func TestQuickScanSkipsUnchangedFiles(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("%d events, want 2", n)
 	}
+}
+
+// walTestParser marks its source as SQLite so the scanner checks its WAL.
+type walTestParser struct{ testParser }
+
+func (p walTestParser) Discover(ctx context.Context) ([]harness.Source, error) {
+	srcs, err := p.testParser.Discover(ctx)
+	for i := range srcs {
+		srcs[i].Kind = "sqlite"
+	}
+	return srcs, err
 }
 
 func appendLine(t *testing.T, path, s string) {

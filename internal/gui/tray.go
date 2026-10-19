@@ -1,154 +1,302 @@
 package gui
 
 import (
+	"fmt"
+	"math"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/zzstar101/mytoken/internal/ingestrate"
 )
 
-// TrayWidth and TrayHeight are the tray panel's size.
-const TrayWidth, TrayHeight = 340, 520
+// The tray panel's size.
+const (
+	TrayWidth  = 340
+	TrayHeight = 520
+)
 
-// TrayView is the menu-bar panel: today at a glance.
-func (s *State) TrayView(c *ui.Context) {
-	pal := applyTheme(c)
-	t := s.today
-	c.Root().Background(ui.Transparent)
-	ui.Box(c).Fill().Radius(16).Clip().Draw(aurora(pal)).Children(func() {
-		pane(c, pal).Fill().Padding(18, 18, 14, 18).Gap(14).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Children(func() {
-				logo(c, pal, 17)
-				ui.Spacer(c)
-				ui.Text(c, s.Hooks.Now().Format("Mon, Jan 2")).FontSize(11.5).FontWeight(600).TextColor(pal.muted)
+// PanelView is the tray panel: today's spend, the sessions running now and
+// the quotas, nearest to running out first. Its window is translucent; the
+// panel draws on the desktop's frosted material.
+func (a *App) PanelView(c *ui.Context) {
+	pal := applyTheme(c, a.appearance())
+	ov := &a.ov
+	now := a.now()
+	c.Root().Background(ui.Color{})
+	// A tint over the window's frosted material keeps text readable where
+	// the material is missing or too light.
+	ui.Column(c).Fill().Radius(12).Background(pal.bg.Alpha(0.82)).Padding(14, 14, 12, 14).Gap(10).Children(func() {
+		a.panelHeader(c, pal)
+		if !ov.ready {
+			emptyState(c, pal, tr("loading"), "")
+			return
+		}
+		a.panelLive(c, pal)
+		if len(ov.quotas) > 0 {
+			qs := append([]Quota(nil), ov.quotas...)
+			sort.SliceStable(qs, func(i, j int) bool { return urgency(qs[i], now) > urgency(qs[j], now) })
+			ui.Scroll(c).Grow(1).Basis(0).MinHeight(0).FillWidth().Children(func() {
+				panelBox(c, pal).Gap(11).Children(func() {
+					ui.Text(c, tr("planQuota")).FontSize(12).FontWeight(650).TextColor(pal.ink)
+					for _, q := range qs {
+						a.panelQuota(c.Key("pq-"+q.ID), pal, q, now)
+					}
+				})
 			})
-			// Today, large.
-			ui.Column(c).Gap(6).Children(func() {
-				ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
-					bangs(c, 10, t.Totals.Tokens.Total() > 0)
-					kicker(c, pal, tr("today"))
-				})
-				ui.Row(c).AlignItems(ui.End).Gap(10).Children(func() {
-					countUp(c, pal, float64(t.Totals.Tokens.Total()), func(v float64) string { return fmtTokens(int64(v)) }, 58)
-					ui.Spacer(c)
-					ui.Column(c).AlignItems(ui.End).Gap(2).Padding(0, 0, 8, 0).Children(func() {
-						ui.RichText(c, figure(pal, fmtCostOf(t.Totals.CostUSD, t.Totals.Requests, t.Totals.Unpriced), 26)...)
-						ui.Text(c, trf("requestsN", fmtInt(t.Totals.Requests))+" · "+tr("cacheHit")+" "+fmtPct(t.Totals.CacheHit)).FontSize(10.5).TextColor(pal.muted)
-					})
-				})
-				classBar(c, pal, t.Totals.Tokens, 5)
-			})
-			if t.Totals.Tokens.Total() == 0 {
-				ui.Column(c).Grow(1).Center().Children(func() {
-					emptyState(c, pal, artStage, tr("nothingToday"), tr("nothingTodaySub"))
-				})
-			} else {
-				ui.Column(c).Gap(8).Children(func() {
-					kicker(c, pal, tr("last24h"))
-					miniBars(c, pal, t.Hourly, 62)
-				})
-				ui.Column(c).Gap(8).Children(func() {
-					kicker(c, pal, tr("topModels"))
-					// Balances take a row at the bottom: one model fewer.
-					n := 3
-					if len(s.balanceSites()) > 0 {
-						n = 2
-					}
-					s.bucketList(c, pal, t.Models, n, true, false)
-				})
-				// What is playing now, one line each.
-				ui.Column(c).Gap(4).Grow(1).Basis(0).Clip().Children(func() {
-					if len(t.Active) == 0 {
-						return
-					}
-					kicker(c, pal, tr("activeNow"))
-					for i, r := range t.Active {
-						if i >= 2 {
-							break
-						}
-						row := ui.Row(c.Key(refOf(r).key())).Gap(8).Padding(5, 6).Radius(8).AlignItems(ui.Center).Cursor(ui.CursorPointer).Role(ui.RoleButton).Transition(hoverFade)
-						if row.Hovered() {
-							row.Background(pal.hover)
-						}
-						row.Children(func() {
-							harnessMark(c, r.Harness, 15)
-							title := r.Title
-							if title == "" {
-								title = tr("untitled")
-							}
-							ui.Text(c, title).FontSize(12.5).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…").Grow(1).Basis(0)
-							ui.Text(c, fmtTokens(r.Tokens.Total())).FontSize(12).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum")
-						})
-						if row.Clicked() {
-							s.page = "sessions"
-							s.SelectRow(r)
-							if s.Hooks.OpenMain != nil {
-								s.Hooks.OpenMain()
-							}
-						}
-					}
-				})
+		} else {
+			ui.Spacer(c)
+		}
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			caption(c, pal, trf("monthSoFar", fmtUSD(ov.month.CostUSD))).FontSize(11.5).FontFeatures("tnum")
+			ui.Spacer(c)
+			if a.d.OpenMain != nil && ui.Button(c, tr("openMain")).Clicked() {
+				if a.d.HidePanel != nil {
+					a.d.HidePanel()
+				}
+				a.d.OpenMain()
 			}
-			s.trayBalances(c, pal)
-			s.trayRate(c, pal)
-			ui.Row(c).Gap(8).Children(func() {
-				b := trayButton(c, pal, icWindow, tr("openMain"), true).Grow(1)
-				if b.Clicked() && s.Hooks.OpenMain != nil {
-					s.Hooks.OpenMain()
+			if a.d.Quit != nil {
+				q := ui.Button(c, tr("quit")).Tooltip(tr("quit"))
+				if q.Clicked() {
+					a.d.Quit()
 				}
-				q := trayButton(c, pal, icPower, "", false).Tooltip(tr("quit")).Label(tr("quit"))
-				if q.Clicked() && s.Hooks.Quit != nil {
-					s.Hooks.Quit()
-				}
-			})
+			}
 		})
 	})
 }
 
-// trayRate is the committed output-token rate of the last window: how fast
-// output tokens are actually landing in the log, not how fast a model
-// generates them. The scanner owns the counting; this only reads the last
-// committed snapshot, and anything it cannot vouch for reads "—".
-func (s *State) trayRate(c *ui.Context, pal palette) {
-	var snap ingestrate.Snapshot
-	if s.Hooks.IngestRate != nil {
-		snap = s.Hooks.IngestRate(s.Hooks.Now())
+// panelLive is the sessions running now: the fastest three, then how many
+// more; one quiet line when nothing runs.
+func (a *App) panelLive(c *ui.Context, pal palette) {
+	act := a.ov.active
+	if len(act) == 0 {
+		panelBox(c, pal).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Size(6, 6).Radius(3).Background(pal.faint).Shrink(0)
+				caption(c, pal, tr("noActive")).FontSize(11.5)
+			})
+		})
+		return
 	}
-	// The window rolls on its own: redraw so a live rate keeps moving.
-	c.After(time.Second)
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Tooltip(tr("ingestRateTip")).Children(func() {
-		kicker(c, pal, tr("ingestRate"))
-		ui.Spacer(c)
-		if !snap.Available {
-			ui.Text(c, "—").FontSize(13).FontWeight(700).TextColor(pal.muted)
-			ui.Text(c, tr("ingestRateUnknown")).FontSize(10.5).TextColor(pal.muted.Alpha(0.75))
-			return
-		}
-		ui.Text(c, trimNum(snap.Rate, 1)).FontSize(13).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum")
-		if snap.Window > 0 {
-			ui.Text(c, trf("ingestRateWindow", int(snap.Window/time.Second))).FontSize(10.5).TextColor(pal.muted)
+	panelBox(c, pal).Gap(9).Children(func() {
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			liveDot(c, pal)
+			ui.Text(c, trf("sessionsLive", len(act))).FontSize(12).FontWeight(650).TextColor(pal.ink)
+		})
+		for i, s := range act {
+			if i == 3 {
+				caption(c, pal, trf("moreSessions", len(act)-3)).FontSize(11)
+				break
+			}
+			a.panelSession(c.Key(sessionKey(s.row.Harness, s.row.SessionID)), pal, s)
 		}
 	})
 }
 
-// trayButton is the panel's footer button: the main one in ink, the
-// other a quiet square.
-func trayButton(c *ui.Context, pal palette, ic *ui.SVG, label string, primary bool) ui.Element {
-	b := ui.Row(c.Key(label)).Padding(9, 12).Gap(7).Radius(11).Center().Cursor(ui.CursorPointer).Role(ui.RoleButton).Label(label).Transition(hoverFade)
-	fg := pal.ink
-	switch {
-	case primary:
-		fg = pal.base
-		b.Background(pal.ink.Alpha(map[bool]float32{true: 0.84, false: 0.94}[b.Hovered()])).Shadow(0, 4, 12, -4, pal.lift)
-	case b.Hovered():
-		b.Background(pal.hover).Border(1, pal.edge)
-	default:
-		b.Background(pal.well).Border(1, pal.edge)
-	}
-	return b.Children(func() {
-		ui.Icon(c, ic).FontSize(13).TextColor(fg)
-		if label != "" {
-			ui.Text(c, label).FontSize(12.5).FontWeight(650).TextColor(fg)
+// panelQuota is one account on a line: its tightest window as a bar, or
+// its balance and how long it lasts.
+func (a *App) panelQuota(c *ui.Context, pal palette, q Quota, now time.Time) {
+	ui.Column(c).Gap(5).Children(func() {
+		bw, isBal := balanceOf(q)
+		w := QuotaWindow{}
+		if !isBal && len(q.Windows) > 0 {
+			w = q.Windows[primary(q)]
+		}
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			quotaBadge(c, pal, q, 16)
+			name := q.Name
+			if !isBal && len(q.Windows) > 1 {
+				name += " · " + windowName(w.Name)
+			}
+			ui.Text(c, name).FontSize(12).TextColor(pal.ink).SingleLine().Shrink(1).MinWidth(0)
+			ui.Spacer(c)
+			if isBal {
+				v := fmtAmount(bw.Remaining, bw.Unit)
+				if bw.Unit != "usd" {
+					v += " " + unitName(bw.Unit)
+				}
+				ui.Text(c, v).FontSize(12).FontWeight(650).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
+				if _, days := runway(q, bw); days >= 0 {
+					col := pal.muted
+					if days < 3 {
+						col = pal.bad
+					} else if days < 7 {
+						col = pal.warn
+					}
+					ui.Text(c, trf("runwayDays", int(math.Floor(days)))).FontSize(11).TextColor(col).NoWrap()
+				}
+				return
+			}
+			f := usedFrac(w)
+			ui.Text(c, fmt.Sprintf("%.0f%%", f*100)).FontSize(12).FontWeight(650).TextColor(pal.meterColor(w, now)).FontFeatures("tnum").NoWrap()
+			if !w.ResetsAt.IsZero() {
+				caption(c, pal, fmtIn(now, w.ResetsAt)).FontSize(11).NoWrap()
+			}
+		})
+		if !isBal {
+			bar(c, pal, usedFrac(w), pal.meterColor(w, now)).Height(4)
 		}
 	})
+}
+
+// panelBox is a translucent group in the panel.
+func panelBox(c *ui.Context, pal palette) ui.Element {
+	bg := ui.RGBA(255, 255, 255, 0.55)
+	line := ui.RGBA(0, 0, 0, 0.06)
+	if pal.dark {
+		bg, line = ui.RGBA(255, 255, 255, 0.06), ui.RGBA(255, 255, 255, 0.08)
+	}
+	return ui.Column(c).Padding(12).Radius(12).Background(bg).Border(1, line)
+}
+
+// panelHeader is today's spend over a band of light that flows faster the
+// faster tokens are being spent, and rests when nothing is running.
+func (a *App) panelHeader(c *ui.Context, pal palette) {
+	ov := &a.ov
+	var rate, perHour float64
+	for _, s := range ov.active {
+		rate += s.rate
+		perHour += s.perHour
+	}
+	accent := pal.accent
+	box := panelBox(c, pal).Gap(4).Clip()
+	reduce := c.Preferences().ReduceMotion
+	box.Draw(func(p *ui.Painter, r ui.Rect) {
+		// The band: a soft accent glow along the top edge.
+		phase := float32(0.5)
+		if rate > 0 && !reduce {
+			// One sweep every 6 s at rest speed, down to 1.2 s at 200 tok/s.
+			period := 6 - 4.8*math.Min(rate/200, 1)
+			t := float64(p.Now().UnixMilli()%int64(period*1000)) / (period * 1000)
+			phase = float32(t)
+			p.AnimationFrame()
+		}
+		w := r.W * 0.6
+		x := r.X - w + (r.W+w)*phase
+		p.Clip(r, 12, func() {
+			band := ui.Rect{X: x, Y: r.Y, W: w, H: 3}
+			p.FillGradient(band, ui.LinearGradient{Angle: 90, Stops: []ui.GradientStop{
+				{Color: accent.Alpha(0), At: 0}, {Color: accent.Alpha(0.9), At: 0.5}, {Color: accent.Alpha(0), At: 1},
+			}}, 1.5)
+			glow := ui.Rect{X: x, Y: r.Y, W: w, H: r.H}
+			p.FillGradient(glow, ui.LinearGradient{Angle: 90, Stops: []ui.GradientStop{
+				{Color: accent.Alpha(0), At: 0}, {Color: accent.Alpha(0.09), At: 0.5}, {Color: accent.Alpha(0), At: 1},
+			}}, 0)
+		})
+	})
+	box.Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			logo(c, pal, 16)
+			caption(c, pal, tr("todaySpend")+" · "+tr("apiEquivalent")).FontSize(11.5)
+		})
+		ui.Row(c).Gap(10).AlignItems(ui.End).Children(func() {
+			figure(c, pal, "tray-today", fmtUSD(ov.today.CostUSD), 32)
+			delta(c, pal, ov.today.CostUSD, ov.yesterday.CostUSD, tr("vsYesterday")).MarginY(5)
+		})
+		ui.Row(c).Gap(14).Children(func() {
+			caption(c, pal, trf("tokensN", fmtTokens(shown(ov.today.Tokens)))).FontSize(11.5)
+			caption(c, pal, tr("hitRate")+" "+fmtPct(ov.today.Tokens.HitRate())).FontSize(11.5)
+			if len(ov.active) > 0 {
+				caption(c, pal, trf("perHour", fmtUSD(perHour))).FontSize(11.5).TextColor(accent)
+			}
+		})
+	})
+}
+
+func (a *App) panelSession(c *ui.Context, pal palette, s activeSession) {
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+		toolBadge(c, s.row.Harness, 24)
+		ui.Column(c).Gap(2).Grow(1).Basis(0).MinWidth(0).Children(func() {
+			ui.Text(c, sessionTitle(s.row)).FontSize(12.5).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…")
+			sub := s.model
+			if p := projectName(s.row.Project); p != "" {
+				sub = p + " · " + sub
+			}
+			caption(c, pal, sub).FontSize(10.5).SingleLine().Ellipsis("…")
+		})
+		ui.Column(c).Gap(2).AlignItems(ui.End).Shrink(0).Children(func() {
+			ui.Text(c, fmtUSD(s.row.CostUSD)).FontSize(12).FontWeight(650).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
+			caption(c, pal, trf("perHour", fmtUSD(s.perHour))+" · "+fmtPct(s.hit)).FontSize(10.5).FontFeatures("tnum").NoWrap()
+		})
+	})
+}
+
+// TrayTitle is the menu bar text the user chose.
+func (a *App) TrayTitle() string {
+	ov := &a.ov
+	if !ov.ready {
+		return ""
+	}
+	var parts []string
+	for _, item := range trayItems(a.pref(PrefTrayTitle)) {
+		switch item {
+		case "cost":
+			parts = append(parts, fmtUSD(ov.today.CostUSD))
+		case "rate":
+			// Spend per hour of what runs now. (It once was output speed,
+			// which the logs cannot measure; the key stays for old settings.)
+			var perHour float64
+			for _, s := range ov.active {
+				perHour += s.perHour
+			}
+			if len(ov.active) > 0 {
+				parts = append(parts, trf("perHour", fmtUSDShort(perHour)))
+			}
+		case "hit":
+			if ov.today.Tokens.Total() > 0 {
+				parts = append(parts, fmtPct(ov.today.Tokens.HitRate()))
+			}
+		case "quota":
+			best := -1.0
+			for _, q := range ov.quotas {
+				for _, w := range q.Windows {
+					if !w.Balance {
+						best = max(best, usedFrac(w)*100)
+					}
+				}
+			}
+			if best >= 0 {
+				parts = append(parts, fmt.Sprintf("%.0f%%", best))
+			}
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+// trayTitleItems are what the menu bar text can show, in display order.
+var trayTitleItems = []string{"cost", "rate", "hit", "quota"}
+
+// trayItems parses the stored menu bar selection: a comma list, "" for the
+// default (today's cost), "none" for an icon only.
+func trayItems(v string) []string {
+	switch v {
+	case "":
+		return []string{"cost"}
+	case "none":
+		return nil
+	}
+	var out []string
+	for _, it := range trayTitleItems {
+		for _, p := range strings.Split(v, ",") {
+			if p == it {
+				out = append(out, it)
+			}
+		}
+	}
+	return out
+}
+
+// updateTray sets the menu-bar text only when it changed: the status item
+// re-lays itself out on every set, and refreshes mostly change nothing.
+func (a *App) updateTray() {
+	if a.d.SetTrayTitle == nil {
+		return
+	}
+	t := a.TrayTitle()
+	if a.trayTitleSet && t == a.trayTitle {
+		return
+	}
+	a.trayTitle, a.trayTitleSet = t, true
+	a.d.SetTrayTitle(t)
 }

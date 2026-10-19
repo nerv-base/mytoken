@@ -1,7 +1,7 @@
 {
   "name": "mytoken",
   "identifier": "dev.zzstar.mytoken",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "copyright": "© 2026 zzstar101",
   "icon": "resources/icon.png",
   "main": ".",
@@ -20,7 +20,7 @@
   },
   "linux": {
     "maintainer": "zzstar101 <zzstar101@users.noreply.github.com>",
-    "comment": "Track the tokens your AI coding harnesses spend, per session, provider and model.",
+    "comment": "See what your AI coding tools spend and how much plan quota is left.",
     "categories": ["Utility", "Development"],
     "command": "mytoken",
     "depends": ["libayatana-appindicator3-1"]

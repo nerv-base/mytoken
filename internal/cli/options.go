@@ -54,14 +54,12 @@ type commonFlags struct {
 // ("" means unbounded, i.e. all time).
 //
 // --provider and --provider-id are registered here too, so every caller must
-// either consume them (build a query.Filter via options.filter(), as stats,
-// sessions, cache and provider list do) or explicitly reject them when its
-// command has no ledger filter to apply (cache rejects them for a session
-// timeline; reconcile rejects them outright). Accepting them and dropping them
-// would report a filter that never ran. --instance-id follows the same rule:
-// commands with no ledger to narrow simply do not register it, so Go's flag
-// package rejects it instead of ignoring a selector the user asked for
-// (reconcile names it explicitly because it does take other ledger flags).
+// either consume them (build a query.Filter via options.filter(), as the
+// reporting commands do) or explicitly reject them when its command has no
+// query filter to apply. Accepting them and dropping them would report a
+// filter that never ran. --instance-id follows the same rule: commands with no
+// history to narrow simply do not register it, so Go's flag package rejects it
+// instead of ignoring a selector the user asked for.
 func addCommonFlags(fs *flag.FlagSet, cf *commonFlags, defaultSince string) {
 	fs.StringVar(&cf.since, "since", defaultSince, "range start: YYYY-MM-DD, YYYYMMDD, RFC3339 or a duration")
 	fs.StringVar(&cf.until, "until", "", "range end, exclusive: YYYY-MM-DD, YYYYMMDD, RFC3339 or a duration")
@@ -73,7 +71,7 @@ func addCommonFlags(fs *flag.FlagSet, cf *commonFlags, defaultSince string) {
 	fs.BoolVar(&cf.json, "json", false, "alias for --format json")
 	fs.Var(&cf.providers, "provider", "filter by original provider name (repeatable)")
 	fs.Var(&cf.providerIDs, "provider-id", "filter by stable endpoint identity key (repeatable)")
-	fs.Var(&cf.instanceIDs, "instance-id", "filter by instance id from sources.json (repeatable)")
+	fs.Var(&cf.instanceIDs, "instance-id", "filter by stored instance id (repeatable)")
 }
 
 // parse parses args and remembers which flags were set, so resolve can tell an

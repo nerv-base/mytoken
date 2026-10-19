@@ -17,7 +17,6 @@ import (
 // It is additive to Service: existing callers keep using Totals/CacheTotals.
 type Envelope struct {
 	Totals    Totals
-	Cache     CacheTotals
 	Freshness Freshness
 	// Groups holds the extra rankings requested through EnvelopeOptions, in the
 	// order they were asked for. Empty unless options requested them.
@@ -85,7 +84,7 @@ func ReadEnvelope(ctx context.Context, st *store.Store, f Filter, opts ...Envelo
 		o = opts[0]
 	}
 	s := &service{st: st}
-	tx, err := st.DB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := st.ReadDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return out, err
 	}
@@ -95,9 +94,6 @@ func ReadEnvelope(ctx context.Context, st *store.Store, f Filter, opts ...Envelo
 		return out, err
 	}
 	out.Totals = totalsOf(d)
-	if out.Cache, err = s.cacheTotalsTx(ctx, tx, f); err != nil {
-		return out, err
-	}
 	if out.Freshness, err = freshnessTx(ctx, tx); err != nil {
 		return out, err
 	}

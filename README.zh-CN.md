@@ -19,22 +19,24 @@
 <p align="center"><a href="README.md">English</a> · <b>简体中文</b></p>
 <p align="center"><a href="#安装">安装</a> · <a href="#界面截图">截图</a> · <a href="#支持的-harness">支持的 harness</a> · <a href="docs/CLI.md">命令行</a> · <a href="docs/ROADMAP.md">路线图</a> · <a href="https://github.com/zzstar101/mytoken/releases/latest">下载</a></p>
 
-**你的 token 都花在哪了？** MyToken!!!!! 读取 AI 编程 harness 已经写在磁盘上的会话日志，把每一次请求归到
-会话 × 供应商 × 模型，算出费用，然后在原生桌面应用里展示出来 —— 也可以用命令行直接拿到 JSON。
+**今天 AI 编程花了多少？套餐额度还剩多少？** MyToken!!!!! 读取 AI 编程工具已经写在磁盘上的会话日志，按官方 API
+价格给每次请求算出等价费用，展示今日与本月花费、Codex / Claude / Cursor 的套餐额度，以及正在进行的会话 ——
+在原生桌面应用、菜单栏面板或命令行里都能看。
 
-一切都在你自己的机器上完成。没有账号、没有遥测、没有上传：默认只发两类请求：价格表，和每天一次到 github.com 检查更新（设置里可关）；中转站对账需逐站开启，只用你已交给该站点的 Key 访问该站点本身。
+一切都在你自己的机器上完成。没有账号、没有遥测、没有上传：默认只下载价格表、每天一次到 github.com 检查更新；套餐额度只用对应工具自己已保存的凭据向它自己的服务查询。除此之外不联系任何服务。
 
-- **一个窗口里看二十八个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
+- **一个窗口里看三十二个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
   Cline、Roo Code、Kilo Code、Claude Desktop、WorkBuddy、CodeBuddy、Hermes、Qwen Code、Kimi、
-  OpenClaude、Grok、OpenClaw、Droid、Goose、Forge、Amp、Kiro、Zed、Antigravity、Codebuff、Mux。
+  OpenClaude、Grok、OpenClaw、Droid、Goose、Forge、Amp、Kiro、Zed、Antigravity、Codebuff、Mux、
+  ZCode、MiniMax Code、MiMo Code、Step Code。
 - **会话 × 供应商 × 模型** —— 五类 token 分开统计（input、output、cache read、cache write、
   reasoning），同时给出缓存命中率、按项目 / 按天的拆分，以及子代理树。
-- **可审计的归因** —— 每个供应商都标注了它是怎么确定的：`log`、`cc-switch`、`config-timeline`、
-  `inferred` 或 `user-rule`（见[供应商归因](#供应商归因)）。
-- **对得上账单的费用** —— 优先用 models.dev 的价格、LiteLLM 兜底，再叠加按供应商的倍率和按模型的自定义
-  单价，订阅套餐和代金券也能算准。
-- **托盘常驻** —— 关掉窗口也继续扫描；托盘面板显示今日 token 与费用、最近 24 小时和 Top 模型。
-- **命令行可脚本化** —— `mytoken stats --json` 输出的就是应用里看到的同一份数字。
+- **API 等价费用** —— 优先用 models.dev 的价格、LiteLLM 兜底，界面明确标注这是“按官方 API 价”的等价费用。
+  套餐、网关或议价不同时，可以按模型自定义单价；不叠加供应商倍率，也不推断折扣。
+- **花费优先** —— 今日花费大字显示，本月累计带月末预测，每日花费按工具堆叠，排行按花费。token 主数字不含缓存读取。
+- **套餐额度** —— 自动检测 Codex、Claude、Cursor、Copilot、GLM 的额度窗口，用圆环显示已用比例和重置时间。
+- **菜单栏** —— 图标旁显示今日花费（也可选每小时花费、缓存命中率、额度）；面板列出正在进行的会话的花费、每小时花费和命中率，以及所有额度。
+- **命令行可脚本化** —— 不带参数运行 `mytoken` 输出今日与本月费用；`mytoken daily` 输出 ccusage 风格的每日表，缓存各类单独成列。
 - **原生、小巧、快** —— 基于 [MyGo](https://github.com/egoist/mygo) 的原生 UI 包：没有 Electron、
   没有 WebView、不用 cgo。本机日志全量首扫只需几秒。
 
@@ -42,15 +44,15 @@
 
 | 概览 | 会话 |
 | --- | --- |
-| ![概览：趋势、热力图、缓存命中率、harness 占比](docs/screenshots/overview.png) | ![会话：虚拟列表与单个会话的供应商 × 模型拆分](docs/screenshots/sessions.png) |
+| ![概览：今日花费、正在进行的会话、本月累计与上月对比及预测、套餐额度与积分余额](docs/screenshots/overview.png) | ![会话：虚拟列表、单个会话的累计花费与每次请求](docs/screenshots/sessions.png) |
 
-| 排行 | 托盘面板 |
+| 排行 | 菜单栏面板 |
 | --- | --- |
-| ![排行：供应商与模型](docs/screenshots/models.png) | ![托盘面板：今日 token 与费用、24 小时柱图、Top 模型](docs/screenshots/tray.png) |
+| ![排行：一年的每日花费热力图，按工具 / 模型 / 提供商的花费排行](docs/screenshots/ranking.png) | ![菜单栏面板：今日花费、额度和正在进行的会话](docs/screenshots/tray.png) |
 
 | 命令行 | 设置 |
 | --- | --- |
-| ![终端里的 mytoken stats](docs/screenshots/cli.png) | ![设置：数据源、归因规则、价格与倍率](docs/screenshots/settings.png) |
+| ![终端里的 mytoken 摘要](docs/screenshots/cli.png) | ![设置：检测到的工具，每个都有开关，可选指定目录](docs/screenshots/settings.png) |
 
 ## 支持的 harness
 
@@ -62,7 +64,7 @@ MyToken!!!!! 读取每个 harness 本来就保留的日志，只读、不回写�
 | Claude Code | `claude-code` | `~/.claude/projects/**/*.jsonl`（`$CLAUDE_CONFIG_DIR/projects`），以及存在时的 `~/.config/claude/projects` |
 | Codex CLI | `codex` | `$CODEX_HOME/sessions` 与 `$CODEX_HOME/archived_sessions`（默认 `~/.codex`） |
 | DSH — DeepSeek Harness | `dsh` | `$DSH_HOME/sessions`（默认 `~/.dsh/sessions`） |
-| pi | `pi` | `$PI_HOME/agent/sessions`（默认 `~/.pi/agent/sessions`） |
+| pi / OMP / OMO-senpi | `pi` | 设置 `$PI_HOME` 时读 `$PI_HOME/sessions`；否则读 `~/.pi/agent/sessions` 及检测到的 OMP、OMO/senpi agent roots |
 | Gemini CLI | `gemini` | `$GEMINI_CLI_HOME/tmp`（默认 `~/.gemini/tmp`） |
 | opencode | `opencode` | `$OPENCODE_DATA_HOME`，否则 `$XDG_DATA_HOME/opencode`，否则 `~/.local/share/opencode` |
 | Crush | `crush` | `$CRUSH_GLOBAL_DATA`，否则 `$XDG_DATA_HOME/crush`，否则 `~/.local/share/crush` |
@@ -74,7 +76,7 @@ MyToken!!!!! 读取每个 harness 本来就保留的日志，只读、不回写�
 | CodeBuddy | `codebuddy` | `$CODEBUDDY_HOME/projects`（默认 `~/.codebuddy/projects`） |
 | Hermes | `hermes` | `$HERMES_HOME`（默认 `~/.hermes`），SQLite |
 | Qwen Code | `qwen` | `$QWEN_DATA_DIR/projects`（默认 `~/.qwen/projects`） |
-| Kimi | `kimi` | `$KIMI_SHARE_DIR/sessions`（默认 `~/.kimi/sessions`） |
+| Kimi / Kimi Code | `kimi` | 旧版 `$KIMI_SHARE_DIR/sessions`（`~/.kimi/sessions`）及 `$KIMI_CODE_HOME/sessions`（`~/.kimi-code/sessions`） |
 | OpenClaude | `openclaude` | `$CODEBURN_OPENCLAUDE_DIR/projects`，否则 `~/.openclaude/projects` |
 | Grok | `grok` | `$GROK_HOME`（默认 `~/.grok`） |
 | OpenClaw | `openclaw` | `~/.openclaw/agents`，以及 `~/.moltbot`、`~/.moldbot`、`~/.clawdbot` 三种拼写 |
@@ -87,8 +89,17 @@ MyToken!!!!! 读取每个 harness 本来就保留的日志，只读、不回写�
 | Antigravity | `antigravity` | `$GEMINI_CLI_HOME/antigravity{,-cli,-ide}/conversations` 及对应的 `implicit` 目录（默认 `~/.gemini`），只读 `*.db` |
 | Codebuff | `codebuff` | `$CODEBUFF_DATA_DIR`，否则 `~/.config/manicode`、`~/.config/manicode-dev`、`~/.config/manicode-staging` |
 | Mux | `mux` | `$CODEBURN_MUX_DIR` 或 `$MUX_ROOT`，否则 `~/.mux`、`~/.mux-dev`、`~/.cmux` |
+| ZCode | `zcode` | `$MYTOKEN_ZCODE_DIRS`，否则 `~/.zcode/cli/db/db.sqlite`，只读 SQLite |
+| MiniMax Code | `minimax-code` | `$MINIMAX_DATA_DIR` / `$MAVIS_DATA_DIR`，否则 `~/.minimax/v2/sqlite/runtime-state.sqlite`（兼容旧 `~/.mavis`） |
+| MiMo Code | `mimo-code` | `$MIMOCODE_HOME/data`；否则所有平台均按上游 `xdg-basedir` 取 `$XDG_DATA_HOME/mimocode` 或 `~/.local/share/mimocode`，只读 SQLite |
+| Step Code | `step-code` | `$STEP_CODING_AGENT_SESSION_DIR`、`$STEP_CODING_AGENT_DIR/sessions`，否则 `~/.stepcode/agent/sessions` |
 
-Amp、Kiro、Zed、Antigravity、Codebuff、Mux 这 6 个已接线并有一致性测试覆盖，但尚未在真实数据上验证。
+ZCode、MiniMax Code、MiMo Code、Step Code 已按上游源码与合成 fixture 做协议和一致性验证；Kimi Code
+及 OMP/OMO 兼容路径同属这一证据等级。本批没有可提交的脱敏真实安装 fixture，因此明确保留“真实日志未验证”
+门槛，详见 [`docs/harness-verification/v04x-harness-matrix.md`](docs/harness-verification/v04x-harness-matrix.md)。
+
+Amp、Kiro、Zed、Antigravity、Codebuff、Mux、Hermes、OpenClaw 同样有一致性覆盖，但仍没有仓库内可审计的
+脱敏真实日志 fixture。
 
 VS Code 系扩展的 `…/globalStorage` 会按平台和编辑器解析 —— 编辑器：VS Code、VS Code Insiders、
 Cursor、Windsurf、VSCodium、Trae；平台：macOS 是 `~/Library/Application Support/<编辑器>/User/globalStorage`，
@@ -103,7 +114,9 @@ Linux 是 `~/.config/<编辑器>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…
 | `CLAUDE_CONFIG_DIR` | 用该目录替代 `~/.claude` 作为 Claude Code 配置目录 |
 | `CODEX_HOME` | 用该目录替代 `~/.codex` 作为 Codex 数据目录 |
 | `DSH_HOME` | 用该目录替代 `~/.dsh` 作为 DSH 数据目录 |
-| `PI_HOME` | 用该目录替代 `~/.pi` 作为 pi 数据目录 |
+| `PI_HOME`, `MYTOKEN_PI_DIRS` | pi 数据目录，或显式的 pi-compatible session roots（路径列表） |
+| `PI_CODING_AGENT_DIR`、`OMP_PROFILE`、`PI_PROFILE`、`PI_CONFIG_DIR` | OMP agent / profile 根目录，由 `pi` 读取器复用 |
+| `OMO_CODING_AGENT_DIR`、`SENPI_CODING_AGENT_DIR` | OMO / senpi agent 根目录，由 `pi` 读取器复用 |
 | `GEMINI_CLI_HOME` | 用该目录替代 `~/.gemini` 作为 Gemini CLI 数据目录 |
 | `MYTOKEN_GEMINI_DIRS` | 直接指定 Gemini CLI 日志目录（路径列表） |
 | `OPENCODE_DATA_HOME` | opencode 数据目录 |
@@ -116,7 +129,7 @@ Linux 是 `~/.config/<编辑器>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…
 | `WORKBUDDY_HOME`、`CODEBUDDY_HOME` | 用该目录替代 `~/.workbuddy` / `~/.codebuddy` 作为 WorkBuddy / CodeBuddy 主目录 |
 | `HERMES_HOME` | 用该目录替代 `~/.hermes` 作为 Hermes 主目录 |
 | `QWEN_DATA_DIR`、`MYTOKEN_QWEN_DIRS` | Qwen Code 数据目录，或直接指定目录（路径列表） |
-| `KIMI_SHARE_DIR`、`MYTOKEN_KIMI_DIRS` | Kimi share 目录，或直接指定目录（路径列表） |
+| `KIMI_SHARE_DIR`、`KIMI_CODE_HOME`、`MYTOKEN_KIMI_DIRS` | Kimi / Kimi Code 数据目录，或直接指定目录（路径列表） |
 | `CODEBURN_OPENCLAUDE_DIR`、`MYTOKEN_OPENCLAUDE_DIRS` | OpenClaude 数据目录，或直接指定目录（路径列表） |
 | `GROK_HOME`、`MYTOKEN_GROK_DIRS` | Grok 主目录，或直接指定目录（路径列表） |
 | `MYTOKEN_OPENCLAW_DIRS` | 直接指定 OpenClaw agent 目录（路径列表） |
@@ -129,6 +142,10 @@ Linux 是 `~/.config/<编辑器>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…
 | `MYTOKEN_ANTIGRAVITY_DIRS` | 直接指定 Antigravity 会话目录（路径列表） |
 | `CODEBUFF_DATA_DIR`、`MYTOKEN_CODEBUFF_DIRS` | Codebuff 数据目录，或直接指定目录（路径列表） |
 | `CODEBURN_MUX_DIR`、`MUX_ROOT`、`MYTOKEN_MUX_DIRS` | Mux 数据目录，或直接指定目录（路径列表） |
+| `MYTOKEN_ZCODE_DIRS` | 直接指定 ZCode 数据库文件或所在目录（路径列表） |
+| `MINIMAX_DATA_DIR`、`MAVIS_DATA_DIR`、`MYTOKEN_MINIMAX_DIRS` | MiniMax Code 数据根、旧数据根或直接指定根目录（路径列表） |
+| `MIMOCODE_HOME`、`MIMOCODE_DB`、`MYTOKEN_MIMO_CODE_DIRS` | MiMo Code 数据根、精确数据库文件或直接指定根目录（路径列表） |
+| `STEP_CODING_AGENT_SESSION_DIR`、`STEP_CODING_AGENT_DIR`、`MYTOKEN_STEP_CODE_DIRS` | Step Code 会话根、agent 根或直接指定根目录（路径列表） |
 
 ## 供应商归因
 
@@ -150,18 +167,18 @@ Linux 是 `~/.config/<编辑器>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…
   [`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm)，并内置一份离线快照供首次
   运行使用。价格表在磁盘上缓存 24 小时，用缓存也能完全离线工作。
 - 五类 token 分别计价；价格表里没有 reasoning 单价时按 output 单价计算。
-- 按供应商的倍率和按模型的自定义单价可以覆盖订阅套餐、代金券和议价；也可以从 cc-switch 导入价格
-  （`model_pricing`、`providers.cost_multiplier`）。
-- **模型映射。** 中转站或你自己的配置编出来的模型名在任何价格表里都查不到，应用会把它们列成 *unpriced*
-  而不是瞎猜。在*设置 → 模型映射*里把每个名字映射到真实模型（可选指定供应商），之后这些请求就会被正常计价
+- **自定义价格。** 套餐、网关或议价与官方价不同时，可以按模型设置每百万 token 的美元单价（input、
+  output、cache read、cache write）。费用始终是“API 等价”：不乘供应商倍率，也不推断折扣。
+- 1 小时缓存写入按 input 单价的 2 倍计价，其余缓存写入按 1.25 倍；价格表里带有明确 cache write 单价时以价格表为准。
+- **模型映射。** 你自己的配置编出来的模型名在任何价格表里都查不到，应用会把它们列成 *unpriced*
+  而不是瞎猜。在*设置 → 价格*里把每个名字映射到真实模型（可选指定供应商），之后这些请求就会被正常计价
   并合并进排行。
 - 日志自带的费用永远优先于计算值；找不到价格的请求会明确标成 *unpriced*，而不是悄悄算成 0。
 
 ## 隐私
 
 - **纯本地。** 索引、价格缓存和设置都不会离开你的机器。没有遥测、没有统计、没有崩溃上报、没有账号、没有同步。
-- **默认只发两类请求：价格表和检查更新。** 价格表先取 models.dev，回退 LiteLLM；有缓存或内置快照时不发。App 每天问一次 github.com 有没有新版本，除了请求本身什么都不带；设置里可以关掉，不能自己更新的版本（开发版、Debian 包）从不检查，命令行也从不检查。中转站对账默认全关，按站点、按层（倍率 / 余额 / 账单）逐个开启，没开启前不会联系任何站点。
-- **Key 不落盘、不外传。** 中转站的 Key 只在内存里读取，只发往它所属的站点本身；索引里只存 Key ID（SHA-256 的前 12 位十六进制）。Key 不会出现在日志、错误信息或 `--json` 输出里。
+- **默认只发两类请求：价格表和检查更新。** 价格表先取 models.dev，回退 LiteLLM；有缓存或内置快照时不发。App 每天问一次 github.com 有没有新版本，除了请求本身什么都不带；不能自己更新的版本（开发版、Debian 包）从不检查，命令行也从不检查。套餐额度只有在磁盘上已经存在该工具的凭据时才会访问对应服务；没有单独的授权步骤，凭据也不会被复制进索引。
 - **只读读取器。** harness 日志只以只读方式打开；索引是独立的 SQLite 文件，随时可以删掉重来。
 - **不存对话内容。** 只存数字和元数据，唯一例外是会话标题：首条用户消息的前 60 个字符，只为让会话列表可读。
 
@@ -219,36 +236,24 @@ go install github.com/zzstar101/mytoken@latest
 
 ## 命令行
 
-应用二进制同时也是 CLI：不带参数启动 GUI，带子命令则在终端工作。完整说明见
-[docs/CLI.md](docs/CLI.md)。
+应用二进制同时也是 CLI。在终端里不带参数运行打印只读的费用摘要；从访达、资源管理器或启动器打开时
+是桌面应用，也可以用 `mytoken gui` 启动（登录项使用 `--hidden`）。完整说明见 [docs/CLI.md](docs/CLI.md)。
 
 ```sh
-mytoken stats                                  # 最近 7 天，按会话
-mytoken stats --since 30d --by model           # 最近 30 天，按模型分组
-mytoken stats --last week --by day --timezone Asia/Shanghai
-mytoken stats --since 2026-10-01 --until 2026-11-01 --by provider
-mytoken stats --by model --no-cost             # 不显示费用
-mytoken stats --since 90d --format csv > usage.csv   # 导出 CSV（也支持 --json）
-mytoken sessions --last 7d --limit 20          # 会话列表，按最近更新排序
-mytoken cache --last 30d                       # 缓存没命中多花了多少钱，按原因
-mytoken cache --by provider                    # 各中转站的缓存健康度
-mytoken cache <session-id> --harness codex     # 单个会话的缓存时间轴
-mytoken stats --since 30d --offline            # 完全不联网
+mytoken                                        # 今日与本月，API 等价费用
+mytoken daily                                  # 每日一行，默认最近 30 天
+mytoken daily --days 7 --json                  # 脚本使用
+mytoken quota                                  # 本地日志与已登录工具里的套餐额度
 mytoken scan                                   # 立刻重新索引
-mytoken doctor                                 # 检查数据源、路径与版本
-mytoken prices list                            # 当前生效的价格表
-mytoken prices set --provider zai --multiplier 0.5
-mytoken prices import-ccswitch                 # 导入 cc-switch 的价格
+mytoken statusline                             # 给 shell 提示符的一行状态
+mytoken doctor                                 # 只读检查索引、数据源与 schema
 mytoken version
 ```
 
-`--by` 支持 `session`、`provider`、`model`、`project`、`day`、`harness`。`stats`、`sessions` 与
-`cache` 共用时间范围参数 `--since`/`--until`（时长如 `7d`，或日期）和 `--last`（`today`、`week`、
-`month`，或 `30d`），以及 `--timezone`、`--offline`、`--no-cost`、`--format table|json|csv`
-（`--json` 是 `--format json` 的简写）；`--since` 与 `--last` 不能同时使用。`cache` 默认按未命中
-原因分组（也可 `--by provider|model|harness|project|session|day`），`mytoken cache <会话 ID>` 打印
-该会话逐条请求的缓存时间轴；它只读本地数据，完全不联网。`mytoken help`
-会列出所有命令，每个参数的含义见 [docs/CLI.md](docs/CLI.md)。
+`summary`、`daily`、`quota`、`statusline` 与 `doctor` 以只读方式打开索引：不迁移、不重算价格、不写入。
+`daily` 把 input、output、cache read、cache write 分开成列，费用列明确标为 API 等价；升级后运行一次
+`mytoken scan` 完成迁移与重新计价。`mytoken help` 会列出所有命令，每个参数的含义见
+[docs/CLI.md](docs/CLI.md)。
 
 ## 从源码构建
 

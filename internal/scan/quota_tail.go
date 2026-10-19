@@ -107,6 +107,7 @@ func (s *Scanner) publishQuotaTail(ctx context.Context, srcs []quotaTailSource) 
 	}
 	if s.tailSeen == nil {
 		s.tailSeen = map[string]fileStamp{}
+		s.tailHit = map[string]bool{}
 	}
 	ctx, cancel := context.WithTimeout(ctx, quotaTailTimeout)
 	defer cancel()
@@ -167,6 +168,10 @@ func (s *Scanner) publishQuotaTailInstance(ctx context.Context, instance string,
 		key := instance + "\x00" + c.path
 		stamp := fileStamp{size: c.size, mod: c.mod}
 		if seen, ok := s.tailSeen[key]; ok && seen.size == stamp.size && seen.mod.Equal(stamp.mod) {
+			if s.tailHit[key] {
+				// Already published from this file, and nothing newer moved.
+				break
+			}
 			continue
 		}
 		fileBudget := int64(quotaTailMaxFileBytes)
@@ -223,6 +228,7 @@ func (s *Scanner) publishQuotaTailInstance(ctx context.Context, instance string,
 		// Remember the stat that was actually read: an unchanged file is skipped
 		// by the next scan, and any append or replacement is read again.
 		s.tailSeen[key] = stamp
+		s.tailHit[key] = rep != nil && rep.Available()
 		last = rep
 		if rep != nil && rep.Available() {
 			if err := quota.PublishLatest(ctx, s.st, instance, rep, now); err != nil {

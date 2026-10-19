@@ -15,9 +15,9 @@ import (
 	"github.com/zzstar101/mytoken/internal/snapshot"
 )
 
-const quotaUsage = `Usage: mytoken quota list [options]
+const quotaUsage = `Usage: mytoken quota [list] [options]
        mytoken quota status [INSTANCE] [options]
-       mytoken quota claude info|enable|disable|refresh [options]
+       mytoken quota plan [options]
   --instance-id ID  stored instance id (repeatable; selects exactly this one)
   --json            JSON output  --format table|json|csv
   --db PATH         read another index (diagnostics only)
@@ -37,8 +37,7 @@ as a value at the query instant. Without one the forecast stays unavailable with
 a reason: a pace needs retained comparable observations and is never derived here
 from token counts.
 
-quota claude manages the shared Claude Code quota consent and shows its cached
-reading. Claude quota is off by default; see: mytoken quota claude help`
+`
 
 // quotaReport is the JSON shape of `quota list` and `quota status`.
 type quotaReport struct {
@@ -48,17 +47,16 @@ type quotaReport struct {
 }
 
 func runQuota(ctx context.Context, args []string, out, errout io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprint(errout, quotaUsage)
-		return 2
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return runQuotaList(ctx, args, out, errout)
 	}
 	switch args[0] {
+	case "plan", "plans":
+		return runQuotaPlan(ctx, args[1:], out, errout)
 	case "list":
 		return runQuotaList(ctx, args[1:], out, errout)
 	case "status":
 		return runQuotaStatus(ctx, args[1:], out, errout)
-	case "claude":
-		return runQuotaClaude(ctx, args[1:], out, errout)
 	case "help", "-h", "--help":
 		fmt.Fprint(out, quotaUsage)
 		return 0
@@ -67,6 +65,52 @@ func runQuota(ctx context.Context, args []string, out, errout io.Writer) int {
 		fmt.Fprint(errout, quotaUsage)
 		return 2
 	}
+}
+
+// runQuotaPlan prints the plan-quota snapshots the background service stored
+// under quota.plan.*, including providers that only exist over the network.
+func runQuotaPlan(ctx context.Context, args []string, out, errout io.Writer) int {
+	fs := flag.NewFlagSet("quota plan", flag.ContinueOnError)
+	fs.SetOutput(errout)
+	var qf quotaFlags
+	addQuotaFlags(fs, &qf)
+	if e := fs.Parse(args); e != nil {
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprint(errout, quotaUsage)
+		return 2
+	}
+	snap := snapshot.Build(ctx, snapshot.Options{DBPath: qf.dbPath, Now: time.Now()})
+	if qf.js || qf.format == "json" {
+		body, _ := json.MarshalIndent(snap.Data.Plans, "", "  ")
+		fmt.Fprintln(out, string(body))
+		return 0
+	}
+	if len(snap.Data.Plans) == 0 {
+		fmt.Fprintln(out, "no plan quota stored; open the app once or run `mytoken scan`")
+		return 0
+	}
+	t := newTable(out)
+	fmt.Fprintln(t, "PROVIDER\tPLAN\tSOURCE\tFETCHED\tWINDOWS")
+	for _, p := range snap.Data.Plans {
+		windows := ""
+		for i, w := range p.Windows {
+			if i > 0 {
+				windows += "  "
+			}
+			windows += fmt.Sprintf("%s %.1f%%", w.Name, w.UsedPercent)
+			if !w.ResetsAt.IsZero() {
+				windows += " resets " + w.ResetsAt.Local().Format("15:04")
+			}
+		}
+		if windows == "" {
+			windows = "-"
+		}
+		fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\n", p.Provider, p.Plan, p.Source, p.FetchedAt.Local().Format("2006-01-02 15:04"), windows)
+	}
+	t.Flush()
+	return 0
 }
 
 // quotaFlags are the flags both subcommands share.
@@ -424,4 +468,35 @@ func csvOptBool(b *bool) string {
 		return ""
 	}
 	return strconv.FormatBool(*b)
+}
+
+func statusText(st snapshot.Status) string {
+	if st.Available {
+		return "ok"
+	}
+	if st.Reason != "" {
+		return st.Reason
+	}
+	return "unavailable"
+}
+
+func timeText(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return "-"
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func quotaWindowText(w *snapshot.QuotaWindow) string {
+	if w == nil || w.UsedPercent == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f%%", *w.UsedPercent)
+}
+
+func quotaForecastText(f snapshot.QuotaForecast) string {
+	if !f.Available {
+		return "-"
+	}
+	return "available"
 }

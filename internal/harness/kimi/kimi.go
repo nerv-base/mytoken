@@ -1,26 +1,40 @@
 // Package kimi parses Kimi CLI wire logs.
 //
-// Roots: $MYTOKEN_KIMI_DIRS when set, else $KIMI_SHARE_DIR, else ~/.kimi; the
-// sessions live under <share>/sessions:
+// Roots: $MYTOKEN_KIMI_DIRS when set replaces the whole set. Otherwise both
+// layouts are watched — the legacy share directory ($KIMI_SHARE_DIR, else
+// ~/.kimi) and the Kimi Code home ($KIMI_CODE_HOME, else ~/.kimi-code) — each
+// contributing its sessions directory:
 //
 //	<share>/sessions/<work-dir>/<session>/wire.jsonl
 //	<share>/sessions/<work-dir>/<session>/subagents/<agent>/wire.jsonl
+//	<code-home>/sessions/<work-dir-key>/<session>/agents/main/wire.jsonl
+//	<code-home>/sessions/<work-dir-key>/<session>/agents/<agent>/wire.jsonl
 //
-// A subagent log is attributed to the agent directory as its own session, with
-// the surrounding session as its parent. Project names come from
-// <share>/kimi.json (`work_dirs[].path`, keyed by md5 of the path, with an
-// optional "<kaos>_<md5>" key for non-local kaos); when the work directory has
-// no entry the directory name itself is used.
+// A subagent log is attributed to its own session, with the surrounding session
+// as its parent. The legacy layout nests agents under subagents/; the Kimi Code
+// CLI (wire protocol 1.1) calls the session's own agent "main" and puts every
+// agent under agents/, so an agent directory name repeats across sessions and a
+// protocol 1.1 subagent id is qualified by its parent session id.
 //
-// Token normalization (docs/HARNESS.md §4): a `StatusUpdate` envelope carries
-// token_usage/usage with input_cache_read (CacheRead) and input_cache_creation
-// (CacheWrite) reported separately from the fresh input. When the log reports
-// only the combined `input`, the cache counts are subtracted from it. Kimi
-// reports no reasoning or cost split, and the model falls back to the
-// configured default from $KIMI_MODEL_NAME / <share>/config.toml.
+// Project names come from <share>/kimi.json (`work_dirs[].path`, keyed by md5 of
+// the path, with an optional "<kaos>_<md5>" key for non-local kaos); when the
+// work directory has no entry the directory name itself is used. A protocol 1.1
+// log states its working directory in config.update.cwd, of which only the
+// final path component is kept.
 //
-// Only metadata is read: no message text or tool payload ever leaves this
-// package, except the first user message, which becomes the <=60 rune title.
+// Token normalization (docs/HARNESS.md §4): a legacy `StatusUpdate` envelope
+// carries token_usage/usage with input_cache_read (CacheRead) and
+// input_cache_creation (CacheWrite) reported separately from the fresh input.
+// When the log reports only the combined `input`, the cache counts are
+// subtracted from it. Protocol 1.1 writes a durable `usage.record` per request
+// ("turn" or "session" scope), which is the authoritative measurement, so the
+// usage repeated on the matching context loop step is deliberately not read. Kimi reports no reasoning or cost
+// split, and the model falls back to the configured default from
+// $KIMI_MODEL_NAME / <share>/config.toml.
+//
+// Only metadata is read: no message text, system prompt or tool payload ever
+// leaves this package, except the first user message, which becomes the
+// <=60 rune title.
 package kimi
 
 import (
@@ -48,7 +62,11 @@ const (
 	fingerprintN     = 4096
 	sessionsDirName  = "sessions"
 	subagentsDirName = "subagents"
+	agentsDirName    = "agents"
+	mainAgentName    = "main"
 	wireName         = "wire.jsonl"
+	kimiDirName      = ".kimi"
+	kimiCodeDirName  = ".kimi-code"
 	autoModel        = "kimi-auto"
 )
 
@@ -72,8 +90,10 @@ func NewWithRoots(roots ...string) *Parser {
 func init() { harness.Register(New()) }
 
 // rootProvenance reports Kimi's default roots and where each came from.
-// MYTOKEN_KIMI_DIRS replaces the whole set and KIMI_SHARE_DIR is an explicit
-// harness-specific base; otherwise the root is the platform default.
+// MYTOKEN_KIMI_DIRS replaces the whole set. Otherwise the legacy share
+// directory and the Kimi Code home are both watched, each replaced by its own
+// explicit variable: KIMI_SHARE_DIR for the legacy root and KIMI_CODE_HOME for
+// the Kimi Code root.
 func rootProvenance() ([]harness.Root, error) {
 	if v, ok := harness.Getenv("MYTOKEN_KIMI_DIRS"); ok {
 		dirs, err := harness.SplitEnvList("MYTOKEN_KIMI_DIRS", v)
@@ -82,10 +102,38 @@ func rootProvenance() ([]harness.Root, error) {
 		}
 		return harness.EnvRoots("MYTOKEN_KIMI_DIRS", dirs...), nil
 	}
+	var roots []harness.Root
 	if v, ok := harness.Getenv("KIMI_SHARE_DIR"); ok {
-		return harness.EnvRoots("KIMI_SHARE_DIR", filepath.Join(filepath.Clean(v), sessionsDirName)), nil
+		roots = append(roots, harness.EnvRoots("KIMI_SHARE_DIR", filepath.Join(filepath.Clean(v), sessionsDirName))...)
+	} else {
+		roots = append(roots, harness.BuiltinRoots(filepath.Join(harness.Home(), kimiDirName, sessionsDirName))...)
 	}
-	return harness.BuiltinRoots(filepath.Join(harness.Home(), ".kimi", sessionsDirName)), nil
+	if v, ok := harness.Getenv("KIMI_CODE_HOME"); ok {
+		roots = append(roots, harness.EnvRoots("KIMI_CODE_HOME", filepath.Join(filepath.Clean(v), sessionsDirName))...)
+	} else {
+		roots = append(roots, harness.BuiltinRoots(filepath.Join(harness.Home(), kimiCodeDirName, sessionsDirName))...)
+	}
+	return dedupeRoots(roots), nil
+}
+
+// dedupeRoots collapses roots that name the same directory. The first
+// occurrence keeps its position, but an explicit override replaces the built-in
+// default it shadows so the provenance still names the variable the user set.
+func dedupeRoots(roots []harness.Root) []harness.Root {
+	out := make([]harness.Root, 0, len(roots))
+	at := make(map[string]int, len(roots))
+	for _, r := range roots {
+		key := filepath.Clean(r.Path)
+		if i, ok := at[key]; ok {
+			if out[i].Origin != harness.OriginEnv && r.Origin == harness.OriginEnv {
+				out[i] = r
+			}
+			continue
+		}
+		at[key] = len(out)
+		out = append(out, r)
+	}
+	return out
 }
 
 // DefaultRoots returns the Kimi sessions roots for this machine.
@@ -158,19 +206,8 @@ func (p *Parser) Discover(ctx context.Context) ([]harness.Source, error) {
 				if isFile(filepath.Join(sessionPath, wireName)) {
 					add(filepath.Join(sessionPath, wireName))
 				}
-				subagents, err := os.ReadDir(filepath.Join(sessionPath, subagentsDirName))
-				if err != nil {
-					continue
-				}
-				for _, agent := range subagents {
-					if !agent.IsDir() {
-						continue
-					}
-					path := filepath.Join(sessionPath, subagentsDirName, agent.Name(), wireName)
-					if isFile(path) {
-						add(path)
-					}
-				}
+				addAgentLogs(sessionPath, subagentsDirName, add)
+				addAgentLogs(sessionPath, agentsDirName, add)
 			}
 		}
 	}
@@ -178,15 +215,37 @@ func (p *Parser) Discover(ctx context.Context) ([]harness.Source, error) {
 	return out, nil
 }
 
+// addAgentLogs adds <session>/<group>/<agent>/wire.jsonl for every agent
+// directory through add. The legacy layout uses subagents/ and protocol 1.1
+// uses agents/; a group that does not exist is simply absent.
+func addAgentLogs(sessionPath, group string, add func(string)) {
+	agents, err := os.ReadDir(filepath.Join(sessionPath, group))
+	if err != nil {
+		return
+	}
+	for _, agent := range agents {
+		if !agent.IsDir() {
+			continue
+		}
+		path := filepath.Join(sessionPath, group, agent.Name(), wireName)
+		if isFile(path) {
+			add(path)
+		}
+	}
+}
+
 // state is the incremental parse state persisted in Cursor.Extra: facts that
-// live in already-consumed bytes, plus the running record counter used to key
-// records that carry no message_id.
+// live in already-consumed bytes, the running record counter used to key legacy
+// records that carry no message_id, and the occurrence counts that keep the
+// content-addressed protocol 1.1 keys unique within a file when a record states
+// no time of its own.
 type state struct {
-	Title     string `json:"t,omitempty"`
-	Project   string `json:"p,omitempty"`
-	StartedAt string `json:"s,omitempty"`
-	UpdatedAt string `json:"u,omitempty"`
-	Index     int    `json:"i,omitempty"`
+	Title     string         `json:"t,omitempty"`
+	Project   string         `json:"p,omitempty"`
+	StartedAt string         `json:"s,omitempty"`
+	UpdatedAt string         `json:"u,omitempty"`
+	Index     int            `json:"i,omitempty"`
+	Seen      map[string]int `json:"c,omitempty"`
 }
 
 type wireRecord struct {
@@ -194,6 +253,11 @@ type wireRecord struct {
 	Type      string          `json:"type"`
 	Payload   json.RawMessage `json:"payload"`
 	Message   *wireMessage    `json:"message"`
+	// Time is the protocol 1.1 timestamp in epoch milliseconds.
+	Time json.RawMessage `json:"time"`
+	// raw is the line this record was decoded from; protocol 1.1 usage records
+	// carry no id, so their dedup key digests the line itself.
+	raw []byte
 }
 
 type wireMessage struct {
@@ -201,21 +265,58 @@ type wireMessage struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+// inline reports whether the record uses the protocol 1.1 layout: a top-level
+// type whose payload is the record's own fields, with no payload or message
+// wrapper.
+func (r *wireRecord) inline() bool {
+	return r.Type != "" && r.Message == nil && len(r.Payload) == 0
+}
+
 // envelope returns the record type and payload, unwrapping the optional
-// "message" wrapper the CLI uses on some records.
+// "message" wrapper the CLI uses on some records and reading protocol 1.1
+// records inline.
 func (r *wireRecord) envelope() (string, map[string]json.RawMessage) {
+	if r.inline() {
+		return r.Type, objectFields(r.raw)
+	}
 	typ, raw := r.Type, r.Payload
 	if r.Message != nil {
 		typ, raw = r.Message.Type, r.Message.Payload
 	}
-	if typ == "" || len(raw) == 0 || string(raw) == "null" {
+	if typ == "" {
 		return "", nil
+	}
+	return typ, objectFields(raw)
+}
+
+// when returns the record's timestamp: protocol 1.1 carries epoch milliseconds
+// in "time", the legacy layout epoch seconds in "timestamp".
+func (r *wireRecord) when() (time.Time, bool) {
+	if t, ok := epochMillis(r.Time); ok {
+		return t, true
+	}
+	return parseTime(rawTime(r.Timestamp))
+}
+
+// hasMillisTime reports whether the record states its own protocol 1.1 time. A
+// record that does identifies itself, so two byte-identical lines are the same
+// durable record written twice rather than two separate calls.
+func (r *wireRecord) hasMillisTime() bool {
+	_, ok := epochMillis(r.Time)
+	return ok
+}
+
+// objectFields decodes a raw JSON object into its fields, tolerating absent and
+// non-object payloads.
+func objectFields(raw json.RawMessage) map[string]json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
-		return "", nil
+		return nil
 	}
-	return typ, fields
+	return fields
 }
 
 // Parse implements harness.Parser.
@@ -243,9 +344,7 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 	root, rel := p.locate(src.Path)
 	workDir, sessionID, parentID := sourceIDs(rel)
 	shareDir := shareDirOf(root)
-	project := projectName(shareDir, workDir)
-	configured := configuredModel(shareDir)
-
+	fallbackProject := projectName(shareDir, workDir)
 	start := cur.Offset
 	st8 := state{}
 	if cur.Fingerprint != "" && cur.Fingerprint != fp {
@@ -257,15 +356,26 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 		start = 0
 		st8 = state{}
 	}
+	project := st8.Project
+	if project == "" {
+		project = fallbackProject
+	}
+	configured := configuredModel(shareDir)
 
+	seen := st8.Seen
+	if seen == nil {
+		seen = map[string]int{}
+	}
 	acc := &accumulator{
-		primary:    sessionID,
-		parent:     parentID,
-		project:    project,
-		title:      st8.Title,
-		index:      st8.Index,
-		events:     map[string]int{},
-		configured: configured,
+		primary:         sessionID,
+		parent:          parentID,
+		project:         project,
+		fallbackProject: fallbackProject,
+		title:           st8.Title,
+		index:           st8.Index,
+		events:          map[string]int{},
+		seen:            seen,
+		configured:      configured,
 	}
 	if t, ok := parseTime(st8.StartedAt); ok {
 		acc.started = t
@@ -296,6 +406,7 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 		if err := json.Unmarshal(line, &rec); err != nil {
 			continue // tolerate unknown/partial records
 		}
+		rec.raw = line
 		acc.handle(&b, &rec)
 	}
 
@@ -312,23 +423,40 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 
 // accumulator collects one batch for a single wire log.
 type accumulator struct {
-	primary    string
-	parent     string
-	project    string
-	title      string
-	started    time.Time
-	updated    time.Time
-	index      int
-	configured string
-	events     map[string]int
+	primary string
+	parent  string
+	// project is the effective project name; fallbackProject is the name derived
+	// from the work directory, which a protocol 1.1 config.update may replace.
+	project         string
+	fallbackProject string
+	title           string
+	started         time.Time
+	updated         time.Time
+	index           int
+	configured      string
+	events          map[string]int
+	// seen counts how often each content-addressed usage key without a time of
+	// its own occurred in the consumed bytes, so a repeated line in a later
+	// increment stays distinct instead of being merged on equal bytes alone.
+	seen map[string]int
 }
 
 func (a *accumulator) handle(b *harness.Batch, rec *wireRecord) {
 	typ, payload := rec.envelope()
-	if typ == "" || payload == nil || typ == "metadata" {
+	if typ == "" || payload == nil {
 		return
 	}
-	ts, ok := parseTime(rawTime(rec.Timestamp))
+	if typ == "metadata" {
+		// Protocol 1.1 keeps the session start in created_at (epoch ms); the
+		// legacy metadata record's timestamp stays ignored.
+		if rec.inline() {
+			if t, ok := epochMillis(payload["created_at"]); ok {
+				a.observe(t)
+			}
+		}
+		return
+	}
+	ts, ok := rec.when()
 	if !ok {
 		ts = a.started // a record without a timestamp inherits the session start
 	}
@@ -341,8 +469,20 @@ func (a *accumulator) handle(b *harness.Batch, rec *wireRecord) {
 				a.title = harness.Title(t)
 			}
 		}
+	case "turn.prompt":
+		if a.title == "" {
+			if t := promptText(payload); t != "" {
+				a.title = harness.Title(t)
+			}
+		}
+	case "config.update":
+		a.setProject(stringField(payload, "cwd"))
 	case "StatusUpdate":
 		a.handleStatus(b, payload, ts)
+	case "usage.record":
+		// usage.record is durable and authoritative; the usage repeated on the
+		// matching context loop step is deliberately not read.
+		a.handleUsageRecord(b, payload, ts, rec)
 	}
 }
 
@@ -369,26 +509,123 @@ func (a *accumulator) handleStatus(b *harness.Batch, payload map[string]json.Raw
 	index := a.index
 	a.index++
 	key := "kimi:" + a.primary + ":" + firstNonEmpty(id, strconv.Itoa(index))
+	a.emit(b, key, firstNonEmpty(
+		stringField(payload, "model"),
+		stringField(payload, "model_name"),
+		a.configured,
+	), id, model.Tokens{
+		Input:      input,
+		Output:     output,
+		CacheRead:  cacheRead,
+		CacheWrite: cacheWrite,
+	}, ts)
+}
+
+// handleUsageRecord records one protocol 1.1 usage.record, the durable and
+// authoritative measurement of one request. Its token classes map directly onto
+// the normalized ones. A record whose scope this parser cannot place is skipped
+// before any dedup state is consumed.
+func (a *accumulator) handleUsageRecord(b *harness.Batch, payload map[string]json.RawMessage, ts time.Time, rec *wireRecord) {
+	if !usageScopeIsCounted(payload) {
+		return
+	}
+	usage := objectFields(payload["usage"])
+	if usage == nil {
+		return
+	}
+	tok := model.Tokens{
+		Input:      numberField(usage, "inputOther"),
+		Output:     numberField(usage, "output"),
+		CacheRead:  numberField(usage, "inputCacheRead"),
+		CacheWrite: numberField(usage, "inputCacheCreation"),
+	}
+	if tok.IsZero() {
+		return
+	}
+	a.emit(b, a.usageKey(rec.raw, rec.hasMillisTime()), firstNonEmpty(stringField(payload, "model"), a.configured), "", tok, ts)
+}
+
+// usageScopeIsCounted reports whether a usage.record belongs in the ledger.
+// Every usage.record is one request, so a scope upstream defines is counted,
+// not filtered. usageAgentModel.ts:27-43 (packages/agent-core-v2/src/session/
+// usage) accumulates each UsageRecord into byModel unconditionally, and its
+// record() only labels that one request "turn" or "session" from source.type —
+// the two scopes are alternatives for a request, not a cumulative and a
+// per-turn view of the same one. context-projector.ts:393-401 (apps/vis/server)
+// adds usage.record to the cumulative byModel ledger for both scopes and
+// defaults an absent scope to "session". The field is optional, so an absent
+// scope and the legacy empty string are counted as well. Only a value this
+// parser cannot place — an unknown string, or a non-string — is conservatively
+// ignored, and it is ignored before any dedup state is consumed. A present null
+// is such a non-string: the schema types the field as an optional string union,
+// so null is an illegal value, not an absent field, and it must not reach the
+// absent-field default.
+func usageScopeIsCounted(payload map[string]json.RawMessage) bool {
+	raw, ok := payload["usageScope"]
+	if !ok || len(raw) == 0 {
+		return true
+	}
+	var scope *string
+	if err := json.Unmarshal(raw, &scope); err != nil || scope == nil {
+		return false
+	}
+	switch strings.TrimSpace(*scope) {
+	case "", "turn", "session":
+		return true
+	default:
+		return false
+	}
+}
+
+// usageKey returns the dedup key of a protocol 1.1 usage.record. Those records
+// carry no message id, so the key digests the raw line: the same record keeps
+// its key when the file is reread after a rewrite or parsed in a later
+// increment, which is what stops it from being counted twice. A record that
+// states its own time is already identified by it, so a repeated byte-identical
+// line collapses onto the same key. A record without a usable time is
+// indistinguishable from an equal call, so the occurrence counter, persisted in
+// the cursor, keeps the two apart rather than merging them on no evidence.
+func (a *accumulator) usageKey(raw []byte, identified bool) string {
+	sum := sha1.Sum(raw)
+	base := "kimi:" + a.primary + ":u" + hex.EncodeToString(sum[:8])
+	if identified {
+		return base
+	}
+	n := a.seen[base]
+	a.seen[base] = n + 1
+	if n == 0 {
+		return base
+	}
+	return base + "#" + strconv.Itoa(n)
+}
+
+// setProject records the working directory a protocol 1.1 log states, keeping
+// only its final path component so a full path can never reach an event. A
+// project already taken from config.update in an earlier batch is not replaced.
+func (a *accumulator) setProject(cwd string) {
+	if a.project != "" && a.project != a.fallbackProject {
+		return
+	}
+	if name := projectFromCwd(cwd); name != "" {
+		a.project = name
+	}
+}
+
+// emit appends an event, merging it into an earlier one when the key was
+// already seen in this batch: the largest token count wins and the newest
+// timestamp is kept, so a re-read record cannot shrink or duplicate a report.
+func (a *accumulator) emit(b *harness.Batch, key, modelName, requestID string, tok model.Tokens, ts time.Time) {
 	ev := model.UsageEvent{
 		Harness:     model.Kimi,
 		DedupKey:    key,
-		RequestID:   id,
+		RequestID:   requestID,
 		SessionID:   a.primary,
 		ParentID:    a.parent,
 		ProjectPath: a.project,
 		Timestamp:   ts,
-		Model: firstNonEmpty(
-			stringField(payload, "model"),
-			stringField(payload, "model_name"),
-			a.configured,
-		),
-		Provider: "kimi",
-		Tokens: model.Tokens{
-			Input:      input,
-			Output:     output,
-			CacheRead:  cacheRead,
-			CacheWrite: cacheWrite,
-		},
+		Model:       modelName,
+		Provider:    "kimi",
+		Tokens:      tok,
 	}
 	if i, ok := a.events[key]; ok {
 		prev := &b.Events[i]
@@ -438,18 +675,17 @@ func (a *accumulator) session() []model.SessionMeta {
 }
 
 func (a *accumulator) encodeState() string {
-	s := state{Title: a.title, Project: a.project, Index: a.index}
+	s := state{Title: a.title, Project: a.project, Index: a.index, Seen: a.seen}
 	if !a.started.IsZero() {
 		s.StartedAt = a.started.UTC().Format(time.RFC3339Nano)
 	}
 	if !a.updated.IsZero() {
 		s.UpdatedAt = a.updated.UTC().Format(time.RFC3339Nano)
 	}
-	if s == (state{}) {
-		return ""
-	}
+	// state carries a map, so it is not comparable: an empty encoding is the
+	// "{}" the omitempty tags produce when nothing was learned.
 	raw, err := json.Marshal(s)
-	if err != nil {
+	if err != nil || string(raw) == "{}" {
 		return ""
 	}
 	return string(raw)
@@ -476,9 +712,23 @@ func sourceIDs(rel string) (workDir, sessionID, parentID string) {
 	}
 	workDir = parts[0]
 	sessionID = parts[1]
-	if len(parts) >= 4 && parts[2] == subagentsDirName {
+	if len(parts) < 4 {
+		return workDir, sessionID, ""
+	}
+	switch parts[2] {
+	case subagentsDirName:
 		// <work-dir>/<session>/subagents/<agent>/wire.jsonl
 		sessionID, parentID = parts[3], parts[1]
+	case agentsDirName:
+		// <work-dir-key>/<session>/agents/main/wire.jsonl is the session's own
+		// agent, so it stays the session. Every other directory is a sub-agent:
+		// its name repeats across sessions, so the id is qualified by the
+		// parent session to stay unique.
+		if parts[3] == mainAgentName {
+			sessionID, parentID = parts[1], ""
+		} else {
+			sessionID, parentID = parts[1]+":"+parts[3], parts[1]
+		}
 	}
 	return workDir, sessionID, parentID
 }
@@ -583,16 +833,44 @@ func configuredModel(shareDir string) string {
 // usageOf unwraps the token usage object of a payload.
 func usageOf(payload map[string]json.RawMessage) map[string]json.RawMessage {
 	for _, key := range []string{"token_usage", "usage"} {
-		raw, ok := payload[key]
-		if !ok || len(raw) == 0 || string(raw) == "null" {
-			continue
-		}
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &fields); err == nil {
+		if fields := objectFields(payload[key]); fields != nil {
 			return fields
 		}
 	}
 	return nil
+}
+
+// promptText returns the first text part of a protocol 1.1 turn.prompt. Only
+// that part becomes the session title; later parts and the surrounding
+// conversation stay out of the parsed output.
+func promptText(payload map[string]json.RawMessage) string {
+	var parts []struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(payload["input"], &parts); err != nil {
+		return ""
+	}
+	for _, p := range parts {
+		if t := strings.TrimSpace(p.Text); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// projectFromCwd maps a stated working directory to a bare project name,
+// keeping only the last path component. It returns "" when nothing usable
+// remains, so a path that is only a root can never leak into an event.
+func projectFromCwd(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return ""
+	}
+	base := filepath.Base(filepath.Clean(cwd))
+	if base == "" || base == "." || strings.ContainsAny(base, `/\`) {
+		return ""
+	}
+	return base
 }
 
 // userText extracts the user input of a TurnBegin/SteerInput envelope.
@@ -718,6 +996,24 @@ func rawTime(raw json.RawMessage) string {
 		return time.UnixMilli(ms).UTC().Format(time.RFC3339Nano)
 	}
 	return ""
+}
+
+// epochMillis decodes an epoch-millisecond field, the unit protocol 1.1 uses
+// for both "time" and metadata.created_at. Unlike rawTime it never guesses
+// seconds, so a small value still means milliseconds; a non-numeric value falls
+// back to the ISO layouts parseTime accepts.
+func epochMillis(raw json.RawMessage) (time.Time, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return time.Time{}, false
+	}
+	var n float64
+	if err := json.Unmarshal(raw, &n); err == nil {
+		if n <= 0 {
+			return time.Time{}, false
+		}
+		return time.UnixMilli(int64(n)).UTC(), true
+	}
+	return parseTime(rawTime(raw))
 }
 
 func parseTime(s string) (time.Time, bool) {

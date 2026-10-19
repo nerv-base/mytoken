@@ -36,6 +36,10 @@ const (
 	Mux           Harness = "mux"
 	Zed           Harness = "zed"
 	Antigravity   Harness = "antigravity"
+	ZCode         Harness = "zcode"
+	MiniMaxCode   Harness = "minimax-code"
+	MiMoCode      Harness = "mimo-code"
+	StepCode      Harness = "step-code"
 )
 
 // DisplayName is the human label of a harness.
@@ -97,6 +101,14 @@ func (h Harness) DisplayName() string {
 		return "Zed"
 	case Antigravity:
 		return "Antigravity"
+	case ZCode:
+		return "ZCode"
+	case MiniMaxCode:
+		return "MiniMax Code"
+	case MiMoCode:
+		return "MiMo Code"
+	case StepCode:
+		return "Step Code"
 	}
 	return string(h)
 }
@@ -111,22 +123,40 @@ type Tokens struct {
 	Output     int64 `json:"output"`
 	CacheRead  int64 `json:"cacheRead"`
 	CacheWrite int64 `json:"cacheWrite"`
-	Reasoning  int64 `json:"reasoning"`
+	// CacheWrite1h is the part of CacheWrite written with the 1-hour TTL
+	// (Anthropic cache_creation.ephemeral_1h_input_tokens). It is a subset,
+	// never added on top: CacheWrite is always the total of both tiers, and
+	// CacheWrite-CacheWrite1h is the 5-minute tier. Priced at 2x input
+	// instead of 1.25x.
+	CacheWrite1h int64 `json:"cacheWrite1h,omitempty"`
+	Reasoning    int64 `json:"reasoning"`
 }
 
-// Total sums all five classes.
+// Total sums all five classes (CacheWrite1h is inside CacheWrite).
 func (t Tokens) Total() int64 {
 	return t.Input + t.Output + t.CacheRead + t.CacheWrite + t.Reasoning
+}
+
+// HitRate is the one cache hit-rate formula MyToken shows anywhere:
+// cache_read / (input + cache_read + cache_write). It is 0 when there was
+// no prompt at all.
+func (t Tokens) HitRate() float64 {
+	den := t.Input + t.CacheRead + t.CacheWrite
+	if den <= 0 {
+		return 0
+	}
+	return float64(t.CacheRead) / float64(den)
 }
 
 // Add returns t+o.
 func (t Tokens) Add(o Tokens) Tokens {
 	return Tokens{
-		Input:      t.Input + o.Input,
-		Output:     t.Output + o.Output,
-		CacheRead:  t.CacheRead + o.CacheRead,
-		CacheWrite: t.CacheWrite + o.CacheWrite,
-		Reasoning:  t.Reasoning + o.Reasoning,
+		Input:        t.Input + o.Input,
+		Output:       t.Output + o.Output,
+		CacheRead:    t.CacheRead + o.CacheRead,
+		CacheWrite:   t.CacheWrite + o.CacheWrite,
+		CacheWrite1h: t.CacheWrite1h + o.CacheWrite1h,
+		Reasoning:    t.Reasoning + o.Reasoning,
 	}
 }
 

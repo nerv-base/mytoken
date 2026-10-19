@@ -1,0 +1,141 @@
+{
+  "harness": "kimi",
+  "sources": [
+    {
+      "path": "wd_demo_9f8e7d6c5b4a/session-20250319-160000/agents/agent-0/wire.jsonl",
+      "kind": "jsonl"
+    },
+    {
+      "path": "wd_demo_9f8e7d6c5b4a/session-20250319-160000/agents/main/wire.jsonl",
+      "kind": "jsonl"
+    },
+    {
+      "path": "wd_demo_9f8e7d6c5b4a/session-20250319-170000/agents/agent-0/wire.jsonl",
+      "kind": "jsonl"
+    },
+    {
+      "path": "wd_demo_9f8e7d6c5b4a/session-20250319-170000/agents/main/wire.jsonl",
+      "kind": "jsonl"
+    }
+  ],
+  "events": [
+    {
+      "harness": "kimi",
+      "dedupKey": "kimi:session-20250319-160000:agent-0:u28702c1f743e696e",
+      "sessionId": "session-20250319-160000:agent-0",
+      "parentId": "session-20250319-160000",
+      "projectPath": "proj-one",
+      "timestamp": "2025-03-19T16:00:06.302Z",
+      "model": "kimi-k2",
+      "provider": "kimi",
+      "tokens": {
+        "input": 70,
+        "output": 9,
+        "cacheRead": 20,
+        "cacheWrite": 3,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "kimi",
+      "dedupKey": "kimi:session-20250319-160000:u6875653edfa10244",
+      "sessionId": "session-20250319-160000",
+      "projectPath": "proj-one",
+      "timestamp": "2025-03-19T16:00:10.302Z",
+      "model": "kimi-k2-turbo",
+      "provider": "kimi",
+      "tokens": {
+        "input": 100,
+        "output": 20,
+        "cacheRead": 40,
+        "cacheWrite": 8,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "kimi",
+      "dedupKey": "kimi:session-20250319-160000:u754338dc6729fe77",
+      "sessionId": "session-20250319-160000",
+      "projectPath": "proj-one",
+      "timestamp": "2025-03-19T16:00:01.302Z",
+      "model": "kimi-k2",
+      "provider": "kimi",
+      "tokens": {
+        "input": 10,
+        "output": 5,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "kimi",
+      "dedupKey": "kimi:session-20250319-170000:agent-0:u4f56c90ff3e9c4d8",
+      "sessionId": "session-20250319-170000:agent-0",
+      "parentId": "session-20250319-170000",
+      "projectPath": "other-work",
+      "timestamp": "2025-03-19T16:01:46.3Z",
+      "model": "kimi-k2",
+      "provider": "kimi",
+      "tokens": {
+        "input": 15,
+        "output": 2,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "kimi",
+      "dedupKey": "kimi:session-20250319-170000:u671c9df2b4a4c379",
+      "sessionId": "session-20250319-170000",
+      "projectPath": "other-work",
+      "timestamp": "2025-03-19T16:01:41.3Z",
+      "model": "kimi-k2",
+      "provider": "kimi",
+      "tokens": {
+        "input": 40,
+        "output": 6,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "harness": "kimi",
+      "sessionId": "session-20250319-160000",
+      "title": "first prompt for the new layout",
+      "project": "proj-one",
+      "startedAt": "2025-03-19T15:59:59Z",
+      "updatedAt": "2025-03-19T16:00:10.302Z"
+    },
+    {
+      "harness": "kimi",
+      "sessionId": "session-20250319-160000:agent-0",
+      "parentId": "session-20250319-160000",
+      "title": "first child task",
+      "project": "proj-one",
+      "startedAt": "2025-03-19T16:00:05Z",
+      "updatedAt": "2025-03-19T16:00:06.302Z"
+    },
+    {
+      "harness": "kimi",
+      "sessionId": "session-20250319-170000",
+      "title": "second parent session",
+      "project": "other-work",
+      "startedAt": "2025-03-19T16:01:40Z",
+      "updatedAt": "2025-03-19T16:01:41.3Z"
+    },
+    {
+      "harness": "kimi",
+      "sessionId": "session-20250319-170000:agent-0",
+      "parentId": "session-20250319-170000",
+      "title": "same-named child in another session",
+      "project": "other-work",
+      "startedAt": "2025-03-19T16:01:45Z",
+      "updatedAt": "2025-03-19T16:01:46.3Z"
+    }
+  ]
+}

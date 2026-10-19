@@ -89,7 +89,7 @@ func TestProviderGroupsUnknownIsolationAndCostProvenance(t *testing.T) {
 	for i := range groups {
 		g := groups[i]
 		if g.Identified {
-			if g.Requests != 3 || g.CostUSD != 9 || g.CostLogUSD != 7 || g.CostEstimateUSD != 2 || g.Unpriced != 1 {
+			if g.Requests != 3 || g.CostUSD != 9 {
 				t.Fatalf("cost provenance changed: %+v", g)
 			}
 			continue

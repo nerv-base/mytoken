@@ -598,23 +598,6 @@ func TestOpenReadOnlyUnknownProviderMarkerIsNewer(t *testing.T) {
 	roErr := roRequireReason(t, err, ReasonSchemaNewer)
 	roMustEqual(t, "marker value", roErr.Schema.Markers[providerIdentityVersion], "provider.identity.v2")
 }
-
-// A ledger marker this build does not know is a newer index, even though the
-// marker's absence is legitimate (it is written lazily by EnsurePrices).
-func TestOpenReadOnlyUnknownLedgerMarkerIsNewer(t *testing.T) {
-	ctx := context.Background()
-	st, path := roLiveStore(t)
-	if err := st.SetSetting(ctx, ledgerVersionKey, "99"); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := OpenReadOnly(ctx, path)
-	roErr := roRequireReason(t, err, ReasonSchemaNewer)
-	roMustEqual(t, "marker value", roErr.Schema.Markers[ledgerVersionKey], "99")
-}
-
-// The DSN must actually reach SQLite: the read-only open is enforced by the
-// connection (mode=ro plus query_only) and bounded by busy_timeout.
 func TestOpenReadOnlyAppliesReadOnlyPragmas(t *testing.T) {
 	ctx := context.Background()
 	st, path := roLiveStore(t)
@@ -646,11 +629,6 @@ func TestOpenReadOnlyAppliesReadOnlyPragmas(t *testing.T) {
 	}
 	roMustEqual(t, "journal_mode", journalMode, "wal")
 
-	// A never-priced index has no ledger_version row; that is a legitimate
-	// derived-cache state, reported but not an unsupported schema.
-	if got := ro.ReadOnlySchema().Markers[ledgerVersionKey]; got != "" {
-		t.Fatalf("ledger marker = %q, want the absent marker to stay absent", got)
-	}
 	roMustEqual(t, "schema state", ro.ReadOnlySchema().State, SchemaOK)
 }
 
@@ -1088,8 +1066,8 @@ func TestOpenReadOnlyPerformsNoApplicationWrite(t *testing.T) {
 	// A full read sweep, the way a snapshot would touch the database.
 	for _, table := range []string{
 		"events", "sessions", "cursors", "settings", "event_data", "event_dimensions",
-		"daily_usage", "cache_daily", "provider_configs", "provider_endpoints",
-		"provider_daily", "provider_cache_daily", "relay_balances",
+		"daily_usage", "provider_configs", "provider_endpoints",
+		"provider_daily",
 	} {
 		var n int64
 		if err := ro.DB().QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {

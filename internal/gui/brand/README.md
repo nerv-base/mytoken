@@ -28,6 +28,10 @@ to identify each tool.
 | kiro-color.svg | Kiro |
 | antigravity-color.svg | Antigravity |
 | antigravity.svg | Antigravity (one-color, unused for now) |
+| cursor.svg | Cursor (quota account) |
+| trae-color.svg | Trae (quota account) |
+| qoder-color.svg | Qoder (quota account) |
+| githubcopilot.svg | GitHub Copilot (quota account) |
 
 ## Not from @lobehub/icons
 

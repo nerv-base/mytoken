@@ -3,6 +3,60 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## 0.5.0
+
+MyToken is now a spend and plan-quota dashboard for the AI coding tools on
+this machine. The relay-reconciliation direction of 0.2–0.4 is gone.
+
+- **A new app, rebuilt on MyGo 0.5.5.** Five pages: Overview, Sessions,
+  Ranking (with the yearly heatmap and streaks), Projects and Settings, in a
+  calmer palette with motion: cards rise into view, figures count, selections
+  slide. Overview leads with today's spend and the sessions running now, as a
+  deck of cards that turns by itself, each with a breathing orb; then this
+  month's spend against last month with a month-end forecast, or today as a
+  24-hour clock; then plan quotas and the breakdown by tool, model and token
+  type. The menu-bar panel shows today's spend, the sessions running now with
+  their cost per hour and cache hit rate, and every quota. The menu-bar text
+  can show any of today's spend, spend per hour, hit rate and quota. New icon.
+- **Costs are official API prices, labelled "API equivalent".** Models
+  without a price show as unpriced instead of $0; Settings → Prices can price
+  them as another model or with your own rates. Headline token counts no
+  longer include cache reads, and there is one cache hit rate:
+  `cache read / (input + cache read + cache write)`. One-hour cache writes are
+  now priced at 2× input (five-minute writes stay 1.25×).
+- **Claude totals are right.** Claude Desktop's Code tab no longer counts
+  Claude Code sessions a second time, Cowork turns are not counted twice, and
+  ledger rows keep millisecond timestamps. The tools whose reading changed
+  (Claude Code, Claude Desktop, OpenClaude, Step Code, Pi) are read again
+  once after the update, in a few seconds; requests whose logs those tools
+  have since deleted are kept as they were.
+- **Plan quota without setup.** Codex is read from its logs; Claude, Cursor,
+  Copilot, GLM, Trae, WorkBuddy and Qoder are queried with the login those
+  tools already have on this machine (Qoder may ask once for Keychain
+  access). Percent quotas show as rings with a pace mark; credit balances,
+  which have no fixed limit, show what is left, the last 14 days of use and
+  about how many days it lasts. Tools without a detected plan show nothing.
+- **Sources are switches.** Every supported tool is detected automatically
+  and can be turned off; one that is installed somewhere unusual can be
+  pointed at its folder, which is checked on the spot.
+- **Much faster and lighter.** A fresh index of ~255K requests takes about
+  13 seconds instead of 23 minutes; the app watches a bounded set of folders
+  (~125 open files instead of 5,400), refreshes in about 10 ms and is
+  nearly idle in the background. Command-line reads open the index read-only.
+- **Removed:** relays, reconciliation, provider multipliers, budgets and
+  alerts, multiple instances, the cache ledger and the Cache page. The index
+  is migrated in place — your history is kept, repriced and compacted, with
+  one backup beside it.
+- **Command line trimmed** to `mytoken` (summary), `daily`, `quota`, `scan`,
+  `statusline`, `doctor` and `version`. A bare `mytoken` opens the app when it
+  is not run from a terminal.
+- **Windows:** right-click the tray icon for Open, Rescan and Quit.
+- **More tools.** ZCode, MiniMax Code, MiMo Code and Step Code are counted
+  offline; Kimi Code is covered by the Kimi source; Pi and OpenCode recognise
+  their compatible orchestrators (Oh My Pi, Oh My OpenAgent/senpi, OMO)
+  without counting aggregate logs twice. Trae and Qoder appear for their plan
+  credits only: they keep no usage record to count requests from.
+
 ## 0.4.1
 
 - **A leftover backup no longer blocks an upgrade.** If an earlier attempt

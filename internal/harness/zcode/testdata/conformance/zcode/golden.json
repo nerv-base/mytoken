@@ -1,0 +1,127 @@
+{
+  "harness": "zcode",
+  "sources": [
+    {
+      "path": "db.sqlite",
+      "kind": "sqlite"
+    }
+  ],
+  "events": [
+    {
+      "harness": "zcode",
+      "dedupKey": "zcode:u-alpha-1",
+      "sessionId": "sess-alpha",
+      "projectPath": "/work/alpha",
+      "timestamp": "2026-03-01T10:00:00Z",
+      "model": "glm-5.3",
+      "provider": "zai",
+      "tokens": {
+        "input": 700,
+        "output": 300,
+        "cacheRead": 400,
+        "cacheWrite": 100,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "zcode",
+      "dedupKey": "zcode:u-alpha-2",
+      "sessionId": "sess-alpha",
+      "projectPath": "/work/alpha",
+      "timestamp": "2026-03-01T10:02:00Z",
+      "model": "glm-5.3",
+      "provider": "zai",
+      "tokens": {
+        "input": 600,
+        "output": 120,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "zcode",
+      "dedupKey": "zcode:u-alpha-3",
+      "sessionId": "sess-alpha",
+      "projectPath": "/work/alpha",
+      "timestamp": "2026-03-01T10:03:00Z",
+      "model": "glm-5.3",
+      "provider": "zai",
+      "tokens": {
+        "input": 350,
+        "output": 50,
+        "cacheRead": 120,
+        "cacheWrite": 30,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "zcode",
+      "dedupKey": "zcode:u-beta-1",
+      "sessionId": "sess-beta",
+      "projectPath": "/work/beta",
+      "timestamp": "2026-03-01T10:01:00Z",
+      "model": "glm-5.3-flash",
+      "tokens": {
+        "input": 800,
+        "output": 90,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "zcode",
+      "dedupKey": "zcode:u-beta-2",
+      "sessionId": "sess-beta",
+      "projectPath": "/work/beta",
+      "timestamp": "2026-03-01T10:04:00Z",
+      "model": "glm-5.3-flash",
+      "tokens": {
+        "input": 500,
+        "output": 110,
+        "cacheRead": 300,
+        "cacheWrite": 100,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "zcode",
+      "dedupKey": "zcode:u-gamma-1",
+      "sessionId": "sess-gamma",
+      "projectPath": "/work/gamma",
+      "timestamp": "2026-03-01T10:05:00Z",
+      "model": "glm-5.3",
+      "tokens": {
+        "input": 250,
+        "output": 25,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "harness": "zcode",
+      "sessionId": "sess-alpha",
+      "project": "/work/alpha",
+      "startedAt": "2026-03-01T10:00:00Z",
+      "updatedAt": "2026-03-01T10:03:00Z"
+    },
+    {
+      "harness": "zcode",
+      "sessionId": "sess-beta",
+      "project": "/work/beta",
+      "startedAt": "2026-03-01T10:01:00Z",
+      "updatedAt": "2026-03-01T10:04:00Z"
+    },
+    {
+      "harness": "zcode",
+      "sessionId": "sess-gamma",
+      "project": "/work/gamma",
+      "startedAt": "2026-03-01T10:05:00Z",
+      "updatedAt": "2026-03-01T10:05:00Z"
+    }
+  ]
+}

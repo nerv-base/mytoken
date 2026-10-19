@@ -52,41 +52,31 @@
 // resume the message keyset; the watermark is dropped when it is ahead of the
 // database's own MAX(time_updated), which is how a replaced or recreated db is
 // detected. SQLite is opened read-only (file:...?mode=ro&immutable=0) with a
-// busy timeout, and a locked or unreadable db simply returns the previous
-// cursor so the next scan retries.
+// busy timeout and `PRAGMA query_only`, and a locked or unreadable db simply
+// returns the previous cursor so the next scan retries.
+//
+// The SQLite side of this parser — the read-only connection, the schema probe,
+// the watermarks and the usage accumulator — is the shared sqlitecore module
+// (internal/harness/opencode/sqlitecore), which the MiMo Code parser reads too:
+// MiMo Code keeps OpenCode's storage engine, so the deep module is reused
+// rather than copied, and this package keeps only what is OpenCode-specific.
 package opencode
 
 import (
 	"context"
-	"crypto/sha1"
-	"database/sql"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
 	"io/fs"
-	"math"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
-	"time"
-
-	"github.com/zzstar101/mytoken/internal/sqlitedsn"
-
-	_ "modernc.org/sqlite"
 
 	"github.com/zzstar101/mytoken/internal/harness"
+	"github.com/zzstar101/mytoken/internal/harness/opencode/sqlitecore"
 	"github.com/zzstar101/mytoken/internal/model"
 )
 
 const (
-	fingerprintBytes = 4096
-	busyTimeoutMS    = 5000
-
 	kindJSON   = "json"
 	kindSQLite = "sqlite"
 
@@ -290,34 +280,34 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 // sqlite
 // ---------------------------------------------------------------------------
 
+// The read-only SQLite machinery — the read-only connection, schema probing,
+// the (time_updated, id) watermarks and the usage accumulator — is the
+// sqlitecore module this package shares with every harness whose storage engine
+// is OpenCode's.
+//
+// profile tells that accumulator how OpenCode differs from another harness: its
+// identity, its dedup-key namespace, how a session's directory becomes the
+// stored project path, and how a stored session title is mapped.
+var profile = sqlitecore.Profile{
+	Harness:   model.OpenCode,
+	KeyPrefix: "opencode:",
+	Project: func(info sqlitecore.Session, p sqlitecore.Payload) string {
+		return sqlitecore.FirstNonEmpty(info.Directory, p.Path.Root)
+	},
+	Title: harness.Title,
+}
+
 // dbState is the incremental watermark persisted in Cursor.Extra. Each message
-// generation keeps its own watermark: readMessages walks the tables in
-// sequence, so one shared watermark let the newest v1 row hide older v2 rows,
-// which were then skipped by every later scan too.
+// generation keeps its own watermark: the tables are read in sequence, so one
+// shared watermark let the newest v1 row hide older v2 rows, which were then
+// skipped by every later scan too.
 type dbState struct {
-	V1 tableWatermark `json:"m"`
-	V2 tableWatermark `json:"sm"`
+	V1 sqlitecore.Watermark `json:"m"`
+	V2 sqlitecore.Watermark `json:"sm"`
 	// Compact is the per-session compaction boundary state. It lives in the
 	// cursor because a compaction row and the first request after it routinely
 	// arrive in different incremental batches.
-	Compact map[string]compactMark `json:"c,omitempty"`
-}
-
-// compactMark remembers the newest compaction row seen for a session (At) and
-// the compaction whose boundary has already been emitted (Done). A v2
-// `session_message` row of type 'compaction' is a real request that carries the
-// compaction call's own usage, but the context it replaces only shows up in the
-// requests after it, so exactly one later request is marked
-// model.BoundaryCompact.
-type compactMark struct {
-	At   int64 `json:"a,omitempty"`
-	Done int64 `json:"d,omitempty"`
-}
-
-// tableWatermark is the (time_updated, id) resume point of a single table.
-type tableWatermark struct {
-	Updated int64  `json:"u"`
-	ID      string `json:"i"`
+	Compact map[string]sqlitecore.Mark `json:"c,omitempty"`
 }
 
 // UnmarshalJSON also accepts the legacy single-watermark cursor
@@ -327,11 +317,11 @@ type tableWatermark struct {
 // idempotent for consumers that merge by DedupKey.
 func (s *dbState) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		M  *tableWatermark        `json:"m"`
-		SM *tableWatermark        `json:"sm"`
-		C  map[string]compactMark `json:"c"`
-		U  *int64                 `json:"u"`
-		I  *string                `json:"i"`
+		M  *sqlitecore.Watermark      `json:"m"`
+		SM *sqlitecore.Watermark      `json:"sm"`
+		C  map[string]sqlitecore.Mark `json:"c"`
+		U  *int64                     `json:"u"`
+		I  *string                    `json:"i"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
@@ -355,323 +345,116 @@ func (s *dbState) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// dbSignature combines the main database file with its write-ahead log, which
-// is where in-flight commits land before a checkpoint.
-type dbSignature struct {
-	size int64
-	mod  time.Time
+// messageTable is one generation of message storage together with the cursor
+// watermark that resumes it.
+type messageTable struct {
+	spec sqlitecore.Spec
+	wm   *sqlitecore.Watermark
 }
 
-func signatureOf(path string) (dbSignature, error) {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return dbSignature{}, err
+// messageTables names the message tables of both storage generations and the
+// predicate that keeps usage-carrying rows from each.
+//
+// The v2 table also stores the compaction requests themselves
+// (type 'compaction'). Their usage is a real request and must stay in the
+// ledger; the row additionally marks a context replacement point. Rows still
+// being written ('running') carry no tokens and are skipped.
+func (s *dbState) messageTables() []messageTable {
+	return []messageTable{
+		{
+			spec: sqlitecore.Spec{
+				Table:  "message",
+				Filter: "json_valid(data) AND json_extract(data,'$.role')='assistant' AND json_extract(data,'$.tokens') IS NOT NULL",
+			},
+			wm: &s.V1,
+		},
+		{
+			spec: sqlitecore.Spec{
+				Table:    "session_message",
+				Filter:   "json_valid(data) AND type IN ('assistant','compaction') AND json_extract(data,'$.tokens') IS NOT NULL",
+				KindExpr: "type",
+			},
+			wm: &s.V2,
+		},
 	}
-	sig := dbSignature{size: fi.Size(), mod: fi.ModTime()}
-	for _, suffix := range []string{"-wal", "-shm"} {
-		w, err := os.Stat(path + suffix)
-		if err != nil {
-			continue
-		}
-		sig.size += w.Size()
-		if w.ModTime().After(sig.mod) {
-			sig.mod = w.ModTime()
-		}
-	}
-	return sig, nil
 }
 
-// openReadOnly opens path as a read-only sqlite database. harness data is never
-// written to.
-func openReadOnly(path string) (*sql.DB, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
-	q := url.Values{
-		"mode":      {"ro"},
-		"immutable": {"0"},
-		"_pragma":   {fmt.Sprintf("busy_timeout(%d)", busyTimeoutMS)},
-	}
-	db, err := sql.Open("sqlite", sqlitedsn.URI(abs, q.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return db, nil
-}
-
+// parseDB reads one database incrementally: each message generation from its
+// own persisted watermark, the sessions from whichever session tables exist,
+// and the compaction state from the cursor.
 func (p *Parser) parseDB(ctx context.Context, src harness.Source, cur harness.Cursor) (harness.Batch, error) {
-	st, err := os.Stat(src.Path)
+	sig, err := sqlitecore.Stat(src.Path)
 	if err != nil {
 		return harness.Batch{Next: cur}, nil
 	}
-	sig, err := signatureOf(src.Path)
+	fp, err := sqlitecore.Fingerprint(src.Path)
 	if err != nil {
 		return harness.Batch{Next: cur}, nil
 	}
-	fp, err := fingerprint(src.Path)
-	if err != nil {
+	if sqlitecore.Unchanged(cur, sig, fp) {
 		return harness.Batch{Next: cur}, nil
 	}
-	_ = st
-	if cur.Fingerprint != "" && cur.Fingerprint == fp && cur.Size == sig.size && cur.ModTime.Equal(sig.mod) {
-		return harness.Batch{Next: cur}, nil
-	}
-	db, err := openReadOnly(src.Path)
-	if err != nil {
-		// Locked, unreadable or not a database: keep the cursor and retry on
-		// the next scan.
-		return harness.Batch{Next: cur}, nil
-	}
-	defer db.Close()
-
-	tables := tableColumns(ctx, db)
-	acc := newAccumulator()
 
 	var state dbState
 	if cur.Extra != "" {
 		_ = json.Unmarshal([]byte(cur.Extra), &state)
 	}
-	acc.useCompactionState(&state)
-	state.V1 = resetWatermark(ctx, db, tables, "message", state.V1)
-	state.V2 = resetWatermark(ctx, db, tables, "session_message", state.V2)
 
-	sessions := loadSessions(ctx, db, tables)
-	for _, id := range sortedKeys(sessions) {
-		acc.session(sessions[id])
+	snap, err := sqlitecore.Open(src.Path)
+	if err != nil {
+		// Locked, unreadable or not a database: keep the cursor and retry on
+		// the next scan.
+		return harness.Batch{Next: cur}, nil
 	}
-	readMessages(ctx, db, tables, acc, sessions, &state)
+	defer snap.Close()
+
+	acc := sqlitecore.NewAccumulator(profile)
+	if state.Compact == nil {
+		state.Compact = map[string]sqlitecore.Mark{}
+	}
+	acc.UseMarks(state.Compact)
+
+	sessions := snap.Sessions(ctx)
+	for _, id := range sqlitecore.SortedKeys(sessions) {
+		acc.Session(sessions[id])
+	}
+	for _, t := range state.messageTables() {
+		*t.wm = snap.Reset(ctx, t.spec, *t.wm)
+		*t.wm = snap.Messages(ctx, t.spec, *t.wm, func(row sqlitecore.Row) {
+			payload, ok := sqlitecore.Decode([]byte(row.Data))
+			if !ok {
+				// Not a JSON object, so not a message: the row states nothing
+				// this parser could count. sqlitecore.Decode already tolerates a
+				// wrong-typed optional field, so only a value that carries no
+				// message at all reaches here, and the watermark above keeps
+				// advancing: holding it would re-read this row and everything
+				// newer on every pass without ever making progress.
+				return
+			}
+			// The column is authoritative but not reliable: older rows carry a
+			// NULL or empty session_id, and these generations copy the session
+			// into the message payload as well. Without the fallback every such
+			// row reaches the store without a session, the store rejects the
+			// whole batch, and because the batch is never written the cursor
+			// never moves: one row freezes the harness for good.
+			sid := sqlitecore.FirstNonEmpty(row.SessionID, payload.SessionID, payload.SnakeSessionID)
+			if sid == "" {
+				// Nothing on the row names a session, not even the payload. The
+				// row cannot be attributed at this generation, so it is skipped:
+				// holding the watermark for it would stall every later row, and
+				// inventing a session would file the usage under a fiction. The
+				// watermark inside Messages has already moved past it.
+				return
+			}
+			acc.Emit(row.ID, sid, payload, sessions[sid], row.Updated, row.Kind == "compaction")
+		})
+	}
 
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		stateJSON = nil
 	}
-	next := harness.Cursor{
-		Offset:      0,
-		Size:        sig.size,
-		ModTime:     sig.mod,
-		Fingerprint: fp,
-		Extra:       string(stateJSON),
-	}
-	return acc.batch(next), nil
-}
-
-// tableColumns maps every table (and view) to its column set, so the queries can
-// degrade gracefully across schema generations.
-func tableColumns(ctx context.Context, db *sql.DB) map[string]map[string]bool {
-	out := map[string]map[string]bool{}
-	rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type IN ('table','view')`)
-	if err != nil {
-		return out
-	}
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			continue
-		}
-		names = append(names, name)
-	}
-	rows.Close()
-	for _, name := range names {
-		cols := map[string]bool{}
-		rs, err := db.QueryContext(ctx, `PRAGMA table_info(`+quoteIdent(name)+`)`)
-		if err != nil {
-			continue
-		}
-		for rs.Next() {
-			var (
-				cid, notnull, pk int
-				col, ctype       string
-				dflt             sql.NullString
-			)
-			if err := rs.Scan(&cid, &col, &ctype, &notnull, &dflt, &pk); err != nil {
-				continue
-			}
-			cols[col] = true
-		}
-		rs.Close()
-		out[name] = cols
-	}
-	return out
-}
-
-func quoteIdent(name string) string {
-	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
-}
-
-// sessionInfo is the per-session metadata opencode stores next to messages.
-type sessionInfo struct {
-	ID        string
-	ParentID  string
-	Directory string
-	Title     string
-	Created   int64
-	Updated   int64
-}
-
-// loadSessions reads the session tables (v1 `session` and/or v2 `session_v2`).
-func loadSessions(ctx context.Context, db *sql.DB, tables map[string]map[string]bool) map[string]sessionInfo {
-	out := map[string]sessionInfo{}
-	for _, name := range []string{"session", "session_v2"} {
-		cols, ok := tables[name]
-		if !ok || !cols["id"] {
-			continue
-		}
-		q := "SELECT " + sessionColumns(cols) + " FROM " + quoteIdent(name)
-		rows, err := db.QueryContext(ctx, q)
-		if err != nil {
-			continue
-		}
-		for rows.Next() {
-			var info sessionInfo
-			if err := rows.Scan(&info.ID, &info.ParentID, &info.Directory, &info.Title, &info.Created, &info.Updated); err != nil {
-				continue
-			}
-			if info.ID == "" {
-				continue
-			}
-			prev, seen := out[info.ID]
-			if !seen {
-				out[info.ID] = info
-				continue
-			}
-			out[info.ID] = mergeSession(prev, info)
-		}
-		rows.Close()
-	}
-	return out
-}
-
-// sessionColumns builds the projection for a session table, substituting
-// constants for columns an older schema does not have.
-func sessionColumns(cols map[string]bool) string {
-	text := func(name string) string {
-		if !cols[name] {
-			return "''"
-		}
-		return "COALESCE(" + quoteIdent(name) + ",'')"
-	}
-	integer := func(name string) string {
-		if !cols[name] {
-			return "0"
-		}
-		return "COALESCE(" + quoteIdent(name) + ",0)"
-	}
-	return strings.Join([]string{
-		text("id"), text("parent_id"), text("directory"), text("title"),
-		integer("time_created"), integer("time_updated"),
-	}, ", ")
-}
-
-func mergeSession(a, b sessionInfo) sessionInfo {
-	a.ParentID = firstNonEmpty(a.ParentID, b.ParentID)
-	a.Directory = firstNonEmpty(a.Directory, b.Directory)
-	a.Title = firstNonEmpty(a.Title, b.Title)
-	if a.Created == 0 || (b.Created != 0 && b.Created < a.Created) {
-		a.Created = b.Created
-	}
-	if b.Updated > a.Updated {
-		a.Updated = b.Updated
-	}
-	return a
-}
-
-// resetWatermark drops a watermark that can no longer be valid: a negative
-// value, one newer than the table's own newest row (the database was replaced
-// or rewound behind it), or a watermark carried over for a table that is now
-// absent.
-func resetWatermark(ctx context.Context, db *sql.DB, tables map[string]map[string]bool, name string, wm tableWatermark) tableWatermark {
-	if wm.Updated < 0 {
-		return tableWatermark{}
-	}
-	max, ok := maxTableUpdated(ctx, db, tables, name)
-	if !ok || wm.Updated > max {
-		return tableWatermark{}
-	}
-	return wm
-}
-
-// maxTableUpdated reports the newest time_updated present in one table.
-func maxTableUpdated(ctx context.Context, db *sql.DB, tables map[string]map[string]bool, name string) (int64, bool) {
-	cols, ok := tables[name]
-	if !ok || !cols["time_updated"] {
-		return 0, false
-	}
-	var v sql.NullInt64
-	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(time_updated),0) FROM "+quoteIdent(name)).Scan(&v); err != nil {
-		return 0, false
-	}
-	return v.Int64, true
-}
-
-// readMessages walks both message generations, each from its own persisted
-// watermark and advancing only that watermark.
-func readMessages(ctx context.Context, db *sql.DB, tables map[string]map[string]bool, acc *accumulator, sessions map[string]sessionInfo, state *dbState) {
-	queries := []struct {
-		table, filter, kindExpr string
-		wm                      *tableWatermark
-	}{
-		{"message", "json_valid(data) AND json_extract(data,'$.role')='assistant' AND json_extract(data,'$.tokens') IS NOT NULL", "''", &state.V1},
-		// The v2 table also stores the compaction requests themselves
-		// (type 'compaction'). Their usage is a real request and must stay in the
-		// ledger; the row additionally marks a context replacement point. Rows
-		// still being written ('running') carry no tokens and are skipped.
-		{"session_message", "json_valid(data) AND type IN ('assistant','compaction') AND json_extract(data,'$.tokens') IS NOT NULL", "type", &state.V2},
-	}
-	for _, q := range queries {
-		cols, ok := tables[q.table]
-		if !ok {
-			continue
-		}
-		complete := true
-		for _, c := range []string{"id", "session_id", "data", "time_updated"} {
-			if !cols[c] {
-				complete = false
-				break
-			}
-		}
-		if !complete {
-			continue
-		}
-		sqlText := "SELECT id, session_id, data, time_updated, " + q.kindExpr + " FROM " + quoteIdent(q.table) +
-			" WHERE " + q.filter +
-			" AND (time_updated > ? OR (time_updated = ? AND id > ?))" +
-			" ORDER BY time_updated, id"
-		rows, err := db.QueryContext(ctx, sqlText, q.wm.Updated, q.wm.Updated, q.wm.ID)
-		if err != nil {
-			continue
-		}
-		for rows.Next() {
-			var (
-				id, sid, data, kind string
-				updated             int64
-			)
-			if err := rows.Scan(&id, &sid, &data, &updated, &kind); err != nil {
-				continue
-			}
-			if id == "" {
-				continue
-			}
-			var payload messagePayload
-			if err := json.Unmarshal([]byte(data), &payload); err != nil {
-				continue
-			}
-			info := sessions[sid]
-			acc.emit("opencode:"+id, payload, sid, info.ParentID, firstNonEmpty(info.Directory, payload.Path.Root), updated, kind == "compaction")
-			if updated > q.wm.Updated || (updated == q.wm.Updated && id > q.wm.ID) {
-				q.wm.Updated, q.wm.ID = updated, id
-			}
-		}
-		rows.Close()
-	}
+	return acc.Batch(sqlitecore.Next(sig, fp, string(stateJSON))), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -689,40 +472,72 @@ type legacyFile struct {
 	Version   string `json:"version"`
 }
 
+// decodeLegacy projects one legacy storage document onto legacyFile. The
+// document is flat, so the message fields and the session fields sit side by
+// side and one wrong-typed value used to cost the whole file — the tokens of a
+// message, or the title and directory of a session — while the file cursor
+// advanced past it. sqlitecore.Decode already projects the message fields
+// tolerantly (they are the same MessageV2.Info shape, minus the wrapper), and
+// the session-only fields beside them are read individually for the same reason.
+// The document only has to be a JSON object to be read at all.
+func decodeLegacy(raw []byte) (legacyFile, bool) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return legacyFile{}, false
+	}
+	payload, _ := sqlitecore.Decode(raw)
+	file := legacyFile{messagePayload: payload}
+	legacyString(fields, "directory", &file.Directory)
+	legacyString(fields, "parentID", &file.ParentID)
+	legacyString(fields, "title", &file.Title)
+	legacyString(fields, "projectID", &file.ProjectID)
+	legacyString(fields, "version", &file.Version)
+	return file, true
+}
+
+// legacyString reads one of the session-only fields of a legacy document,
+// ignoring a value that does not fit: these fields have no usage to lose, so an
+// unexpected type costs the field and nothing else.
+func legacyString(fields map[string]json.RawMessage, key string, dst *string) {
+	if value, ok := fields[key]; ok {
+		_ = json.Unmarshal(value, dst)
+	}
+}
+
 func (p *Parser) parseLegacyJSON(ctx context.Context, src harness.Source, cur harness.Cursor) (harness.Batch, error) {
-	st, err := os.Stat(src.Path)
+	sig, err := sqlitecore.Stat(src.Path)
 	if err != nil {
 		return harness.Batch{Next: cur}, nil
 	}
-	fp, err := fingerprint(src.Path)
+	fp, err := sqlitecore.Fingerprint(src.Path)
 	if err != nil {
 		return harness.Batch{Next: cur}, nil
 	}
-	next := cursorFor(st, fp, st.Size(), "")
-	if cur.Fingerprint != "" && cur.Fingerprint == fp && cur.Size == st.Size() && cur.ModTime.Equal(st.ModTime()) {
+	next := sqlitecore.Next(sig, fp, "")
+	if sqlitecore.Unchanged(cur, sig, fp) {
 		return harness.Batch{Next: cur}, nil
 	}
 	raw, err := os.ReadFile(src.Path)
 	if err != nil {
 		return harness.Batch{Next: next}, nil
 	}
-	var file legacyFile
-	if err := json.Unmarshal(raw, &file); err != nil {
+	file, ok := decodeLegacy(raw)
+	if !ok {
 		return harness.Batch{Next: next}, nil
 	}
-	acc := newAccumulator()
+	acc := sqlitecore.NewAccumulator(profile)
 	stem := strings.TrimSuffix(filepath.Base(src.Path), filepath.Ext(src.Path))
 	if file.Role == "" {
 		// Session info file: <projectID>/<sessionID>.json
-		acc.session(sessionInfo{
-			ID:        firstNonEmpty(file.ID, stem),
+		acc.Session(sqlitecore.Session{
+			ID:        sqlitecore.FirstNonEmpty(file.ID, stem),
 			ParentID:  file.ParentID,
 			Directory: file.Directory,
 			Title:     file.Title,
-			Created:   int64Of(file.Time.Created),
-			Updated:   int64Of(file.Time.Updated),
+			Created:   file.Time.Created.Int64(),
+			Updated:   file.Time.Updated.Int64(),
 		})
-		return acc.batch(next), nil
+		return acc.Batch(next), nil
 	}
 	// Message file. As in the sqlite generation only assistant messages carry
 	// usage; a file without a complete usage payload is a partial write and is
@@ -730,416 +545,26 @@ func (p *Parser) parseLegacyJSON(ctx context.Context, src harness.Source, cur ha
 	if file.Role != "assistant" || file.Tokens == nil || file.Tokens.Cache == nil || file.Time.Created == nil {
 		return harness.Batch{Next: next}, nil
 	}
-	id := firstNonEmpty(file.ID, stem)
-	sid := firstNonEmpty(file.SessionID, file.SnakeSessionID)
+	id := sqlitecore.FirstNonEmpty(file.ID, stem)
+	sid := sqlitecore.FirstNonEmpty(file.SessionID, file.SnakeSessionID)
 	if sid == "" {
 		// <root>/storage/message/<sessionID>/<messageID>.json
 		if parent := filepath.Base(filepath.Dir(src.Path)); parent != "" && parent != "." {
 			sid = parent
 		}
 	}
-	acc.emit("opencode:"+id, file.messagePayload, sid, "", file.Path.Root, 0, false)
-	return acc.batch(next), nil
+	acc.Emit(id, sid, file.messagePayload, sqlitecore.Session{}, sig.Mod.UnixMilli(), false)
+	return acc.Batch(next), nil
 }
 
 // ---------------------------------------------------------------------------
 // payload decoding
 // ---------------------------------------------------------------------------
 
-// messagePayload is the usage-relevant subset of opencode's MessageV2.Info.
-type messagePayload struct {
-	ID             string          `json:"id"`
-	SessionID      string          `json:"sessionID"`
-	SnakeSessionID string          `json:"session_id"`
-	Role           string          `json:"role"`
-	ModelID        string          `json:"modelID"`
-	ProviderID     string          `json:"providerID"`
-	Model          modelRef        `json:"model"`
-	Cost           *float64        `json:"cost"`
-	Tokens         *tokenPayload   `json:"tokens"`
-	Time           messageTime     `json:"time"`
-	Path           messagePath     `json:"path"`
-	Agent          string          `json:"agent"`
-	Mode           string          `json:"mode"`
-	Variant        string          `json:"variant"`
-	Extra          json.RawMessage `json:"-"`
-}
-
-type modelRef struct {
-	ID         string `json:"id"`
-	ProviderID string `json:"providerID"`
-}
-
-type messageTime struct {
-	Created   *num `json:"created"`
-	Completed *num `json:"completed"`
-	Updated   *num `json:"updated"`
-}
-
-type messagePath struct {
-	Root string `json:"root"`
-	Cwd  string `json:"cwd"`
-}
-
-type tokenPayload struct {
-	Input     num         `json:"input"`
-	Output    num         `json:"output"`
-	Reasoning *num        `json:"reasoning"`
-	Cache     *cacheUsage `json:"cache"`
-}
-
-type cacheUsage struct {
-	Read  *num `json:"read"`
-	Write *num `json:"write"`
-}
-
-// classes maps opencode's token classes onto model.Tokens. opencode's `input`
-// excludes cached tokens, so no class is subtracted here.
-func (t *tokenPayload) classes() model.Tokens {
-	tk := model.Tokens{
-		Input:  clampNum(t.Input),
-		Output: clampNum(t.Output),
-	}
-	if t.Reasoning != nil {
-		tk.Reasoning = clampNum(*t.Reasoning)
-	}
-	if t.Cache != nil {
-		if t.Cache.Read != nil {
-			tk.CacheRead = clampNum(*t.Cache.Read)
-		}
-		if t.Cache.Write != nil {
-			tk.CacheWrite = clampNum(*t.Cache.Write)
-		}
-	}
-	return tk
-}
-
-// ---------------------------------------------------------------------------
-// accumulator
-// ---------------------------------------------------------------------------
-
-type accumulator struct {
-	evs   map[string]model.UsageEvent
-	order []string
-	metas map[string]model.SessionMeta
-	mord  []string
-	// marks is the per-session compaction boundary state. For sqlite sources it
-	// is the same map the cursor state holds, so a boundary found in one
-	// incremental batch survives into the next.
-	marks map[string]compactMark
-	// compactions holds the dedup keys of compaction rows: those rows are
-	// emitted like any other request but never carry the boundary themselves.
-	compactions map[string]bool
-}
-
-func newAccumulator() *accumulator {
-	return &accumulator{
-		evs:         map[string]model.UsageEvent{},
-		metas:       map[string]model.SessionMeta{},
-		marks:       map[string]compactMark{},
-		compactions: map[string]bool{},
-	}
-}
-
-// useCompactionState attaches the cursor's compact state to the accumulator so
-// mutations are persisted with the next cursor.
-func (a *accumulator) useCompactionState(state *dbState) {
-	if state.Compact == nil {
-		state.Compact = map[string]compactMark{}
-	}
-	a.marks = state.Compact
-}
-
-func (a *accumulator) emit(dedup string, p messagePayload, sid, parent, project string, fallbackUpdatedMS int64, compaction bool) {
-	if dedup == "" || p.Tokens == nil {
-		return
-	}
-	tk := p.Tokens.classes()
-	cost := reportedCost(p.Cost)
-	if tk.IsZero() && cost == nil {
-		return
-	}
-	ts := payloadTime(p)
-	if ts.IsZero() {
-		ts = epochMS(fallbackUpdatedMS)
-	}
-	if compaction {
-		a.markCompaction(sid, ts)
-		a.compactions[dedup] = true
-	}
-	ev := model.UsageEvent{
-		Harness:     model.OpenCode,
-		DedupKey:    dedup,
-		SessionID:   sid,
-		ParentID:    parent,
-		ProjectPath: project,
-		Timestamp:   ts,
-		Model:       firstNonEmpty(p.ModelID, p.Model.ID),
-		Provider:    firstNonEmpty(p.ProviderID, p.Model.ProviderID),
-		Tokens:      tk,
-		CostUSD:     cost,
-	}
-	a.add(ev)
-}
-
-// markCompaction records that the session's context was replaced at ts. Only the
-// newest mark per session is kept: older compactions are already covered by it.
-func (a *accumulator) markCompaction(sid string, ts time.Time) {
-	if sid == "" || ts.IsZero() {
-		return
-	}
-	if a.marks == nil {
-		a.marks = map[string]compactMark{}
-	}
-	m := a.marks[sid]
-	if at := ts.UnixMilli(); at > m.At {
-		m.At = at
-	}
-	a.marks[sid] = m
-}
-
-// applyCompactionBoundaries marks the first request at or after a session's
-// newest compaction with model.BoundaryCompact, once per compaction row. It runs
-// on the sorted batch so the mark lands on the request that actually follows the
-// compaction, and it reads the cursor's state so a compaction seen in an earlier
-// incremental batch still marks the next batch's first request.
-func (a *accumulator) applyCompactionBoundaries(events []model.UsageEvent) {
-	if len(a.marks) == 0 {
-		return
-	}
-	for i := range events {
-		m, ok := a.marks[events[i].SessionID]
-		if !ok || m.At == 0 || m.Done == m.At {
-			continue
-		}
-		if a.compactions[events[i].DedupKey] {
-			continue
-		}
-		if events[i].Timestamp.UnixMilli() < m.At {
-			continue
-		}
-		events[i].Boundary = model.BoundaryCompact
-		m.Done = m.At
-		a.marks[events[i].SessionID] = m
-	}
-}
-
-func (a *accumulator) add(ev model.UsageEvent) {
-	if ev.DedupKey == "" {
-		return
-	}
-	if prev, ok := a.evs[ev.DedupKey]; ok {
-		prev.Tokens = maxTokens(prev.Tokens, ev.Tokens)
-		if ev.CostUSD != nil && (prev.CostUSD == nil || *ev.CostUSD > *prev.CostUSD) {
-			prev.CostUSD = ev.CostUSD
-		}
-		prev.SessionID = firstNonEmpty(prev.SessionID, ev.SessionID)
-		prev.ParentID = firstNonEmpty(prev.ParentID, ev.ParentID)
-		prev.ProjectPath = firstNonEmpty(prev.ProjectPath, ev.ProjectPath)
-		prev.Model = firstNonEmpty(prev.Model, ev.Model)
-		prev.Provider = firstNonEmpty(prev.Provider, ev.Provider)
-		if prev.Timestamp.IsZero() {
-			prev.Timestamp = ev.Timestamp
-		}
-		a.evs[ev.DedupKey] = prev
-		return
-	}
-	a.evs[ev.DedupKey] = ev
-	a.order = append(a.order, ev.DedupKey)
-}
-
-func (a *accumulator) session(info sessionInfo) {
-	if info.ID == "" {
-		return
-	}
-	started := epochMS(info.Created)
-	updated := epochMS(info.Updated)
-	if updated.Before(started) {
-		updated = started
-	}
-	meta := model.SessionMeta{
-		Harness:   model.OpenCode,
-		SessionID: info.ID,
-		ParentID:  info.ParentID,
-		Title:     harness.Title(info.Title),
-		Project:   info.Directory,
-		StartedAt: started,
-		UpdatedAt: updated,
-	}
-	if prev, ok := a.metas[info.ID]; ok {
-		meta = mergeMeta(prev, meta)
-	} else {
-		a.mord = append(a.mord, info.ID)
-	}
-	a.metas[info.ID] = meta
-}
-
-func (a *accumulator) batch(next harness.Cursor) harness.Batch {
-	events := make([]model.UsageEvent, 0, len(a.order))
-	for _, k := range a.order {
-		events = append(events, a.evs[k])
-	}
-	sort.SliceStable(events, func(i, j int) bool {
-		if !events[i].Timestamp.Equal(events[j].Timestamp) {
-			return events[i].Timestamp.Before(events[j].Timestamp)
-		}
-		return events[i].DedupKey < events[j].DedupKey
-	})
-	a.applyCompactionBoundaries(events)
-	metas := make([]model.SessionMeta, 0, len(a.mord))
-	for _, id := range a.mord {
-		metas = append(metas, a.metas[id])
-	}
-	sort.SliceStable(metas, func(i, j int) bool { return metas[i].SessionID < metas[j].SessionID })
-	return harness.Batch{Events: events, Sessions: metas, Next: next}
-}
-
-func mergeMeta(a, b model.SessionMeta) model.SessionMeta {
-	a.ParentID = firstNonEmpty(a.ParentID, b.ParentID)
-	a.Title = firstNonEmpty(a.Title, b.Title)
-	a.Project = firstNonEmpty(a.Project, b.Project)
-	if a.StartedAt.IsZero() || (!b.StartedAt.IsZero() && b.StartedAt.Before(a.StartedAt)) {
-		a.StartedAt = b.StartedAt
-	}
-	if b.UpdatedAt.After(a.UpdatedAt) {
-		a.UpdatedAt = b.UpdatedAt
-	}
-	return a
-}
-
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-// num decodes JSON numbers that may arrive as integers, floats, quoted strings
-// or null.
-type num int64
-
-func (n *num) UnmarshalJSON(b []byte) error {
-	s := strings.TrimSpace(string(b))
-	if s == "" || s == "null" {
-		*n = 0
-		return nil
-	}
-	if len(s) > 1 && s[0] == '"' && s[len(s)-1] == '"' {
-		s = strings.TrimSpace(s[1 : len(s)-1])
-		if s == "" {
-			*n = 0
-			return nil
-		}
-	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return fmt.Errorf("opencode: cannot decode %q as a number", string(b))
-	}
-	*n = num(f)
-	return nil
-}
-
-func clampNum(n num) int64 {
-	if n < 0 {
-		return 0
-	}
-	return int64(n)
-}
-
-func int64Of(n *num) int64 {
-	if n == nil {
-		return 0
-	}
-	return int64(*n)
-}
-
-// payloadTime returns the message's completion timestamp (UTC, zero when the
-// log carries none).
-func payloadTime(p messagePayload) time.Time {
-	if p.Time.Created != nil {
-		return epochMS(int64(*p.Time.Created))
-	}
-	return time.Time{}
-}
-
-// epochMS normalises a unix timestamp expressed in milliseconds or seconds.
-func epochMS(v int64) time.Time {
-	if v <= 0 {
-		return time.Time{}
-	}
-	if v < 1e12 {
-		v *= 1000
-	}
-	return time.UnixMilli(v).UTC()
-}
-
-// reportedCost keeps only a finite, positive cost: opencode writes 0 for
-// "unknown", and a provider-reported cost wins over any estimate.
-func reportedCost(c *float64) *float64 {
-	if c == nil {
-		return nil
-	}
-	v := *c
-	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
-		return nil
-	}
-	return &v
-}
-
-func maxTokens(a, b model.Tokens) model.Tokens {
-	if b.Input > a.Input {
-		a.Input = b.Input
-	}
-	if b.Output > a.Output {
-		a.Output = b.Output
-	}
-	if b.CacheRead > a.CacheRead {
-		a.CacheRead = b.CacheRead
-	}
-	if b.CacheWrite > a.CacheWrite {
-		a.CacheWrite = b.CacheWrite
-	}
-	if b.Reasoning > a.Reasoning {
-		a.Reasoning = b.Reasoning
-	}
-	return a
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func cursorFor(st os.FileInfo, fp string, offset int64, extra string) harness.Cursor {
-	return harness.Cursor{
-		Offset:      offset,
-		Size:        st.Size(),
-		ModTime:     st.ModTime(),
-		Fingerprint: fp,
-		Extra:       extra,
-	}
-}
-
-// fingerprint returns the sha1 of the first fingerprintBytes of path.
-func fingerprint(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha1.New()
-	if _, err := io.CopyN(h, f, fingerprintBytes); err != nil && !errors.Is(err, io.EOF) {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
+// Usage payloads are decoded by sqlitecore.Payload, which models the
+// MessageV2.Info document OpenCode stores in a message's `data` column. These
+// aliases are the names this package has always used for it.
+type (
+	messagePayload = sqlitecore.Payload
+	tokenPayload   = sqlitecore.TokenPayload
+)

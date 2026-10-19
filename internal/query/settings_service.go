@@ -3,11 +3,8 @@ package query
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/zzstar101/mytoken/internal/pricing"
-	"github.com/zzstar101/mytoken/internal/relay"
-	"github.com/zzstar101/mytoken/internal/source"
 	"github.com/zzstar101/mytoken/internal/store"
 	"math"
 	"sort"
@@ -17,22 +14,15 @@ import (
 )
 
 type settingsService struct {
-	st      *store.Store
-	p       *pricing.Pricer
-	mu      sync.Mutex
-	sources []source.Source
+	st *store.Store
+	p  *pricing.Pricer
+	mu sync.Mutex
 }
 
 var _ Settings = (*settingsService)(nil)
 
 func NewSettings(st *store.Store, p *pricing.Pricer) Settings {
-	return NewSettingsWithSources(st, p, source.NewCCSwitch(source.CCSwitchPath()))
-}
-
-// NewSettingsWithSources is NewSettings with explicit provider sources; price
-// import uses whichever source implements source.Pricing.
-func NewSettingsWithSources(st *store.Store, p *pricing.Pricer, sources ...source.Source) Settings {
-	return &settingsService{st: st, p: p, sources: sources}
+	return &settingsService{st: st, p: p}
 }
 func readSetting[T any](ctx context.Context, st *store.Store, key string) ([]T, error) {
 	raw, err := st.Setting(ctx, key)
@@ -51,7 +41,7 @@ func (s *settingsService) ModelAliases(ctx context.Context) ([]ModelAlias, error
 func pricingRules(rules []PriceRule) []pricing.Rule {
 	out := make([]pricing.Rule, len(rules))
 	for i, r := range rules {
-		out[i] = pricing.Rule{Provider: r.Provider, Model: r.Model, Multiplier: r.Multiplier, Input: r.Input, Output: r.Output, CacheRead: r.CacheRead, CacheWrite: r.CacheWrite, Source: r.Source, From: r.From}
+		out[i] = pricing.Rule{Provider: r.Provider, Model: r.Model, Input: r.Input, Output: r.Output, CacheRead: r.CacheRead, CacheWrite: r.CacheWrite, Source: r.Source, From: r.From}
 	}
 	return out
 }
@@ -60,14 +50,7 @@ func pricingRules(rules []PriceRule) []pricing.Rule {
 func fromPricingRules(rules []pricing.Rule) []PriceRule {
 	out := make([]PriceRule, len(rules))
 	for i, r := range rules {
-		out[i] = PriceRule{Provider: r.Provider, Model: r.Model, Multiplier: r.Multiplier, Input: r.Input, Output: r.Output, CacheRead: r.CacheRead, CacheWrite: r.CacheWrite, Source: r.Source, From: r.From}
-	}
-	return out
-}
-func aliasMap(aliases []ModelAlias) map[[2]string]string {
-	out := map[[2]string]string{}
-	for _, a := range aliases {
-		out[[2]string{a.Provider, a.From}] = a.To
+		out[i] = PriceRule{Provider: r.Provider, Model: r.Model, Input: r.Input, Output: r.Output, CacheRead: r.CacheRead, CacheWrite: r.CacheWrite, Source: r.Source, From: r.From}
 	}
 	return out
 }
@@ -94,46 +77,6 @@ func mustJSON(v any) string {
 }
 func validRate(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 }
 
-// relayRulePrefix marks rules that came from a gateway's own ratios
-// (docs/RELAY.md §5.5). They sit between user rules and cc-switch imports.
-const relayRulePrefix = "relay:"
-
-// RelayRules lists the gateway-derived rules, most recently effective first.
-func (s *settingsService) RelayRules(ctx context.Context) ([]PriceRule, error) {
-	rules, err := s.PriceRules(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := []PriceRule{}
-	for _, r := range rules {
-		if strings.HasPrefix(r.Source, relayRulePrefix) {
-			out = append(out, r)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].From.After(out[j].From) })
-	return out, nil
-}
-
-// AppendRelayRules merges gateway rules into the stored set. A stored rule for
-// the same selector and source is kept when the new prices agree within 1%, so
-// a ratio that jitters does not rewrite the table (docs/RELAY.md §5.5).
-func (s *settingsService) AppendRelayRules(ctx context.Context, rules []pricing.Rule) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	old, err := s.PriceRules(ctx)
-	if err != nil {
-		return err
-	}
-	merged := fromPricingRules(relay.MergeRelayRules(pricingRules(old), rules))
-	// The merge only rewrites rules a gateway reported; anything else keeps
-	// exactly what the user or cc-switch import stored. A sync that changes
-	// nothing must not re-price the history.
-	if a, b := mustJSON(old), mustJSON(merged); a != "" && a == b {
-		return nil
-	}
-	return s.setPriceRules(ctx, merged)
-}
-
 func (s *settingsService) SetPriceRules(ctx context.Context, rules []PriceRule) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,11 +98,8 @@ func (s *settingsService) setPriceRules(ctx context.Context, rules []PriceRule) 
 		if r.Provider == "" && r.Model == "" {
 			return fmt.Errorf("price rule requires provider or model")
 		}
-		if r.Source != "user" && r.Source != "cc-switch" && !strings.HasPrefix(r.Source, relayRulePrefix) {
+		if r.Source != "user" && r.Source != "cc-switch" {
 			return fmt.Errorf("invalid price source %q", r.Source)
-		}
-		if !validRate(r.Multiplier) {
-			return fmt.Errorf("invalid multiplier")
 		}
 		for _, v := range []*float64{r.Input, r.Output, r.CacheRead, r.CacheWrite} {
 			if v != nil && !validRate(*v) {
@@ -230,48 +170,9 @@ func (s *settingsService) SetModelAliases(ctx context.Context, aliases []ModelAl
 	}
 	return err
 }
-func (s *settingsService) ImportCCSwitch(ctx context.Context) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var rules []PriceRule
-	found := false
-	for _, src := range s.sources {
-		p, ok := src.(source.Pricing)
-		if !ok {
-			continue
-		}
-		found = true
-		imported, err := p.PriceRules(ctx)
-		if err != nil {
-			return 0, err
-		}
-		rules = append(rules, fromPricingRules(imported)...)
-	}
-	if !found {
-		return 0, errors.New("no provider source can import prices")
-	}
-	old, err := s.PriceRules(ctx)
-	if err != nil {
-		return 0, err
-	}
-	for _, r := range old {
-		if r.Source != "cc-switch" {
-			rules = append(rules, r)
-		}
-	}
-	count := 0
-	for _, r := range rules {
-		if r.Source == "cc-switch" {
-			count++
-		}
-	}
-	if err = s.setPriceRules(ctx, rules); err != nil {
-		return 0, err
-	}
-	return count, nil
-}
+
 func (s *settingsService) Providers(ctx context.Context) ([]string, error) {
-	rows, err := s.st.DB().QueryContext(ctx, "SELECT DISTINCT resolved_provider FROM events WHERE resolved_provider!='' ORDER BY resolved_provider")
+	rows, err := s.st.ReadDB().QueryContext(ctx, "SELECT DISTINCT resolved_provider FROM events WHERE resolved_provider!='' ORDER BY resolved_provider")
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +194,7 @@ func (s *settingsService) SearchCatalog(ctx context.Context, q string, limit int
 	return s.p.SearchCatalog(q, limit), nil
 }
 func (s *settingsService) UnpricedModels(ctx context.Context) ([]UnpricedModel, error) {
-	rows, err := s.st.DB().QueryContext(ctx, "SELECT model,resolved_provider,count(*),sum(input+output+cache_read+cache_write+reasoning) FROM events WHERE priced=0 GROUP BY model,resolved_provider")
+	rows, err := s.st.ReadDB().QueryContext(ctx, "SELECT model,resolved_provider,count(*),sum(input+output+cache_read+cache_write+reasoning) FROM events WHERE priced=0 GROUP BY model,resolved_provider")
 	if err != nil {
 		return nil, err
 	}

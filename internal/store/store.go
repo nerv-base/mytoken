@@ -46,7 +46,18 @@ type Resolution struct {
 	Priced   bool
 }
 type Store struct {
-	db            *sql.DB
+	db *sql.DB
+	// rdb is a separate read-only pool over the same file. Every query path that
+	// is allowed to run concurrently with a writer uses it, so a GUI refresh can
+	// read a WAL snapshot while a scan commit is in flight instead of queueing
+	// behind the single writer connection. It is opened on first use, so a store
+	// that only scans never holds a second connection (and its WAL read mark);
+	// it stays nil for :memory: databases, where a second pool would be a
+	// different database entirely.
+	rdb           *sql.DB
+	rdbOnce       sync.Once
+	memory        bool
+	path          string
 	writer        sync.Mutex
 	mu            sync.Mutex
 	subscribers   map[chan struct{}]struct{}
@@ -81,7 +92,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	st := &Store{db: db, subscribers: make(map[chan struct{}]struct{})}
+	st := &Store{db: db, path: path, memory: path == ":memory:", subscribers: make(map[chan struct{}]struct{})}
 	// Keep bulk-index pages and temporary journals in memory without changing
 	// WAL durability. A negative cache_size is a KiB budget, allocated on demand.
 	//
@@ -110,6 +121,46 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`)
 	return st, nil
 }
 func (s *Store) DB() *sql.DB { return s.db }
+
+// ReadDB is the connection pool for read queries that must not queue behind the
+// writer. It is a separate read-only (query_only) pool over the same WAL
+// database, with several connections, so a UI refresh and a session detail read
+// can overlap a scan commit. For :memory: databases it is the single writer
+// connection, because a second pool would see a different, empty database.
+func (s *Store) ReadDB() *sql.DB {
+	s.rdbOnce.Do(func() {
+		if s.memory || s.readOnly || s.db == nil {
+			return
+		}
+		path := s.path
+		if path == "" {
+			return
+		}
+		rdb, err := sql.Open("sqlite", sqlitedsn.URI(path, "_pragma=busy_timeout(5000)&_pragma=query_only(1)&_pragma=temp_store(MEMORY)&_pragma=cache_size(-16384)"))
+		if err != nil {
+			return
+		}
+		// A handful of connections is enough for the detail and list queries
+		// the UI issues; each one holds its own WAL read snapshot.
+		rdb.SetMaxOpenConns(4)
+		rdb.SetMaxIdleConns(4)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err = rdb.PingContext(ctx)
+		cancel()
+		if err != nil {
+			// Falling back to the writer keeps the store usable (for example on
+			// a filesystem where a second read-only connection is refused); it
+			// only loses read/write concurrency.
+			rdb.Close()
+			return
+		}
+		s.rdb = rdb
+	})
+	if s.rdb != nil {
+		return s.rdb
+	}
+	return s.db
+}
 func (s *Store) Close() error {
 	s.mu.Lock()
 	s.closed = true
@@ -120,7 +171,11 @@ func (s *Store) Close() error {
 	s.mu.Unlock()
 	// Closing the last writable connection checkpoints the WAL and unlinks the
 	// sidecars. A read-only handle never depends on this process owning them, so
-	// there is nothing to release here.
+	// there is nothing to release here. The reader pool goes first so no open
+	// read transaction can hold a WAL read mark past the writer's close.
+	if s.rdb != nil {
+		s.rdb.Close()
+	}
 	return s.db.Close()
 }
 func (s *Store) Exec(ctx context.Context, q string, args ...any) error {
@@ -187,7 +242,20 @@ func stamp(t time.Time) int64 {
 	return t.UnixNano()
 }
 
-const sessionSQL = `INSERT INTO sessions(harness,instance_id,session_id,parent_id,title,project,started_at,updated_at,raw_project) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(harness,instance_id,session_id) DO UPDATE SET parent_id=CASE WHEN excluded.parent_id!='' THEN excluded.parent_id ELSE sessions.parent_id END,title=CASE WHEN excluded.title!='' THEN excluded.title ELSE sessions.title END,project=CASE WHEN excluded.project!='' THEN excluded.project ELSE sessions.project END,raw_project=CASE WHEN excluded.raw_project!='' THEN excluded.raw_project ELSE sessions.raw_project END,started_at=CASE WHEN sessions.started_at=0 THEN excluded.started_at WHEN excluded.started_at=0 THEN sessions.started_at ELSE min(sessions.started_at,excluded.started_at) END,updated_at=max(sessions.updated_at,excluded.updated_at)`
+// sessionSQL upserts a session. The WHERE clause skips a row the upsert would
+// leave unchanged, so RowsAffected reports a visible change and a re-read of an
+// untouched source does not wake readers.
+const sessionSQL = `INSERT INTO sessions(harness,instance_id,session_id,parent_id,title,project,started_at,updated_at,raw_project) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(harness,instance_id,session_id) DO UPDATE SET parent_id=` + sessParent + `,title=` + sessTitle + `,project=` + sessProject + `,raw_project=` + sessRaw + `,started_at=` + sessStarted + `,updated_at=` + sessUpdated +
+	` WHERE (sessions.parent_id,sessions.title,sessions.project,sessions.raw_project,sessions.started_at,sessions.updated_at) IS NOT (` + sessParent + `,` + sessTitle + `,` + sessProject + `,` + sessRaw + `,` + sessStarted + `,` + sessUpdated + `)`
+
+const (
+	sessParent  = `CASE WHEN excluded.parent_id!='' THEN excluded.parent_id ELSE sessions.parent_id END`
+	sessTitle   = `CASE WHEN excluded.title!='' THEN excluded.title ELSE sessions.title END`
+	sessProject = `CASE WHEN excluded.project!='' THEN excluded.project ELSE sessions.project END`
+	sessRaw     = `CASE WHEN excluded.raw_project!='' THEN excluded.raw_project ELSE sessions.raw_project END`
+	sessStarted = `CASE WHEN sessions.started_at=0 THEN excluded.started_at WHEN excluded.started_at=0 THEN sessions.started_at ELSE min(sessions.started_at,excluded.started_at) END`
+	sessUpdated = `max(sessions.updated_at,excluded.updated_at)`
+)
 
 // Write couples a parsed source with its resolutions and checkpoint.
 //
@@ -257,40 +325,19 @@ func (s *Store) commitMany(ctx context.Context, writes []Write, report bool, rec
 		}
 		return stmt, err
 	}
-	touched := map[string][3]string{}
+	// changed counts the event and session rows the writes actually altered.
+	var changed int64
 	for i, w := range writes {
-		instance := normalizeInstance(w.InstanceID)
 		if len(w.Batch.Events) > 0 && len(w.Resolutions) == 0 {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM settings WHERE key='pricing_fingerprint'"); err != nil {
 				return CommitOutcome{}, err
-			}
-		}
-		for _, e := range w.Batch.Events {
-			h := e.Harness
-			if h == "" {
-				h = w.Harness
-			}
-			if e.SessionID != "" {
-				touched[string(h)+"\x00"+instance+"\x00"+e.SessionID] = [3]string{string(h), instance, e.SessionID}
-			}
-			if e.ParentID != "" {
-				touched[string(h)+"\x00"+instance+"\x00"+e.ParentID] = [3]string{string(h), instance, e.ParentID}
-			}
-		}
-		for _, m := range w.Batch.Sessions {
-			h := m.Harness
-			if h == "" {
-				h = w.Harness
-			}
-			if m.SessionID != "" {
-				touched[string(h)+"\x00"+instance+"\x00"+m.SessionID] = [3]string{string(h), instance, m.SessionID}
 			}
 		}
 		var stats *commitCollector
 		if report {
 			stats = &commitCollector{recent: recent}
 		}
-		if err := s.commit(ctx, w.Harness, w.InstanceID, w.Path, w.Batch, w.Resolutions, prepare, stats); err != nil {
+		if err := s.commit(ctx, w.Harness, w.InstanceID, w.Path, w.Batch, w.Resolutions, prepare, stats, &changed); err != nil {
 			return CommitOutcome{}, err
 		}
 		if stats != nil {
@@ -301,25 +348,27 @@ func (s *Store) commitMany(ctx context.Context, writes []Write, report bool, rec
 			}
 		}
 	}
-	// Re-Analyze only the touched sessions' whole chains, patching just the events
-	// whose verdict changed, before the commit becomes visible.
-	if err := s.recomputeSessions(ctx, tx, touched); err != nil {
-		return CommitOutcome{}, err
-	}
 	if err := tx.Commit(); err != nil {
 		return CommitOutcome{}, err
 	}
-	s.notify()
+	// Readers see usage and sessions, not cursors: a write that only moved a
+	// cursor or re-read rows it already held (a SQLite source whose file was
+	// touched without new requests) must not wake every subscriber into a
+	// full refresh. Subscribe coalesces
+	// the rest, so a burst of small commits still costs one refresh.
+	if changed > 0 {
+		s.notify()
+	}
 	return outcome, nil
 }
-func (s *Store) commit(ctx context.Context, h model.Harness, instance, path string, b harness.Batch, res []Resolution, prepare func(string) (*sql.Stmt, error), stats *commitCollector) error {
+func (s *Store) commit(ctx context.Context, h model.Harness, instance, path string, b harness.Batch, res []Resolution, prepare func(string) (*sql.Stmt, error), stats *commitCollector, changed *int64) error {
 	if len(res) != 0 && len(res) != len(b.Events) {
 		return errors.New("resolution count differs from event count")
 	}
 	instance = normalizeInstance(instance)
 	var err error
 
-	const row = `(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	const row = `(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 	const suffix = ` ON CONFLICT(harness,instance_id,dedup_key) DO UPDATE SET dimension_id=excluded.dimension_id,timestamp=excluded.timestamp,input=excluded.input,output=excluded.output,cache_read=excluded.cache_read,cache_write=excluded.cache_write,reasoning=excluded.reasoning,log_cost=excluded.log_cost,cost=excluded.cost,priced=excluded.priced,request_id=coalesce(nullif(excluded.request_id,''),event_data.request_id),boundary=coalesce(nullif(excluded.boundary,''),event_data.boundary),bill_amount=coalesce(excluded.bill_amount,event_data.bill_amount),bill_unit=CASE WHEN excluded.bill_amount IS NOT NULL THEN excluded.bill_unit ELSE event_data.bill_unit END WHERE (event_data.dimension_id,event_data.timestamp,event_data.input,event_data.output,event_data.cache_read,event_data.cache_write,event_data.reasoning,event_data.log_cost,event_data.cost,event_data.priced,event_data.request_id,event_data.boundary,event_data.bill_amount,event_data.bill_unit) IS NOT (excluded.dimension_id,excluded.timestamp,excluded.input,excluded.output,excluded.cache_read,excluded.cache_write,excluded.reasoning,excluded.log_cost,excluded.cost,excluded.priced,coalesce(nullif(excluded.request_id,''),event_data.request_id),coalesce(nullif(excluded.boundary,''),event_data.boundary),coalesce(excluded.bill_amount,event_data.bill_amount),CASE WHEN excluded.bill_amount IS NOT NULL THEN excluded.bill_unit ELSE event_data.bill_unit END) AND (SELECT old.session_id=new.session_id OR (old.parent_id!='' AND new.parent_id='') FROM event_dimensions old JOIN event_dimensions new ON new.id=excluded.dimension_id WHERE old.id=event_data.dimension_id)`
 	const batchSize = 128
 	var values []any
@@ -396,10 +445,15 @@ func (s *Store) commit(ctx context.Context, h model.Harness, instance, path stri
 				}
 			}
 		}
-		query := `INSERT INTO event_data(` + factColumns + `) VALUES ` + strings.TrimSuffix(strings.Repeat(row+",", len(values)/17), ",") + suffix
+		query := `INSERT INTO event_data(` + factColumns + `) VALUES ` + strings.TrimSuffix(strings.Repeat(row+",", len(values)/18), ",") + suffix
 		stmt, e := prepare(query)
 		if e == nil {
-			_, e = stmt.ExecContext(ctx, values...)
+			var r sql.Result
+			if r, e = stmt.ExecContext(ctx, values...); e == nil {
+				if n, err := r.RowsAffected(); err == nil {
+					*changed += n
+				}
+			}
 		}
 		values = values[:0]
 		chunkKeys = chunkKeys[:0]
@@ -439,7 +493,12 @@ func (s *Store) commit(ctx context.Context, h model.Harness, instance, path stri
 		if m.Harness == "" {
 			m.Harness = h
 		}
-		_, e := sessions.ExecContext(ctx, m.Harness, instance, m.SessionID, m.ParentID, harness.Title(m.Title), s.projects.resolve(m.Project), stamp(m.StartedAt), stamp(m.UpdatedAt), m.Project)
+		r, e := sessions.ExecContext(ctx, m.Harness, instance, m.SessionID, m.ParentID, harness.Title(m.Title), s.projects.resolve(m.Project), stamp(m.StartedAt), stamp(m.UpdatedAt), m.Project)
+		if e == nil {
+			if n, err := r.RowsAffected(); err == nil {
+				*changed += n
+			}
+		}
 		return e
 	}
 	meta := make(map[string]model.SessionMeta)
@@ -506,7 +565,7 @@ func (s *Store) commit(ctx context.Context, h model.Harness, instance, path stri
 			billAmount = e.Bill.Amount
 			billUnit = e.Bill.Unit
 		}
-		values = append(values, e.Harness, instance, e.DedupKey, id, stamp(e.Timestamp), e.Tokens.Input, e.Tokens.Output, e.Tokens.CacheRead, e.Tokens.CacheWrite, e.Tokens.Reasoning, e.CostUSD, r.Cost, r.Priced, e.RequestID, e.Boundary, billAmount, billUnit)
+		values = append(values, e.Harness, instance, e.DedupKey, id, stamp(e.Timestamp), e.Tokens.Input, e.Tokens.Output, e.Tokens.CacheRead, e.Tokens.CacheWrite, e.Tokens.CacheWrite1h, e.Tokens.Reasoning, e.CostUSD, r.Cost, r.Priced, e.RequestID, e.Boundary, billAmount, billUnit)
 		// The branch a log stated rides in the same transaction as its fact, so
 		// metadata and usage commit or roll back together.
 		if err = upsertBranch(string(e.Harness), instance, e.DedupKey, e.GitBranch); err != nil {
@@ -517,7 +576,7 @@ func (s *Store) commit(ctx context.Context, h model.Harness, instance, path stri
 			chunkOutput = append(chunkOutput, e.Tokens.Output)
 			chunkTime = append(chunkTime, e.Timestamp)
 		}
-		if len(values) == batchSize*17 {
+		if len(values) == batchSize*18 {
 			if err = flush(); err != nil {
 				return err
 			}

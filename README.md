@@ -19,28 +19,33 @@
 <p align="center"><b>English</b> · <a href="README.zh-CN.md">简体中文</a></p>
 <p align="center"><a href="#install">Install</a> · <a href="#screenshots">Screenshots</a> · <a href="#supported-harnesses">Harnesses</a> · <a href="docs/CLI.md">CLI</a> · <a href="docs/ROADMAP.md">Roadmap</a> · <a href="https://github.com/zzstar101/mytoken/releases/latest">Download</a></p>
 
-**Where did all your tokens go?** MyToken!!!!! reads the session logs your AI coding harnesses
-already write to disk, attributes every request to a session, provider and model, prices it, and
-shows you the result in a native desktop app — or as JSON from the command line.
+**What did your AI coding cost today, and how much plan quota is left?** MyToken!!!!! reads the
+session logs your AI coding tools already write to disk, prices every request at the official API
+list price, and shows today's and this month's spend, your Codex / Claude / Cursor plan quotas and
+what is running right now — in a native desktop app, a menu-bar panel, or the command line.
 
 Everything happens on your machine. No account, no telemetry, no uploads: by default the app
-makes two kinds of request — the price table download, and a daily update check on github.com
-(Settings turns it off). Relay-site reconciliation is opt-in per site, and a site is only ever
-contacted with the key you already gave that site.
+makes the price table download and a daily update check on github.com; plan quotas are fetched
+from a tool's own service only with the credentials that tool already stored. Nothing else is
+contacted.
 
-- **Twenty-eight harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
+- **Thirty-two harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
   Crush, Cline, Roo Code, Kilo Code, Claude Desktop, WorkBuddy, CodeBuddy, Hermes, Qwen Code, Kimi,
-  OpenClaude, Grok, OpenClaw, Droid, Goose, Forge, Amp, Kiro, Zed, Antigravity, Codebuff and Mux.
+  OpenClaude, Grok, OpenClaw, Droid, Goose, Forge, Amp, Kiro, Zed, Antigravity, Codebuff, Mux,
+  ZCode, MiniMax Code, MiMo Code and Step Code.
 - **Session × provider × model** — token classes kept apart (input, output, cache read, cache write,
   reasoning), with cache-hit rate, per-project and per-day breakdowns, and sub-agent trees.
-- **Attribution you can audit** — every provider is labelled with how it was determined: `log`,
-  `cc-switch`, `config-timeline`, `inferred` or `user-rule` (see
-  [Provider attribution](#provider-attribution)).
-- **Costs that match your bill** — models.dev prices with a LiteLLM fallback, plus per-provider
-  multipliers and per-model overrides for plans and credit packs.
-- **Tray-resident** — closing the window keeps scanning; the tray panel shows today's tokens and
-  cost, the last 24 hours, and the top models.
-- **CLI for scripts** — `mytoken stats --json` prints the same numbers the app shows.
+- **API-equivalent cost** — models.dev prices with a LiteLLM fallback, labelled as what the same
+  tokens would cost at list price. Add your own per-model prices when a plan or gateway differs;
+  there are no provider multipliers or inferred discounts.
+- **Spend first** — today's cost in big type, the month so far with a forecast, daily spend stacked
+  by tool, and rankings by cost. Token counts leave cache reads out of the headline number.
+- **Plan quotas** — Codex, Claude, Cursor, Copilot and GLM windows as rings, with reset times,
+  detected automatically.
+- **Menu bar** — today's spend (or spend per hour, cache hit rate, quota) beside the icon; the panel
+  lists sessions running now with their cost, $/hour and cache hit rate, and every quota.
+- **CLI for scripts** — `mytoken` prints today's and this month's cost; `mytoken daily` prints a
+  ccusage-style table with each cache class in its own column.
 - **Native, small, fast** — built with [MyGo](https://github.com/egoist/mygo)'s native UI package:
   no Electron, no WebView, no cgo. A full first scan of this machine's logs takes seconds.
 
@@ -48,15 +53,15 @@ contacted with the key you already gave that site.
 
 | Overview | Sessions |
 | --- | --- |
-| ![Overview: trends, heatmap, cache hit rate, harness split](docs/screenshots/overview.png) | ![Sessions: virtual list and the provider × model breakdown of one session](docs/screenshots/sessions.png) |
+| ![Overview: today's spend, sessions running now, this month vs last month with a forecast, plan quotas and credit balances](docs/screenshots/overview.png) | ![Sessions: virtual list, cumulative cost and every request of one session](docs/screenshots/sessions.png) |
 
-| Rankings | Tray panel |
+| Ranking | Menu bar panel |
 | --- | --- |
-| ![Rankings: providers and models](docs/screenshots/models.png) | ![Tray panel: today's tokens and cost, 24h bars, top models](docs/screenshots/tray.png) |
+| ![Ranking: a year of daily spend and cost by tool, model or provider](docs/screenshots/ranking.png) | ![Menu bar panel: today's spend, quotas and the sessions running now](docs/screenshots/tray.png) |
 
 | CLI | Settings |
 | --- | --- |
-| ![mytoken stats in a terminal](docs/screenshots/cli.png) | ![Settings: sources, attribution rules, prices and multipliers](docs/screenshots/settings.png) |
+| ![mytoken summary in a terminal](docs/screenshots/cli.png) | ![Settings: detected tools, each with an on/off switch and an optional folder](docs/screenshots/settings.png) |
 
 ## Supported harnesses
 
@@ -69,7 +74,7 @@ first user message).
 | Claude Code | `claude-code` | `~/.claude/projects/**/*.jsonl` (`$CLAUDE_CONFIG_DIR/projects`), plus `~/.config/claude/projects` when it exists |
 | Codex CLI | `codex` | `$CODEX_HOME/sessions` and `$CODEX_HOME/archived_sessions` (`~/.codex` by default) |
 | DSH — DeepSeek Harness | `dsh` | `$DSH_HOME/sessions` (`~/.dsh/sessions` by default) |
-| pi | `pi` | `$PI_HOME/agent/sessions` (`~/.pi/agent/sessions` by default) |
+| pi / OMP / OMO-senpi | `pi` | `$PI_HOME/sessions` when set; otherwise `~/.pi/agent/sessions` plus detected OMP and OMO/senpi agent roots |
 | Gemini CLI | `gemini` | `$GEMINI_CLI_HOME/tmp` (`~/.gemini/tmp` by default) |
 | opencode | `opencode` | `$OPENCODE_DATA_HOME`, else `$XDG_DATA_HOME/opencode`, else `~/.local/share/opencode` |
 | Crush | `crush` | `$CRUSH_GLOBAL_DATA`, else `$XDG_DATA_HOME/crush`, else `~/.local/share/crush` |
@@ -81,7 +86,7 @@ first user message).
 | CodeBuddy | `codebuddy` | `$CODEBUDDY_HOME/projects` (`~/.codebuddy/projects` by default) |
 | Hermes | `hermes` | `$HERMES_HOME` (`~/.hermes` by default), SQLite |
 | Qwen Code | `qwen` | `$QWEN_DATA_DIR/projects` (`~/.qwen/projects` by default) |
-| Kimi | `kimi` | `$KIMI_SHARE_DIR/sessions` (`~/.kimi/sessions` by default) |
+| Kimi / Kimi Code | `kimi` | Legacy `$KIMI_SHARE_DIR/sessions` (`~/.kimi/sessions`) plus `$KIMI_CODE_HOME/sessions` (`~/.kimi-code/sessions`) |
 | OpenClaude | `openclaude` | `$CODEBURN_OPENCLAUDE_DIR/projects`, else `~/.openclaude/projects` |
 | Grok | `grok` | `$GROK_HOME` (`~/.grok` by default) |
 | OpenClaw | `openclaw` | `~/.openclaw/agents`, plus the `~/.moltbot`, `~/.moldbot` and `~/.clawdbot` spellings |
@@ -94,9 +99,18 @@ first user message).
 | Antigravity | `antigravity` | `$GEMINI_CLI_HOME/antigravity{,-cli,-ide}/conversations` and the matching `implicit` dirs (`~/.gemini` by default), only `*.db` |
 | Codebuff | `codebuff` | `$CODEBUFF_DATA_DIR`, else `~/.config/manicode`, `~/.config/manicode-dev` and `~/.config/manicode-staging` |
 | Mux | `mux` | `$CODEBURN_MUX_DIR` or `$MUX_ROOT`, else `~/.mux`, `~/.mux-dev` and `~/.cmux` |
+| ZCode | `zcode` | `$MYTOKEN_ZCODE_DIRS`, else `~/.zcode/cli/db/db.sqlite`, query-only SQLite |
+| MiniMax Code | `minimax-code` | `$MINIMAX_DATA_DIR` / `$MAVIS_DATA_DIR`, else `~/.minimax/v2/sqlite/runtime-state.sqlite` (legacy `~/.mavis`) |
+| MiMo Code | `mimo-code` | `$MIMOCODE_HOME/data`; otherwise `$XDG_DATA_HOME/mimocode` or `~/.local/share/mimocode` on every OS (matching upstream `xdg-basedir`), query-only SQLite |
+| Step Code | `step-code` | `$STEP_CODING_AGENT_SESSION_DIR`, `$STEP_CODING_AGENT_DIR/sessions`, else `~/.stepcode/agent/sessions` |
 
-Amp, Kiro, Zed, Antigravity, Codebuff and Mux are wired and covered by the conformance suite, but
-have not been verified against real-world logs yet.
+ZCode, MiniMax Code, MiMo Code and Step Code are protocol-validated against upstream source and
+synthetic conformance fixtures; Kimi Code and the OMP/OMO compatibility paths have the same evidence
+level. No anonymized real-install fixture was available for this batch, so they remain explicitly
+unverified against real-world logs. See [`docs/harness-verification/v04x-harness-matrix.md`](docs/harness-verification/v04x-harness-matrix.md).
+
+Amp, Kiro, Zed, Antigravity, Codebuff, Mux, Hermes and OpenClaw likewise have conformance coverage but
+no committed anonymized real-world fixture yet.
 
 For the VS Code family extensions, `…/globalStorage` is resolved per platform and per editor —
 editors: VS Code, VS Code Insiders, Cursor, Windsurf, VSCodium, Trae; platforms:
@@ -113,7 +127,9 @@ archived logs:
 | `CLAUDE_CONFIG_DIR` | Claude Code config dir instead of `~/.claude` |
 | `CODEX_HOME` | Codex data dir instead of `~/.codex` |
 | `DSH_HOME` | DSH data dir instead of `~/.dsh` |
-| `PI_HOME` | pi data dir instead of `~/.pi` |
+| `PI_HOME`, `MYTOKEN_PI_DIRS` | pi data dir, or explicit pi-compatible session roots (path list) |
+| `PI_CODING_AGENT_DIR`, `OMP_PROFILE`, `PI_PROFILE`, `PI_CONFIG_DIR` | OMP agent/profile roots reused by the `pi` reader |
+| `OMO_CODING_AGENT_DIR`, `SENPI_CODING_AGENT_DIR` | OMO/senpi agent roots reused by the `pi` reader |
 | `GEMINI_CLI_HOME` | Gemini CLI data dir instead of `~/.gemini` |
 | `MYTOKEN_GEMINI_DIRS` | Explicit Gemini CLI log dirs (path list) |
 | `OPENCODE_DATA_HOME` | opencode data dir |
@@ -126,7 +142,7 @@ archived logs:
 | `WORKBUDDY_HOME`, `CODEBUDDY_HOME` | WorkBuddy / CodeBuddy home dir instead of `~/.workbuddy` / `~/.codebuddy` |
 | `HERMES_HOME` | Hermes home dir instead of `~/.hermes` |
 | `QWEN_DATA_DIR`, `MYTOKEN_QWEN_DIRS` | Qwen Code data dir, or explicit dirs (path list) |
-| `KIMI_SHARE_DIR`, `MYTOKEN_KIMI_DIRS` | Kimi share dir, or explicit dirs (path list) |
+| `KIMI_SHARE_DIR`, `KIMI_CODE_HOME`, `MYTOKEN_KIMI_DIRS` | Kimi / Kimi Code data dirs, or explicit dirs (path list) |
 | `CODEBURN_OPENCLAUDE_DIR`, `MYTOKEN_OPENCLAUDE_DIRS` | OpenClaude data dir, or explicit dirs (path list) |
 | `GROK_HOME`, `MYTOKEN_GROK_DIRS` | Grok home dir, or explicit dirs (path list) |
 | `MYTOKEN_OPENCLAW_DIRS` | Explicit OpenClaw agent dirs (path list) |
@@ -139,6 +155,10 @@ archived logs:
 | `MYTOKEN_ANTIGRAVITY_DIRS` | Explicit Antigravity conversation dirs (path list) |
 | `CODEBUFF_DATA_DIR`, `MYTOKEN_CODEBUFF_DIRS` | Codebuff data dir, or explicit dirs (path list) |
 | `CODEBURN_MUX_DIR`, `MUX_ROOT`, `MYTOKEN_MUX_DIRS` | Mux data dir, or explicit dirs (path list) |
+| `MYTOKEN_ZCODE_DIRS` | Explicit ZCode database files or containing dirs (path list) |
+| `MINIMAX_DATA_DIR`, `MAVIS_DATA_DIR`, `MYTOKEN_MINIMAX_DIRS` | MiniMax Code data root, legacy data root, or explicit roots (path list) |
+| `MIMOCODE_HOME`, `MIMOCODE_DB`, `MYTOKEN_MIMO_CODE_DIRS` | MiMo Code data root, exact database, or explicit roots (path list) |
+| `STEP_CODING_AGENT_SESSION_DIR`, `STEP_CODING_AGENT_DIR`, `MYTOKEN_STEP_CODE_DIRS` | Step Code session root, agent root, or explicit roots (path list) |
 
 ## Provider attribution
 
@@ -162,12 +182,15 @@ priority chain, and the app tells you which step produced the answer:
   works entirely offline with the cached copy.
 - Each of the five token classes is priced separately; reasoning tokens fall back to the output
   rate when the table has no reasoning price.
-- Per-provider multipliers and per-model overrides cover subscriptions, credit packs and negotiated
-  rates, and pricing can be imported from cc-switch (`model_pricing`, `providers.cost_multiplier`).
-- **Model mappings.** Model names a relay or your own config invented have no price in any table, so
+- **Custom prices.** When a plan, gateway or negotiated rate differs from the list price, set USD
+  prices per million tokens (input, output, cache read, cache write) for a model. Prices are
+  list-price equivalents: MyToken never applies a provider multiplier or guesses a discount.
+- 1-hour cache writes are priced at twice the input rate and the remaining cache writes at 1.25×
+  input, unless the catalog carries explicit cache-write prices.
+- **Model mappings.** Model names your own config invented have no price in any table, so
   they are listed as *unpriced* instead of guessed at. Map each one to the real model — and
-  optionally to a provider — under *Settings → Model mappings*, and those requests are priced and
-  merged into the rankings from then on.
+  optionally to a provider — and those requests are priced and
+  merged into the rankings from then on (*Settings → Prices*).
 - A cost recorded in the log itself always wins over the computed one, and requests that no price
   can be found for are reported as *unpriced* instead of silently costing nothing.
 
@@ -178,12 +201,9 @@ priority chain, and the app tells you which step produced the answer:
 - **Two requests by default — the price table and the update check.** The price table comes from
   models.dev, falling back to LiteLLM; with a cached or bundled table no request is made. Once a day
   the app asks github.com whether there is a new version, sending nothing but the request itself;
-  Settings turns this off, and builds that cannot update themselves (development builds, the Debian
-  package) never ask. The command line never checks. Relay reconciliation is off by default and
-  enabled per site and per layer (ratios, balance, bills), so nothing else is contacted until you ask.
-- **Keys are never stored or forwarded.** A relay key is read into memory, sent only to the site it
-  belongs to, and the index keeps just its key ID (the first 12 hex digits of a SHA-256). Keys never
-  appear in logs, error messages or `--json` output.
+  builds that cannot update themselves (development builds, the Debian package) never ask. The command line never checks. Plan-quota providers contact their own service
+  only when a credential for that tool already exists on disk; there is no separate consent step and
+  no credential is copied into the index.
 - **Read-only readers.** Harness logs are opened for reading; the index is a separate SQLite file
   that you can delete at any time to start over.
 - **No conversation content.** Only numbers and metadata are stored. The single exception is the
@@ -245,36 +265,26 @@ Builds the same binary the bundles carry, including the CLI, into `$(go env GOPA
 
 ## Command line
 
-The app binary is also the CLI: run it with no arguments for the GUI, or with a subcommand for the
-terminal. The full reference is in [docs/CLI.md](docs/CLI.md).
+The app binary is also the CLI. A bare `mytoken` in a terminal prints the read-only cost summary;
+opened from Finder, Explorer or a launcher it is the app, which also starts with `mytoken gui` (the
+login item uses `--hidden`). The full reference is in
+[docs/CLI.md](docs/CLI.md).
 
 ```sh
-mytoken stats                                  # last 7 days, per session
-mytoken stats --since 30d --by model           # 30 days, grouped by model
-mytoken stats --last week --by day --timezone Asia/Shanghai
-mytoken stats --since 2026-10-01 --until 2026-11-01 --by provider
-mytoken stats --by model --no-cost             # leave costs out
-mytoken stats --since 90d --format csv > usage.csv   # CSV export (--json also works)
-mytoken sessions --last 7d --limit 20          # session list, most recent first
-mytoken cache --last 30d                       # what cache misses cost, by cause
-mytoken cache --by provider                    # cache health per relay site
-mytoken cache <session-id> --harness codex     # one session's cache timeline
-mytoken stats --since 30d --offline            # never touch the network
+mytoken                                        # today and this month, API-equivalent cost
+mytoken daily                                  # one row per day, last 30 days
+mytoken daily --days 7 --json                  # scripting
+mytoken quota                                  # plan quota from local logs and logged-in tools
 mytoken scan                                   # re-index now
-mytoken doctor                                 # check sources, paths and versions
-mytoken prices list                            # the active price table
-mytoken prices set --provider zai --multiplier 0.5
-mytoken prices import-ccswitch                 # import cc-switch pricing
+mytoken statusline                             # one-line status for a shell prompt
+mytoken doctor                                 # check index, sources and schema, read-only
 mytoken version
 ```
 
-`--by` accepts `session`, `provider`, `model`, `project`, `day` or `harness`. `stats`, `sessions`
-and `cache` share the range flags `--since`/`--until` (a duration like `7d`, or a date) and `--last`
-(`today`, `week`, `month`, or `30d`), plus `--timezone`, `--offline`, `--no-cost` and
-`--format table|json|csv` (`--json` is short for `--format json`); `--since` and `--last` cannot be
-combined. `cache` groups the cache ledger by miss cause (or `--by provider|model|harness|project|session|day`),
-and `mytoken cache <session-id>` prints one session's per-request cache timeline; it reads local data
-only and never uses the network. `mytoken help` lists every command, and each flag is documented in
+`summary`, `daily`, `quota`, `statusline` and `doctor` open the index read-only: they never migrate,
+reprice or write to it. `daily` puts input, output, cache read and cache write in separate columns
+and labels the cost column as API-equivalent. Run `mytoken scan` once after an upgrade to migrate and
+reprice the index. `mytoken help` lists every command, and each flag is documented in
 [docs/CLI.md](docs/CLI.md).
 
 ## Building from source

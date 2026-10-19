@@ -1,0 +1,133 @@
+{
+  "harness": "minimax-code",
+  "sources": [
+    {
+      "path": "v2/sqlite/runtime-state.sqlite",
+      "kind": "sqlite"
+    }
+  ],
+  "events": [
+    {
+      "harness": "minimax-code",
+      "dedupKey": "minimax-code:sess-alpha:1",
+      "sessionId": "sess-alpha",
+      "timestamp": "2026-03-02T10:00:00Z",
+      "model": "MiniMax-M2.7",
+      "tokens": {
+        "input": 1200,
+        "output": 340,
+        "cacheRead": 8000,
+        "cacheWrite": 512,
+        "reasoning": 120
+      },
+      "costUsd": 0.0125
+    },
+    {
+      "harness": "minimax-code",
+      "dedupKey": "minimax-code:sess-alpha:2",
+      "sessionId": "sess-alpha",
+      "timestamp": "2026-03-02T10:05:00Z",
+      "model": "unknown",
+      "tokens": {
+        "input": 300,
+        "output": 90,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "minimax-code",
+      "dedupKey": "minimax-code:sess-alpha:6",
+      "sessionId": "sess-alpha",
+      "timestamp": "2026-03-02T12:00:00Z",
+      "model": "MiniMax-M2.7",
+      "tokens": {
+        "input": 50,
+        "output": 20,
+        "cacheRead": 900,
+        "cacheWrite": 0,
+        "reasoning": 5
+      },
+      "costUsd": 0
+    },
+    {
+      "harness": "minimax-code",
+      "dedupKey": "minimax-code:sess-beta:3",
+      "sessionId": "sess-beta",
+      "timestamp": "2026-03-02T11:00:00Z",
+      "model": "MiniMax-M3",
+      "tokens": {
+        "input": 2000,
+        "output": 700,
+        "cacheRead": 0,
+        "cacheWrite": 4096,
+        "reasoning": 250
+      },
+      "costUsd": 0.031
+    },
+    {
+      "harness": "minimax-code",
+      "dedupKey": "minimax-code:sess-beta:4",
+      "sessionId": "sess-beta",
+      "timestamp": "2026-03-02T11:10:00Z",
+      "model": "MiniMax-M3",
+      "tokens": {
+        "input": 100,
+        "output": 40,
+        "cacheRead": 6000,
+        "cacheWrite": 0,
+        "reasoning": 10
+      },
+      "costUsd": 0.004
+    },
+    {
+      "harness": "minimax-code",
+      "dedupKey": "minimax-code:sess-beta:7",
+      "sessionId": "sess-beta",
+      "timestamp": "2026-03-02T12:30:00Z",
+      "model": "MiniMax-M3",
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 7
+      }
+    },
+    {
+      "harness": "minimax-code",
+      "dedupKey": "minimax-code:sub-agent-01:5",
+      "sessionId": "sub-agent-01",
+      "timestamp": "2026-03-02T11:12:00Z",
+      "model": "MiniMax-M2.7",
+      "tokens": {
+        "input": 500,
+        "output": 210,
+        "cacheRead": 1000,
+        "cacheWrite": 0,
+        "reasoning": 60
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "harness": "minimax-code",
+      "sessionId": "sess-alpha",
+      "startedAt": "2026-03-02T10:00:00Z",
+      "updatedAt": "2026-03-02T12:00:00Z"
+    },
+    {
+      "harness": "minimax-code",
+      "sessionId": "sess-beta",
+      "startedAt": "2026-03-02T11:00:00Z",
+      "updatedAt": "2026-03-02T12:30:00Z"
+    },
+    {
+      "harness": "minimax-code",
+      "sessionId": "sub-agent-01",
+      "startedAt": "2026-03-02T11:12:00Z",
+      "updatedAt": "2026-03-02T11:12:00Z"
+    }
+  ]
+}

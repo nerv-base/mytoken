@@ -79,6 +79,57 @@ type Parser interface {
 	Parse(ctx context.Context, src Source, cur Cursor) (Batch, error)
 }
 
+// Versioned is an optional capability of a registered parser: ParserVersion
+// identifies the parse semantics of the events the parser produces. It must
+// increase whenever a change alters the events or sessions a given source
+// yields — a token split, a deduplication rule, a cost field — because scanning
+// is incremental and a database written by an older parser otherwise keeps its
+// rows forever. The scanner compares the version with the one recorded for the
+// harness and re-ingests a mismatch once (see store.ResetHarness).
+//
+// A parser that does not implement Versioned reports InitialParserVersion.
+type Versioned interface {
+	ParserVersion() int
+}
+
+// SourceSessions is an optional capability of a Versioned parser: it reports
+// every session id the events parsed from src can carry. The scanner consults
+// it when a parser generation changes, so a re-ingest deletes only the rows the
+// source still on disk will replace. Without it a reset could not tell a
+// current source's rows from the rows of a log the harness rotated away, and
+// would have to choose between leaving stale rows and destroying history whose
+// only copy is the database.
+//
+// Implementations must report at least the session ids of the events Parse
+// emits for src — including ids that only appear in the file body (inline
+// sidechains, subagent transcripts) and ids a fresh parse would now drop (a
+// ledger record deduplicated against a transcript). They may report extra ids;
+// an extra id can also delete rows of a *different* source that shares that
+// session, so a source's own sessions are the safe report and the whole
+// harness is not.
+//
+// A parser that raises ParserVersion must implement SourceSessions: the
+// scanner refuses a destructive reset it cannot scope.
+type SourceSessions interface {
+	SourceSessions(ctx context.Context, src Source) ([]string, error)
+}
+
+// InitialParserVersion is the generation of every parser that predates version
+// tags, and of parsers whose output has never changed since.
+const InitialParserVersion = 1
+
+// ParserVersion reports the parse generation of p. A non-positive report is
+// treated as InitialParserVersion so a malformed implementation cannot make the
+// scanner re-ingest on every scan.
+func ParserVersion(p Parser) int {
+	if v, ok := p.(Versioned); ok {
+		if n := v.ParserVersion(); n > 0 {
+			return n
+		}
+	}
+	return InitialParserVersion
+}
+
 var (
 	mu       sync.RWMutex
 	registry = map[model.Harness]Parser{}

@@ -4,27 +4,23 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
 
 	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/pricing"
 	"github.com/zzstar101/mytoken/internal/sqlitedsn"
 )
 
 // CCSwitch reads the cc-switch SQLite database, opened read-only. It supplies
 // the resolver with three things: request-log matching (which provider served
 // an event), cc-switch's current selection per harness (timeline anchor), the
-// provider inventory, and the prices stored in the database. Credentials found
-// inside it are never returned.
+// provider inventory. Credentials found inside it are never returned.
 type CCSwitch struct {
 	path string
 
@@ -33,7 +29,6 @@ type CCSwitch struct {
 	status  Status
 	matches map[matchKey][]match
 	seed    []CurrentConfig
-	prices  []pricing.Rule
 	size    int64
 	mod     time.Time
 }
@@ -108,7 +103,6 @@ func (c *CCSwitch) load(ctx context.Context) error {
 	c.status.Err = ""
 	c.matches = map[matchKey][]match{}
 	c.seed = nil
-	c.prices = nil
 	rows, e := c.db.QueryContext(ctx, `SELECT l.app_type,l.model,COALESCE(l.request_model,''),COALESCE(l.input_tokens,0),COALESCE(l.output_tokens,0),COALESCE(l.cache_read_tokens,0),COALESCE(l.cache_creation_tokens,0),l.created_at,p.name FROM proxy_request_logs l JOIN providers p ON p.id=l.provider_id AND p.app_type=l.app_type WHERE l.data_source='proxy' OR (l.provider_id IS NOT NULL AND l.provider_id!='')`)
 	if e != nil {
 		return nil
@@ -289,19 +283,6 @@ func (c *CCSwitch) Credentials(ctx context.Context) ([]Credential, error) {
 	return out, rows.Err()
 }
 
-// PriceRules imports the prices stored in the database. Model entries become
-// model-level rules carrying unit prices only; provider entries carry a
-// multiplier.
-func (c *CCSwitch) PriceRules(ctx context.Context) ([]pricing.Rule, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if _, err := os.Stat(c.path); err != nil {
-		return nil, err
-	}
-	return importPrices(ctx, c.path)
-}
-
-// Close releases the read-only handle.
 func (c *CCSwitch) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -407,193 +388,6 @@ func jsonString(raw, key string) string {
 		return v
 	}
 	return ""
-}
-
-// importPrices reads cc-switch's price tables through a short-lived read-only
-// connection, mirroring the settings import path.
-func importPrices(ctx context.Context, path string) ([]pricing.Rule, error) {
-	q := url.Values{"mode": {"ro"}, "_pragma": {"busy_timeout(1500)"}}
-	db, err := sql.Open("sqlite", sqlitedsn.URI(path, q.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	rules, err := ccModelPricing(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-	providers, names, err := ccProviders(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-	// Materialize provider/model selectors: the provider rule carries the
-	// multiplier, the model-scoped copy only narrows which prices apply.
-	out := rules
-	for _, name := range names {
-		n := providers[name]
-		out = append(out, pricing.Rule{Provider: name, Multiplier: n, Source: "cc-switch"})
-		for _, m := range rules {
-			m.Provider = name
-			out = append(out, m)
-		}
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// ccModelPricing reads model_pricing into model-level rules.
-func ccModelPricing(ctx context.Context, tx *sql.Tx) ([]pricing.Rule, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT model_id,input_cost_per_million,output_cost_per_million,cache_read_cost_per_million,cache_creation_cost_per_million FROM model_pricing ORDER BY model_id`)
-	if err != nil {
-		return nil, fmt.Errorf("cc-switch model pricing: %w", err)
-	}
-	models := []pricing.Rule{}
-	seen := map[string]bool{}
-	for rows.Next() {
-		var name string
-		var raw [4]string
-		if err = rows.Scan(&name, &raw[0], &raw[1], &raw[2], &raw[3]); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		rates := [4]float64{}
-		for i, v := range raw {
-			rates[i], err = strconv.ParseFloat(v, 64)
-			if err != nil || !validRate(rates[i]) {
-				rows.Close()
-				return nil, fmt.Errorf("invalid cc-switch rate for %q: %q", name, v)
-			}
-		}
-		// A model rule supplies unit prices only: its multiplier stays 0
-		// ("unset") so the provider's own multiplier still applies.
-		r := pricing.Rule{Model: name, Input: &rates[0], Output: &rates[1], CacheRead: &rates[2], CacheWrite: &rates[3], Source: "cc-switch"}
-		key := pricing.Normalize(name)
-		if !seen[key] {
-			models = append(models, r)
-			seen[key] = true
-		}
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, err
-	}
-	return models, nil
-}
-
-// ccProviders reads the per-provider multipliers, tolerating older schemas
-// without cost_multiplier/meta columns.
-func ccProviders(ctx context.Context, tx *sql.Tx) (map[string]float64, []string, error) {
-	cols, err := ccColumns(ctx, tx, "providers")
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(cols) == 0 {
-		return nil, nil, fmt.Errorf("cc-switch providers table missing")
-	}
-	globals := map[string]string{}
-	pc, err := ccColumns(ctx, tx, "proxy_config")
-	if err != nil {
-		return nil, nil, err
-	}
-	if pc["app_type"] && pc["default_cost_multiplier"] {
-		rows, err := tx.QueryContext(ctx, "SELECT app_type,default_cost_multiplier FROM proxy_config")
-		if err != nil {
-			return nil, nil, err
-		}
-		for rows.Next() {
-			var app, value string
-			if err = rows.Scan(&app, &value); err != nil {
-				rows.Close()
-				return nil, nil, err
-			}
-			globals[app] = value
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	multiplier, meta, app := "NULL", "NULL", "''"
-	if cols["cost_multiplier"] {
-		multiplier = "cost_multiplier"
-	}
-	if cols["meta"] {
-		meta = "meta"
-	}
-	if cols["app_type"] {
-		app = "app_type"
-	}
-	rows, err := tx.QueryContext(ctx, "SELECT name,"+app+","+multiplier+","+meta+" FROM providers ORDER BY name,"+app)
-	if err != nil {
-		return nil, nil, err
-	}
-	providers := map[string]float64{}
-	names := []string{}
-	for rows.Next() {
-		var name, app string
-		var value, metadata sql.NullString
-		if err = rows.Scan(&name, &app, &value, &metadata); err != nil {
-			rows.Close()
-			return nil, nil, err
-		}
-		raw := globals[app]
-		if raw == "" {
-			raw = "1"
-		}
-		if !cols["cost_multiplier"] && globals[app] == "" && metadata.Valid {
-			var m map[string]json.RawMessage
-			if err = json.Unmarshal([]byte(metadata.String), &m); err != nil {
-				rows.Close()
-				return nil, nil, err
-			}
-			if v, ok := m["costMultiplier"]; ok && string(v) != "null" {
-				var s string
-				if json.Unmarshal(v, &s) == nil {
-					raw = s
-				} else {
-					raw = string(v)
-				}
-			}
-		}
-		if value.Valid && value.String != "" {
-			raw = value.String
-		}
-		n, e := strconv.ParseFloat(raw, 64)
-		if e != nil || !validRate(n) {
-			rows.Close()
-			return nil, nil, fmt.Errorf("invalid cc-switch multiplier for %q: %q", name, raw)
-		}
-		if n == 0 {
-			n = 1
-		}
-		if old, ok := providers[name]; ok {
-			if old != n {
-				rows.Close()
-				return nil, nil, fmt.Errorf("cc-switch provider %q has conflicting app multipliers", name)
-			}
-			continue
-		}
-		if name != "" {
-			providers[name] = n
-			names = append(names, name)
-		}
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, nil, err
-	}
-	return providers, names, nil
 }
 
 func ccColumns(ctx context.Context, tx *sql.Tx, table string) (map[string]bool, error) {

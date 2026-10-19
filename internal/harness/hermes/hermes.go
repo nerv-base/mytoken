@@ -234,7 +234,9 @@ func signatureOf(path string) (dbSignature, error) {
 		return dbSignature{}, err
 	}
 	sig := dbSignature{size: fi.Size(), mod: fi.ModTime()}
-	for _, suffix := range []string{"-wal", "-shm"} {
+	// Not -shm: every reader, this one included, writes its read mark
+	// there, so the signature would change on our own read.
+	for _, suffix := range []string{"-wal"} {
 		w, err := os.Stat(path + suffix)
 		if err != nil {
 			continue

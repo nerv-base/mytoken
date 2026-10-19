@@ -1,0 +1,19 @@
+{
+  "code": 0,
+  "user_current_entitlement_list": [
+    {
+      "display_desc": "Pro",
+      "entitlement_base_info": {
+        "end_time": 1796140799,
+        "quota": {
+          "basic_usage_limit": 20,
+          "bonus_usage_limit": 5
+        }
+      },
+      "usage": {
+        "basic_usage_amount": 3.5,
+        "bonus_usage_amount": 1.25
+      }
+    }
+  ]
+}

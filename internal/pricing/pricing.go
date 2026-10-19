@@ -82,7 +82,6 @@ type Pricer struct {
 	overrides             map[string]map[string]Price
 	rules                 map[[2]string][]Rule
 	modelAliases          map[[2]string]string
-	multipliers           map[string]float64
 	dir                   string
 	fetched               time.Time
 	client                *http.Client
@@ -90,7 +89,7 @@ type Pricer struct {
 }
 
 func New(dataDir string) *Pricer {
-	p := &Pricer{dir: dataDir, prices: snapshotPrices(), overrides: map[string]map[string]Price{}, multipliers: map[string]float64{}, client: &http.Client{Timeout: 8 * time.Second}, modelsURL: "https://models.dev/api.json", litellmURL: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"}
+	p := &Pricer{dir: dataDir, prices: snapshotPrices(), overrides: map[string]map[string]Price{}, client: &http.Client{Timeout: 8 * time.Second}, modelsURL: "https://models.dev/api.json", litellmURL: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"}
 	p.index()
 	if raw, e := os.ReadFile(filepath.Join(dataDir, "prices.json")); e == nil {
 		var c diskCache
@@ -129,11 +128,10 @@ func snapshotPrices() map[string]Price {
 
 // BuiltinLookup resolves a model name against the embedded catalog alone.
 //
-// Unlike Pricer.Lookup it applies no rules, aliases, overrides, multipliers or
-// disk cache and it never refreshes, so it answers one narrow question: what
-// does the bundled catalog say this model costs? That is the baseline a
-// reconciliation pass compares a gateway's own charge against, and it is safe
-// to call from a context that must not touch the network or the disk.
+// Unlike Pricer.Lookup it applies no rules, aliases, overrides or disk cache
+// and it never refreshes, so it answers one narrow question: what does the
+// bundled catalog say this model costs? It is safe to call from a context that
+// must not touch the network or the disk.
 //
 // Names are matched with the same normalization and date-suffix stripping
 // Lookup uses, and ties between the many provider-qualified spellings of one
@@ -253,16 +251,8 @@ func indexCatalog(prices map[string]Price) map[string]Price {
 func (p *Pricer) HasPrice(provider, name string) bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	_, ok, _ := p.effective("", provider, name, time.Now())
+	_, ok := p.effective("", provider, name, time.Now())
 	return ok
-}
-func (p *Pricer) SetMultiplier(provider string, multiplier float64) {
-	if multiplier < 0 {
-		return
-	}
-	p.mu.Lock()
-	p.multipliers[provider] = multiplier
-	p.mu.Unlock()
 }
 func (p *Pricer) SetPrice(provider, name string, price Price) {
 	p.mu.Lock()
@@ -397,4 +387,17 @@ func parseLiteLLM(raw []byte) (map[string]Price, error) {
 		return nil, errors.New("LiteLLM returned no prices")
 	}
 	return out, nil
+}
+
+// Catalog reports the loaded catalog version and its model count. The version
+// is the fetch day of the downloaded table, or "builtin" while the embedded
+// catalog is in use.
+func (p *Pricer) Catalog() (string, int) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	version := "builtin"
+	if !p.fetched.IsZero() {
+		version = p.fetched.UTC().Format("2006-01-02")
+	}
+	return version, len(p.prices)
 }

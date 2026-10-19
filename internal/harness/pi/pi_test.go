@@ -799,7 +799,10 @@ func TestRegistration(t *testing.T) {
 		t.Errorf("Harness() = %q, want %q", p.Harness(), model.Pi)
 	}
 	roots := p.Roots()
-	if len(roots) != 1 || roots[0] == "" {
+	// Three defaults: Pi's own sessions directory plus the OMP and OMO/senpi
+	// ones, which the Pi parser has to cover because both are Pi forks that
+	// write the same logs and have no parser of their own.
+	if len(roots) != 3 || roots[0] == "" || roots[1] == "" || roots[2] == "" {
 		t.Errorf("Roots() = %v", roots)
 	}
 	if got := NewWithRoot("/tmp/x").Roots(); len(got) != 1 || got[0] != "/tmp/x" {

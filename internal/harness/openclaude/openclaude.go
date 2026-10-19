@@ -47,6 +47,11 @@ const (
 	projectsDirName = "projects"
 )
 
+// parserVersion 2 parses cache_creation.ephemeral_1h_input_tokens into
+// Tokens.CacheWrite1h. A database ingested by an earlier release holds the
+// cache write without the 1-hour split, so it re-reads this harness once.
+const parserVersion = 2
+
 // Parser implements harness.Parser for OpenClaude.
 type Parser struct {
 	roots []string
@@ -102,6 +107,53 @@ func (p *Parser) RootProvenance() ([]harness.Root, error) {
 
 // Harness implements harness.Parser.
 func (p *Parser) Harness() model.Harness { return model.OpenClaude }
+
+// ParserVersion implements harness.Versioned.
+func (p *Parser) ParserVersion() int { return parserVersion }
+
+var _ harness.SourceSessions = (*Parser)(nil)
+
+// SourceSessions implements harness.SourceSessions. Events use the transcript's
+// own name unless a sidechain record names an agent id or the body names a
+// session of its own, so the file is read and every id it mentions is reported.
+func (p *Parser) SourceSessions(ctx context.Context, src harness.Source) ([]string, error) {
+	f, err := os.Open(src.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	add(strings.TrimSuffix(filepath.Base(src.Path), filepath.Ext(src.Path)))
+	br := bufio.NewReaderSize(f, 1<<20)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		line, rerr := br.ReadBytes('\n')
+		if rerr != nil {
+			break // trailing bytes without '\n' are not consumed
+		}
+		line = trimEOL(line)
+		if len(line) == 0 {
+			continue
+		}
+		var rl rawLine
+		if err := json.Unmarshal(line, &rl); err != nil {
+			continue // tolerate unknown/partial records
+		}
+		add(rl.SessionID)
+		add(rl.AgentID)
+	}
+	sort.Strings(out)
+	return out, nil
+}
 
 // WithRoots implements harness.Rooted. It returns a fresh parser over exactly
 // the given roots; an explicit empty list stays empty instead of falling back
@@ -191,11 +243,12 @@ type rawMessage struct {
 }
 
 type rawUsage struct {
-	InputTokens         int64 `json:"input_tokens"`
-	OutputTokens        int64 `json:"output_tokens"`
-	CacheCreationTokens int64 `json:"cache_creation_input_tokens"`
-	CacheReadTokens     int64 `json:"cache_read_input_tokens"`
-	WebSearchRequests   int64 `json:"web_search_requests"`
+	InputTokens         int64                  `json:"input_tokens"`
+	OutputTokens        int64                  `json:"output_tokens"`
+	CacheCreationTokens int64                  `json:"cache_creation_input_tokens"`
+	CacheCreation       *harness.CacheCreation `json:"cache_creation"`
+	CacheReadTokens     int64                  `json:"cache_read_input_tokens"`
+	WebSearchRequests   int64                  `json:"web_search_requests"`
 	OutputTokensDetails *struct {
 		ThinkingTokens int64 `json:"thinking_tokens"`
 	} `json:"output_tokens_details"`
@@ -387,11 +440,12 @@ func (a *accumulator) handleAssistant(b *harness.Batch, rl *rawLine, sid, pid st
 		reasoning = u.OutputTokens
 	}
 	tk := model.Tokens{
-		Input:      u.InputTokens,
-		Output:     u.OutputTokens - reasoning,
-		CacheRead:  u.CacheReadTokens,
-		CacheWrite: u.CacheCreationTokens,
-		Reasoning:  reasoning,
+		Input:        u.InputTokens,
+		Output:       u.OutputTokens - reasoning,
+		CacheRead:    u.CacheReadTokens,
+		CacheWrite:   u.CacheCreationTokens,
+		CacheWrite1h: u.CacheCreation.Write1h(u.CacheCreationTokens),
+		Reasoning:    reasoning,
 	}
 	if tk.IsZero() {
 		return
@@ -614,6 +668,9 @@ func maxTokens(a, b model.Tokens) model.Tokens {
 	}
 	if b.CacheWrite > a.CacheWrite {
 		a.CacheWrite = b.CacheWrite
+	}
+	if b.CacheWrite1h > a.CacheWrite1h {
+		a.CacheWrite1h = b.CacheWrite1h
 	}
 	if b.Reasoning > a.Reasoning {
 		a.Reasoning = b.Reasoning

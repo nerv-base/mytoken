@@ -253,9 +253,6 @@ func (a *App) SetTimezone(ctx context.Context, name string) error {
 	a.zoneMu.Lock()
 	a.setZoneLockedLocked(canonical, loc, true)
 	a.zoneMu.Unlock()
-	if a.Budget != nil {
-		a.Budget.Wake()
-	}
 	return nil
 }
 

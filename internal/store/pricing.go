@@ -46,13 +46,9 @@ func (s *Store) EnsurePrices(ctx context.Context, fingerprint string, cost func(
 			return err
 		}
 	} else {
-		// Prices are unchanged, but the cost function is still needed for MissUSD
-		// recomputation on later commits and for any pending ledger rebuild.
 		s.costFn = cost
 	}
-	// Heal the derived cache ledger whenever the compiled algorithm version moved
-	// (first 0.3 open, or a future bump), independent of the price fingerprint.
-	return s.ensureLedgerVersion(ctx)
+	return nil
 }
 
 func (s *Store) replacePricing(ctx context.Context, settings map[string]string, cost func(model.UsageEvent) (float64, bool)) error {
@@ -70,7 +66,7 @@ func (s *Store) replacePricing(ctx context.Context, settings map[string]string, 
 	var after int64
 	changed := len(settings) > 0
 	for {
-		rows, err := tx.QueryContext(ctx, `SELECT rowid,timestamp,harness,model,resolved_provider,input,output,cache_read,cache_write,reasoning,cost,priced FROM events WHERE rowid>? AND log_cost IS NULL ORDER BY rowid LIMIT 512`, after)
+		rows, err := tx.QueryContext(ctx, `SELECT rowid,timestamp,harness,model,resolved_provider,input,output,cache_read,cache_write,cache_write_1h,reasoning,cost,priced FROM events WHERE rowid>? AND log_cost IS NULL ORDER BY rowid LIMIT 512`, after)
 		if err != nil {
 			return err
 		}
@@ -82,7 +78,7 @@ func (s *Store) replacePricing(ctx context.Context, settings map[string]string, 
 			var old float64
 			var priced bool
 			var harness string
-			if err = rows.Scan(&id, &timestamp, &harness, &e.Model, &e.Provider, &e.Tokens.Input, &e.Tokens.Output, &e.Tokens.CacheRead, &e.Tokens.CacheWrite, &e.Tokens.Reasoning, &old, &priced); err != nil {
+			if err = rows.Scan(&id, &timestamp, &harness, &e.Model, &e.Provider, &e.Tokens.Input, &e.Tokens.Output, &e.Tokens.CacheRead, &e.Tokens.CacheWrite, &e.Tokens.CacheWrite1h, &e.Tokens.Reasoning, &old, &priced); err != nil {
 				rows.Close()
 				return err
 			}
@@ -111,12 +107,6 @@ func (s *Store) replacePricing(ctx context.Context, settings map[string]string, 
 		if count < 512 {
 			break
 		}
-	}
-	// MissUSD uses the local estimate for both the real and the counterfactual
-	// event, so it must be recomputed for every cache_miss>0 event on any price
-	// change — including log-priced events the loop above skips.
-	if err = s.recomputeMissCost(ctx, tx, cost); err != nil {
-		return err
 	}
 	if err = tx.Commit(); err != nil {
 		return err

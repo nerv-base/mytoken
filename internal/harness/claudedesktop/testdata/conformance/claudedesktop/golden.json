@@ -17,6 +17,23 @@
   "events": [
     {
       "harness": "claude-desktop",
+      "dedupKey": "claude-desktop:cd-11111111-1111-1111-1111-111111111111:msg_1:req-1",
+      "sessionId": "cd-11111111-1111-1111-1111-111111111111",
+      "projectPath": "/Users/demo/proj",
+      "timestamp": "2025-03-19T16:00:01Z",
+      "model": "claude-sonnet-4-5",
+      "provider": "claude",
+      "tokens": {
+        "input": 1000,
+        "output": 200,
+        "cacheRead": 400,
+        "cacheWrite": 100,
+        "reasoning": 50
+      },
+      "requestId": "req-1"
+    },
+    {
+      "harness": "claude-desktop",
       "dedupKey": "claude-desktop:cd-11111111-1111-1111-1111-111111111111:msg_2:req-2",
       "sessionId": "cd-11111111-1111-1111-1111-111111111111",
       "projectPath": "/Users/demo/proj",
@@ -67,78 +84,6 @@
         "reasoning": 0
       },
       "requestId": "req-a1"
-    },
-    {
-      "harness": "claude-desktop",
-      "dedupKey": "claude-desktop:ledger:local_8f2a1b:2025-03-19T16:00:01Z:claude-sonnet-4-5",
-      "sessionId": "local_8f2a1b",
-      "projectPath": "demo-workspace",
-      "timestamp": "2025-03-19T16:00:01.5Z",
-      "model": "claude-sonnet-4-5",
-      "provider": "claude",
-      "tokens": {
-        "input": 1000,
-        "output": 250,
-        "cacheRead": 400,
-        "cacheWrite": 100,
-        "reasoning": 0
-      },
-      "costUsd": 0.03,
-      "requestId": "2025-03-19T16:00:01Z:0"
-    },
-    {
-      "harness": "claude-desktop",
-      "dedupKey": "claude-desktop:ledger:local_8f2a1b:2025-03-19T16:03:20Z:claude-sonnet-4-5",
-      "sessionId": "local_8f2a1b",
-      "projectPath": "demo-workspace",
-      "timestamp": "2025-03-19T16:03:20Z",
-      "model": "claude-sonnet-4-5",
-      "provider": "claude",
-      "tokens": {
-        "input": 1200,
-        "output": 300,
-        "cacheRead": 600,
-        "cacheWrite": 150,
-        "reasoning": 0
-      },
-      "costUsd": 0.045,
-      "requestId": "2025-03-19T16:03:20Z:1"
-    },
-    {
-      "harness": "claude-desktop",
-      "dedupKey": "claude-desktop:ledger:local_8f2a1b:2025-03-19T16:03:30Z:claude-haiku-4-5",
-      "sessionId": "local_8f2a1b",
-      "projectPath": "demo-workspace",
-      "timestamp": "2025-03-19T16:03:30Z",
-      "model": "claude-haiku-4-5",
-      "provider": "claude",
-      "tokens": {
-        "input": 400,
-        "output": 60,
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "reasoning": 0
-      },
-      "costUsd": 0.0012,
-      "requestId": "2025-03-19T16:03:30Z:2"
-    },
-    {
-      "harness": "claude-desktop",
-      "dedupKey": "claude-desktop:ledger:local_8f2a1b:2025-03-19T16:03:50Z:claude-sonnet-4-5",
-      "sessionId": "local_8f2a1b",
-      "projectPath": "demo-workspace",
-      "timestamp": "2025-03-19T16:03:50Z",
-      "model": "claude-sonnet-4-5",
-      "provider": "claude",
-      "tokens": {
-        "input": 700,
-        "output": 120,
-        "cacheRead": 200,
-        "cacheWrite": 50,
-        "reasoning": 0
-      },
-      "costUsd": 0.02,
-      "requestId": "2025-03-19T16:03:50Z:4"
     }
   ],
   "sessions": [
@@ -163,8 +108,8 @@
       "harness": "claude-desktop",
       "sessionId": "local_8f2a1b",
       "project": "demo-workspace",
-      "startedAt": "2025-03-19T16:00:01.5Z",
-      "updatedAt": "2025-03-19T16:03:50Z"
+      "startedAt": "2025-03-19T16:03:40Z",
+      "updatedAt": "2025-03-19T16:03:40Z"
     }
   ]
 }

@@ -177,7 +177,7 @@ func TestInstanceRollupsSeparated(t *testing.T) {
 	commitInstance(t, st, "alpha", "log", "k1", "s1", "", 10)
 	commitInstance(t, st, "beta", "log", "k2", "s1", "", 20)
 
-	for _, table := range []string{"daily_usage", "cache_daily", "provider_daily", "provider_cache_daily"} {
+	for _, table := range []string{"daily_usage", "provider_daily"} {
 		rows, err := st.DB().Query(`SELECT instance_id, count(*) FROM ` + table + ` GROUP BY instance_id ORDER BY instance_id`)
 		if err != nil {
 			t.Fatalf("%s: %v", table, err)

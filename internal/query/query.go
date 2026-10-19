@@ -53,12 +53,10 @@ type Filter struct {
 
 // Totals is the aggregate over a filter.
 type Totals struct {
-	Tokens          model.Tokens `json:"tokens"`
-	CostUSD         float64      `json:"costUsd"`
-	CostLogUSD      float64      `json:"costLogUsd"`
-	CostEstimateUSD float64      `json:"costEstimateUsd"`
-	Requests        int64        `json:"requests"`
-	Sessions        int64        `json:"sessions"`
+	Tokens   model.Tokens `json:"tokens"`
+	CostUSD  float64      `json:"costUsd"`
+	Requests int64        `json:"requests"`
+	Sessions int64        `json:"sessions"`
 	// Unpriced counts requests with neither a log cost nor a known price;
 	// CostUSD excludes them. The UI shows "—" when Unpriced == Requests.
 	Unpriced int64 `json:"unpriced"`
@@ -76,15 +74,13 @@ type Point struct {
 
 // Bucket is one row of a ranking. Key is the stable id, Label the display name.
 type Bucket struct {
-	Key             string       `json:"key"`
-	Label           string       `json:"label"`
-	Tokens          model.Tokens `json:"tokens"`
-	CostUSD         float64      `json:"costUsd"`
-	CostLogUSD      float64      `json:"costLogUsd"`
-	CostEstimateUSD float64      `json:"costEstimateUsd"`
-	Requests        int64        `json:"requests"`
-	Sessions        int64        `json:"sessions"`
-	Unpriced        int64        `json:"unpriced"` // see Totals.Unpriced
+	Key      string       `json:"key"`
+	Label    string       `json:"label"`
+	Tokens   model.Tokens `json:"tokens"`
+	CostUSD  float64      `json:"costUsd"`
+	Requests int64        `json:"requests"`
+	Sessions int64        `json:"sessions"`
+	Unpriced int64        `json:"unpriced"` // see Totals.Unpriced
 }
 
 // BranchKey builds the grouping key for the branch dimension. A branch is only
@@ -140,10 +136,9 @@ type SessionRow struct {
 type CostSource string
 
 const (
-	CostSourceLog       CostSource = "log"
-	CostSourceEstimate  CostSource = "estimate"
-	CostSourceUnpriced  CostSource = "unpriced"
-	CostSourceRelayBill CostSource = "relay-bill"
+	CostSourceLog      CostSource = "log"
+	CostSourceEstimate CostSource = "estimate"
+	CostSourceUnpriced CostSource = "unpriced"
 )
 
 // AttributedEvent is a usage event with its resolved provider and cost.
@@ -180,20 +175,16 @@ type Service interface {
 	ByModel(ctx context.Context, f Filter) ([]Bucket, error)
 	ByProject(ctx context.Context, f Filter) ([]Bucket, error)
 	ByHarness(ctx context.Context, f Filter) ([]Bucket, error)
+	// Usage is the range grouped by local day, tool, model and provider.
+	Usage(ctx context.Context, f Filter) ([]UsageRow, error)
+	// HourlyUsage is Usage bucketed by local hour: each row's Day is the start
+	// of a local clock hour (time.Local), grouped by harness, model and provider.
+	HourlyUsage(ctx context.Context, f Filter) ([]UsageRow, error)
 	Sessions(ctx context.Context, f Filter, sort string, limit, offset int) (rows []SessionRow, total int, err error)
 	// Session returns the session, its children, and its own events (not children's), time-ordered.
 	Session(ctx context.Context, h model.Harness, id string) (SessionRow, []SessionRow, []AttributedEvent, error)
 	// Subscribe notifies (throttled to ≤1/s) whenever new data is committed.
 	Subscribe() (<-chan struct{}, func())
-
-	// 0.3 缓存账本 (docs/CACHE.md §6). CacheTotals aggregates Expected/Read/Miss/MissUSD
-	// and a per-cause breakdown over a filter. CacheDaily emits one point per local day.
-	// CacheBy buckets by a CacheDim; CacheBySession keys are harness+"/"+session_id.
-	// SessionCache returns the per-request cache verdicts of one session, time-ordered.
-	CacheTotals(ctx context.Context, f Filter) (CacheTotals, error)
-	CacheDaily(ctx context.Context, f Filter) ([]CachePoint, error)
-	CacheBy(ctx context.Context, f Filter, dim CacheDim) ([]CacheBucket, error)
-	SessionCache(ctx context.Context, h model.Harness, session string) ([]CacheStep, error)
 }
 
 // ErrAmbiguousInstance reports that a session id exists in more than one
@@ -212,8 +203,6 @@ type InstanceService interface {
 	Service
 	// SessionIn is Session for one explicit instance.
 	SessionIn(ctx context.Context, h model.Harness, instance, id string) (SessionRow, []SessionRow, []AttributedEvent, error)
-	// SessionCacheIn is SessionCache for one explicit instance.
-	SessionCacheIn(ctx context.Context, h model.Harness, instance, session string) ([]CacheStep, error)
 }
 
 // SessionIn resolves one session in one explicit instance. It is a free
@@ -226,13 +215,4 @@ func SessionIn(ctx context.Context, s Service, h model.Harness, instance, id str
 		return SessionRow{}, nil, nil, fmt.Errorf("query: %T does not support instance-aware session lookups", s)
 	}
 	return is.SessionIn(ctx, h, instance, id)
-}
-
-// SessionCacheIn resolves one session's cache steps in one explicit instance.
-func SessionCacheIn(ctx context.Context, s Service, h model.Harness, instance, session string) ([]CacheStep, error) {
-	is, ok := s.(InstanceService)
-	if !ok {
-		return nil, fmt.Errorf("query: %T does not support instance-aware cache lookups", s)
-	}
-	return is.SessionCacheIn(ctx, h, instance, session)
 }

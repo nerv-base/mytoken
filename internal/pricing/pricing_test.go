@@ -141,3 +141,27 @@ func TestRefreshAndDiskCache(t *testing.T) {
 		t.Fatal("disk cache not read")
 	}
 }
+
+func TestCacheWriteOneHourTier(t *testing.T) {
+	p := New(t.TempDir())
+	p.prices = map[string]Price{"m": {Input: 10, Output: 20, CacheRead: 1, CacheWrite: 12.5}}
+	p.aliases = map[string]Price{"m": p.prices["m"]}
+	p.overrides = map[string]map[string]Price{}
+	e := model.UsageEvent{Model: "m", Tokens: model.Tokens{CacheWrite: 100, CacheWrite1h: 40}}
+	cost, ok := p.Evaluate(e)
+	if !ok {
+		t.Fatal("model should be priced")
+	}
+	// 60 tokens at the explicit cache-write rate (12.5) + 40 at 2x input (20).
+	want := (60*12.5 + 40*2*10) / 1e6
+	if math.Abs(cost-want) > 1e-12 {
+		t.Fatalf("cost = %v, want %v", cost, want)
+	}
+	// Without an explicit cache-write rate the 5-minute tier is 1.25x input.
+	p.prices["m"] = Price{Input: 10, Output: 20, CacheRead: 1}
+	cost, _ = p.Evaluate(e)
+	want = (60*12.5 + 40*20) / 1e6
+	if math.Abs(cost-want) > 1e-12 {
+		t.Fatalf("default cost = %v, want %v", cost, want)
+	}
+}

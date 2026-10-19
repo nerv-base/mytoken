@@ -11,7 +11,6 @@ import (
 
 	"github.com/zzstar101/mytoken/internal/harness"
 	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/provider"
 	"github.com/zzstar101/mytoken/internal/store"
 )
 
@@ -86,41 +85,15 @@ type queryCase struct {
 }
 
 func benchmarkCases(q Service, start time.Time) []queryCase {
-	ctx := context.Background()
-	f := Filter{}
-	// Provider IDs are hashed in Go, so an ID-filtered query reads facts with
-	// endpoint grouping instead of the legacy rollups. Benchmark that path.
-	endpointID, _ := provider.EndpointID(benchmarkEndpoints[0])
-	idFilter := Filter{ProviderIDs: []string{endpointID}}
+	f := Filter{Range: Range{From: start, To: start.Add(7 * 24 * time.Hour)}}
 	return []queryCase{
-		{"Totals", func() error { _, e := q.Totals(ctx, f); return e }},
-		{"TotalsIDFilter", func() error { _, e := q.Totals(ctx, idFilter); return e }},
-		{"ProviderGroups", func() error { _, e := q.ProviderGroups(ctx, f); return e }},
-		{"ProviderGroupsIDFilter", func() error { _, e := q.ProviderGroups(ctx, idFilter); return e }},
-		{"Daily", func() error { _, e := q.Daily(ctx, f); return e }},
-		{"Hourly24h", func() error {
-			_, e := q.Hourly(ctx, Filter{Range: Range{From: start, To: start.AddDate(0, 0, 1)}})
-			return e
-		}},
-		{"HourlyHarness24h", func() error {
-			_, e := q.Hourly(ctx, Filter{Range: Range{From: start, To: start.AddDate(0, 0, 1)}, Harnesses: []model.Harness{model.Codex}})
-			return e
-		}},
-		{"ByModel", func() error { _, e := q.ByModel(ctx, f); return e }},
-		{"ByProvider", func() error { _, e := q.ByProvider(ctx, f); return e }},
-		{"ByHarness", func() error { _, e := q.ByHarness(ctx, f); return e }},
-		{"ByProject", func() error { _, e := q.ByProject(ctx, f); return e }},
-		{"Sessions6", func() error { _, _, e := q.Sessions(ctx, f, "", 6, 0); return e }},
-		{"SessionsAll", func() error { _, _, e := q.Sessions(ctx, f, "", 0, 0); return e }},
-		{"Session", func() error { _, _, _, e := q.Session(ctx, model.Codex, "session-000"); return e }},
-		{"CacheTotals", func() error { _, e := q.CacheTotals(ctx, f); return e }},
-		{"CacheTotalsIDFilter", func() error { _, e := q.CacheTotals(ctx, idFilter); return e }},
-		{"CacheDaily", func() error { _, e := q.CacheDaily(ctx, f); return e }},
-		{"CacheByProvider", func() error { _, e := q.CacheBy(ctx, f, CacheByProvider); return e }},
-		{"CacheByModel", func() error { _, e := q.CacheBy(ctx, f, CacheByModel); return e }},
-		{"CacheByHarness", func() error { _, e := q.CacheBy(ctx, f, CacheByHarness); return e }},
-		{"CacheByProject", func() error { _, e := q.CacheBy(ctx, f, CacheByProject); return e }},
-		{"SessionCache", func() error { _, e := q.SessionCache(ctx, model.Codex, "session-000"); return e }},
+		{"Totals", func() error { _, e := q.Totals(context.Background(), f); return e }},
+		{"Daily", func() error { _, e := q.Daily(context.Background(), f); return e }},
+		{"ByHarness", func() error { _, e := q.ByHarness(context.Background(), f); return e }},
+		{"ByModel", func() error { _, e := q.ByModel(context.Background(), f); return e }},
+		{"ByProvider", func() error { _, e := q.ByProvider(context.Background(), f); return e }},
+		{"ByProject", func() error { _, e := q.ByProject(context.Background(), f); return e }},
+		{"Sessions", func() error { _, _, e := q.Sessions(context.Background(), f, SortRecent, 100, 0); return e }},
 	}
 }
 
@@ -168,5 +141,70 @@ func TestQueryPerformanceBudget(t *testing.T) {
 				t.Errorf("query exceeded 50MiB allocation budget: %d", allocated)
 			}
 		})
+	}
+}
+
+// detailFixture is a miniature of the real corpus's worst case: one root
+// session with thousands of events and a few descendant sessions whose facts
+// only feed the children summary.
+func detailFixture(tb testing.TB) (Service, model.Harness, string) {
+	tb.Helper()
+	st, err := store.Open(filepath.Join(tb.TempDir(), "detail.db"))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() { st.Close() })
+	ctx := context.Background()
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.Local)
+	const root = "detail-root"
+	for child := 0; child < 3; child++ {
+		events := make([]model.UsageEvent, 400)
+		res := make([]store.Resolution, 400)
+		for j := range events {
+			events[j] = model.UsageEvent{DedupKey: fmt.Sprintf("%s-%04d", root, j), SessionID: root, ParentID: "", Timestamp: start.Add(time.Duration(j) * time.Second), Model: "model-0", Tokens: model.Tokens{Input: 100, Output: 20, CacheRead: 200, CacheWrite: 10, CacheWrite1h: 2, Reasoning: 5}}
+			res[j] = store.Resolution{Provider: "provider-0", Attrib: model.AttribLog, Cost: .001, Priced: true}
+		}
+		if err = st.Commit(ctx, model.Codex, root, harness.Batch{Events: events}, res); err != nil {
+			tb.Fatal(err)
+		}
+		id := fmt.Sprintf("detail-child-%d", child)
+		for j := range events {
+			events[j].DedupKey = fmt.Sprintf("%s-%04d", id, j)
+			events[j].SessionID = id
+			events[j].ParentID = root
+			events[j].Timestamp = start.Add(time.Duration(j) * time.Second)
+		}
+		if err = st.Commit(ctx, model.Codex, id, harness.Batch{Events: events}, res); err != nil {
+			tb.Fatal(err)
+		}
+	}
+	return NewService(st), model.Codex, root
+}
+
+func BenchmarkSessionDetail(b *testing.B) {
+	q, h, id := detailFixture(b)
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, _, err := q.Session(ctx, h, id); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkHourlyUsageOneDay measures the dashboard's "today by hour" read on
+// the 200K-request fixture. The first day is the densest: twelve sessions start
+// inside it, so the range scan and the hourly fold both do real work.
+func BenchmarkHourlyUsageOneDay(b *testing.B) {
+	q, start := benchmarkFixture(b)
+	f := Filter{Range: Range{From: start, To: start.Add(24 * time.Hour)}}
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := q.HourlyUsage(ctx, f); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

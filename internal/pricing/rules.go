@@ -10,11 +10,9 @@ import (
 
 // Rule is the pricing-layer equivalent of the public settings contract.
 //
-// Provider/Model select what the rule applies to. Multiplier scales the
-// computed cost; a zero Multiplier means "unset" so it never overrides a
-// multiplier set elsewhere. Input/Output/CacheRead/CacheWrite replace the
-// matching per-1M-token rate (nil keeps the value found further down the
-// price chain).
+// Provider/Model select what the rule applies to. Input/Output/CacheRead/
+// CacheWrite replace the matching per-1M-token rate (nil keeps the value found
+// further down the price chain).
 //
 // From is when the rule starts applying (zero = always). Several rules may
 // share (Provider, Model); the one with the latest From ≤ the lookup time
@@ -22,7 +20,6 @@ import (
 // them.
 type Rule struct {
 	Provider, Model                      string
-	Multiplier                           float64
 	Input, Output, CacheRead, CacheWrite *float64
 	Source                               string
 	From                                 time.Time `json:"from,omitzero"`
@@ -74,11 +71,9 @@ func (p *Pricer) SetRules(rules []Rule) {
 }
 
 // sourceRank orders rules by how much the user's own edits outrank them: the
-// user's rules win, a gateway's ratios come next, and cc-switch's import last.
+// user's rules win, then legacy imports.
 func sourceRank(r Rule) int {
 	switch {
-	case strings.HasPrefix(r.Source, "relay:"):
-		return 1
 	case r.Source == "cc-switch":
 		return 0
 	}
@@ -170,29 +165,6 @@ func ruleOutput(r Rule) *float64     { return r.Output }
 func ruleCacheRead(r Rule) *float64  { return r.CacheRead }
 func ruleCacheWrite(r Rule) *float64 { return r.CacheWrite }
 
-// multiplierFor returns the cost multiplier. Multipliers are provider-first: a
-// provider+model rule, then a provider rule, then the provider table; a
-// model-wide multiplier is the last fallback before the default 1. A rule's
-// zero Multiplier means unset and is skipped, so an imported model rule never
-// cancels a provider's multiplier.
-func (p *Pricer) multiplierFor(scoped, provider, name string, t time.Time) float64 {
-	for _, key := range [][2]string{{scoped, name}, {provider, name}, {scoped, ""}, {provider, ""}} {
-		if key[0] == "" {
-			continue
-		}
-		if r, ok := p.ruleAt(key, t); ok && r.Multiplier != 0 {
-			return r.Multiplier
-		}
-	}
-	if v, ok := p.multipliers[provider]; ok {
-		return v
-	}
-	if r, ok := p.ruleAt([2]string{"", name}, t); ok && r.Multiplier != 0 {
-		return r.Multiplier
-	}
-	return 1
-}
-
 // ruleMoment returns the instant rule selection uses: the event's own
 // timestamp, or now when the caller left it zero (bulk recompute paths that
 // drop timestamps still price with the rules effective today).
@@ -203,7 +175,7 @@ func ruleMoment(e model.UsageEvent) time.Time {
 	return e.Timestamp
 }
 
-func (p *Pricer) effective(harness, provider, name string, at time.Time) (Price, bool, float64) {
+func (p *Pricer) effective(harness, provider, name string, at time.Time) (Price, bool) {
 	scoped := Scoped(harness, provider)
 	name = p.canonical(provider, name)
 	price, known := p.lookup(name)
@@ -212,7 +184,6 @@ func (p *Pricer) effective(harness, provider, name string, at time.Time) (Price,
 		price = v
 		known = true
 	}
-	multiplier := p.multiplierFor(scoped, provider, n, at)
 	// Unit prices fall back class by class, from the most specific rule to the
 	// widest one; a class no rule sets keeps the catalog or override rate.
 	src := p.priceSources(scoped, provider, n, at)
@@ -234,8 +205,9 @@ func (p *Pricer) effective(harness, provider, name string, at time.Time) (Price,
 	}
 	// A missing catalog requires explicit rates for all token classes.
 	known = known || (inSet && outSet && crSet && cwSet)
-	return price, known, multiplier
+	return price, known
 }
+
 func (p *Pricer) Evaluate(e model.UsageEvent) (float64, bool) {
 	if e.CostUSD != nil {
 		return *e.CostUSD, true
@@ -243,7 +215,7 @@ func (p *Pricer) Evaluate(e model.UsageEvent) (float64, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	at := ruleMoment(e)
-	price, known, multiplier := p.effective(string(e.Harness), e.Provider, e.Model, at)
+	price, known := p.effective(string(e.Harness), e.Provider, e.Model, at)
 	// Partial custom rules can price an unknown model if no missing class is
 	// used; the classes fall back across the same chain as the price itself.
 	if !known {
@@ -264,8 +236,27 @@ func (p *Pricer) Evaluate(e model.UsageEvent) (float64, bool) {
 		reasoning = *price.Reasoning
 	}
 	t := e.Tokens
-	return (float64(t.Input)*price.Input + float64(t.Output)*price.Output + float64(t.CacheRead)*price.CacheRead + float64(t.CacheWrite)*price.CacheWrite + float64(t.Reasoning)*reasoning) / 1e6 * multiplier, true
+	// Cache writes are split into the 1-hour tier (2x input) and the 5-minute
+	// tier (the catalog's cache-write rate, or 1.25x input when the catalog has
+	// none). CacheWrite1h is a subset of CacheWrite.
+	oneHour := t.CacheWrite1h
+	if oneHour < 0 {
+		oneHour = 0
+	}
+	fiveMinute := t.CacheWrite - oneHour
+	if fiveMinute < 0 {
+		fiveMinute = 0
+	}
+	cacheWriteRate := price.CacheWrite
+	if cacheWriteRate == 0 && price.Input > 0 {
+		cacheWriteRate = 1.25 * price.Input
+	}
+	cost := float64(t.Input)*price.Input + float64(t.Output)*price.Output +
+		float64(t.CacheRead)*price.CacheRead + float64(fiveMinute)*cacheWriteRate +
+		float64(oneHour)*2*price.Input + float64(t.Reasoning)*reasoning
+	return cost / 1e6, true
 }
+
 func (p *Pricer) SearchCatalog(q string, limit int) []string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

@@ -4,8 +4,8 @@
 // <base>/<appId>/<workspaceId>/ and stores three kinds of records there:
 //
 //   - <shortid>/.claude/projects/<sanitized-cwd>/*.jsonl — Claude Code
-//     transcripts (same line format as the claude-code harness, but outside
-//     ~/.claude/projects, so no record is counted twice);
+//     transcripts (same line format as the claude-code harness). They sit
+//     outside ~/.claude/projects, so the claude-code harness never sees them;
 //   - usage-ledger/*.ndjson — one Cowork/Code usage record per line, one file
 //     per day;
 //   - local_<sessionId>.json — workspace metadata (sessionId, cliSessionId,
@@ -26,15 +26,20 @@
 // userSelectedFolders, then cwd), falling back to "Claude Cowork" (or
 // "Claude Code" for surface "code").
 //
-// Known limitation: the ledger/transcript dedup happens while a transcript is
-// parsed, so it can only suppress a transcript record whose ledger line is
-// already on disk. If the transcript is scanned and stored first and its
-// ledger line is written afterwards, both rows stay in the store: the store
-// never deletes rows, and the later ledger record cannot reclaim the
-// transcript row that was already counted. On real data exactly 1 of 27
-// records is such an overlap, and the two files are normally written within
-// the same window because scanning debounces by at least two seconds, so no
-// cross-time reclamation is attempted.
+// Ledger lines are turn aggregates: one line covers every request of a turn,
+// while the transcript has one record per request. A session whose transcript
+// is on disk is therefore counted from the transcript alone and its ledger
+// turn lines are skipped (both for Cowork and for the Code tab, whose Claude
+// Code CLI transcript lives under ~/.claude/projects and is counted by the
+// claude-code harness). A ledger session without a mapping or without its
+// transcript is kept, so Desktop-only usage is never lost. Per-request ledger
+// lines (origin "request") are kept and the transcript copy is suppressed by
+// coveredByLedger instead.
+//
+// The choice is made from the files on disk at parse time. If a ledger turn is
+// read before its transcript exists, it is kept and the later transcript rows
+// are added too; the store never deletes rows. Scan debouncing makes that
+// window rare, and no cross-time reclamation is attempted.
 //
 // Only metadata is read: no message or tool text ever leaves this package
 // except the first user message, which becomes the <=60 rune title.
@@ -81,6 +86,12 @@ const (
 	// is in the tens of milliseconds.
 	ledgerMatchWindow = 5 * time.Second
 )
+
+// parserVersion 2 skips code-surface ledger rows that duplicate a Claude Code
+// transcript and parses cache_creation.ephemeral_1h_input_tokens into
+// Tokens.CacheWrite1h. A database ingested by an earlier release holds the
+// duplicated rows and the unsplit cache write, so it re-reads this harness once.
+const parserVersion = 2
 
 // ledgerRecord is one model's usage from a Cowork usage-ledger line, used to
 // recognise requests the transcript repeats.
@@ -169,6 +180,66 @@ func (p *Parser) RootProvenance() ([]harness.Root, error) {
 
 // Harness implements harness.Parser.
 func (p *Parser) Harness() model.Harness { return model.ClaudeDesktop }
+
+// ParserVersion implements harness.Versioned.
+func (p *Parser) ParserVersion() int { return parserVersion }
+
+var _ harness.SourceSessions = (*Parser)(nil)
+
+// SourceSessions implements harness.SourceSessions. A transcript's events use
+// the id in the body when it has one and the file name otherwise; a ledger
+// records the local session it bills. The ledger transcript sets are computed
+// from disk at parse time, so a ledger source may emit no events at all; it is
+// still reported, because the rows the previous parser wrote for it must go.
+func (p *Parser) SourceSessions(ctx context.Context, src harness.Source) ([]string, error) {
+	f, err := os.Open(src.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	ledger := strings.EqualFold(filepath.Ext(src.Path), ledgerExt)
+	if !ledger {
+		add(sessionIDFromPath(src.Path))
+	}
+	br := bufio.NewReaderSize(f, 1<<20)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		line, rerr := br.ReadBytes('\n')
+		if rerr != nil {
+			break // trailing bytes without '\n' are not consumed
+		}
+		line = trimEOL(line)
+		if len(line) == 0 {
+			continue
+		}
+		if ledger {
+			var rec ledgerLine
+			if err := json.Unmarshal(line, &rec); err != nil {
+				continue
+			}
+			add(rec.SessionID)
+			continue
+		}
+		var rl rawLine
+		if err := json.Unmarshal(line, &rl); err != nil {
+			continue
+		}
+		add(rl.SessionID)
+		add(rl.Session2)
+	}
+	sort.Strings(out)
+	return out, nil
+}
 
 // WithRoots implements harness.Rooted. It returns a fresh parser over exactly
 // the given roots; an explicit empty list stays empty instead of falling back
@@ -321,10 +392,11 @@ type rawMessage struct {
 }
 
 type rawUsage struct {
-	InputTokens              int64 `json:"input_tokens"`
-	OutputTokens             int64 `json:"output_tokens"`
-	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	InputTokens              int64                  `json:"input_tokens"`
+	OutputTokens             int64                  `json:"output_tokens"`
+	CacheCreationInputTokens int64                  `json:"cache_creation_input_tokens"`
+	CacheCreation            *harness.CacheCreation `json:"cache_creation"`
+	CacheReadInputTokens     int64                  `json:"cache_read_input_tokens"`
 	OutputTokensDetails      *struct {
 		ThinkingTokens int64 `json:"thinking_tokens"`
 	} `json:"output_tokens_details"`
@@ -478,11 +550,12 @@ func (a *accumulator) handleAssistant(b *harness.Batch, rl *rawLine, sid string,
 		reasoning = msg.Usage.OutputTokens
 	}
 	tk := model.Tokens{
-		Input:      msg.Usage.InputTokens, // already excludes cache hits
-		Output:     msg.Usage.OutputTokens - reasoning,
-		CacheRead:  msg.Usage.CacheReadInputTokens,
-		CacheWrite: msg.Usage.CacheCreationInputTokens,
-		Reasoning:  reasoning,
+		Input:        msg.Usage.InputTokens, // already excludes cache hits
+		Output:       msg.Usage.OutputTokens - reasoning,
+		CacheRead:    msg.Usage.CacheReadInputTokens,
+		CacheWrite:   msg.Usage.CacheCreationInputTokens,
+		CacheWrite1h: msg.Usage.CacheCreation.Write1h(msg.Usage.CacheCreationInputTokens),
+		Reasoning:    reasoning,
 	}
 	if tk.IsZero() {
 		return
@@ -587,13 +660,14 @@ func (a *accumulator) encodeState() string {
 	return string(raw)
 }
 
-// coveredByLedger reports whether the Cowork usage ledger already recorded this
-// exact request. Claude Desktop writes one request to two places when a session
-// is a Cowork session: the Claude Code transcript under the workspace and the
-// Cowork usage ledger beside it. The ledger is the billing record, so the
-// transcript copy is dropped rather than counted a second time. The comparison
-// is deliberately strict (identical input/output/cache classes within a few
-// seconds) so only a real duplicate matches.
+// coveredByLedger reports whether a per-request usage-ledger line already
+// recorded this exact request. Claude Desktop writes one request to two places
+// when a session is a Cowork session: the Claude Code transcript under the
+// workspace and the usage ledger beside it. Request lines are the billing
+// record, so the transcript copy is dropped rather than counted a second time.
+// The comparison is deliberately strict (identical input/output/cache classes
+// within a few seconds) so only a real duplicate matches. Turn aggregates never
+// take part: they are skipped in the ledger and the transcript is authoritative.
 func (a *accumulator) coveredByLedger(ts time.Time, u *rawUsage, tk model.Tokens) bool {
 	if len(a.ledger) == 0 || ts.IsZero() {
 		return false
@@ -622,11 +696,12 @@ func (a *accumulator) coveredByLedger(ts time.Time, u *rawUsage, tk model.Tokens
 	return false
 }
 
-// linkedLedgerUsage returns the usage records the Cowork usage ledger holds for
+// linkedLedgerUsage returns the per-request usage records the ledger holds for
 // the session that owns this transcript. The two files of a Cowork session are
 // related only by the session metadata Claude Desktop writes beside the ledger
 // (<workspace>/local_<id>.json), whose cliSessionId names the transcript
-// session. Without that link nothing is suppressed.
+// session. Without that link nothing is suppressed. Turn aggregates are left
+// out because parseLedger skips them for any session with a transcript.
 func linkedLedgerUsage(transcriptPath, sessionID string) []ledgerRecord {
 	if sessionID == "" {
 		return nil
@@ -661,7 +736,10 @@ func linkedLedgerUsage(transcriptPath, sessionID string) []ledgerRecord {
 			if json.Unmarshal([]byte(line), &rec) != nil {
 				continue // torn tail line
 			}
-			if !linked[rec.SessionID] || (rec.Surface != "cowork" && rec.Surface != "code") {
+			if !linked[rec.SessionID] || rec.Origin != "request" {
+				continue
+			}
+			if rec.Surface != "cowork" && rec.Surface != "code" {
 				continue
 			}
 			ts, ok := parseTimestamp(rawTime(rec.TS))
@@ -726,9 +804,117 @@ func linkedLedgerSessions(workspaceDir, sessionID string) map[string]bool {
 	return out
 }
 
+// ledgerSessionCliID returns the Claude Code session id recorded beside a
+// ledger session, or "". Cowork sessions keep it in the workspace's
+// local_<id>.json; Code-tab sessions keep it in the sibling
+// claude-code-sessions tree of the Claude or Claude-3p application directory.
+func ledgerSessionCliID(workspaceDir, ledgerSessionID string) string {
+	if ledgerSessionID == "" {
+		return ""
+	}
+	candidates := []string{filepath.Join(workspaceDir, ledgerSessionID+".json")}
+	for _, base := range desktopAppBases(workspaceDir) {
+		matches, _ := filepath.Glob(filepath.Join(base, "claude-code-sessions", "*", "*", ledgerSessionID+".json"))
+		candidates = append(candidates, matches...)
+	}
+	for _, path := range candidates {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var meta sessionMeta
+		if json.Unmarshal(raw, &meta) != nil {
+			continue
+		}
+		if meta.CliSessionID != "" {
+			return meta.CliSessionID
+		}
+	}
+	return ""
+}
+
+// desktopAppBases returns the Claude application directories a workspace
+// belongs to: its own and, on macOS, the other of Claude/Claude-3p when both
+// exist. A directory that is not <app>/local-agent-mode-sessions/<account>/<ws>
+// yields none, so an explicit sessions root never triggers a sibling lookup.
+func desktopAppBases(workspaceDir string) []string {
+	sessions := filepath.Dir(filepath.Dir(workspaceDir))
+	if filepath.Base(sessions) != sessionsDir {
+		return nil
+	}
+	base := filepath.Dir(sessions)
+	out := []string{base}
+	switch filepath.Base(base) {
+	case "Claude-3p":
+		out = append(out, filepath.Join(filepath.Dir(base), "Claude"))
+	case "Claude":
+		out = append(out, filepath.Join(filepath.Dir(base), "Claude-3p"))
+	}
+	return out
+}
+
+// workspaceTranscriptSet indexes the transcript session ids inside a Desktop
+// workspace (<workspace>/**/*.jsonl). It is built once per ledger parse, only
+// when a Cowork session has a cliSessionId.
+func workspaceTranscriptSet(workspaceDir string) map[string]bool {
+	out := map[string]bool{}
+	root := filepath.Clean(workspaceDir)
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil {
+			return nil
+		}
+		if info.IsDir() {
+			if info.Name() == "node_modules" || info.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			if rel, e := filepath.Rel(root, path); e == nil && strings.Count(rel, string(filepath.Separator)) > maxWalkDepth {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(path), ".jsonl") {
+			out[strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))] = true
+		}
+		return nil
+	})
+	return out
+}
+
+// claudeCodeRoots mirrors the claude-code harness default roots: the harness
+// only sees transcripts under its own roots, so those are the copies a Code-tab
+// ledger record would duplicate.
+func claudeCodeRoots() []string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return []string{filepath.Join(dir, "projects")}
+	}
+	roots := []string{filepath.Join(harness.Home(), ".claude", "projects")}
+	alt := filepath.Join(harness.Home(), ".config", "claude", "projects")
+	if st, err := os.Stat(alt); err == nil && st.IsDir() {
+		roots = append(roots, alt)
+	}
+	return roots
+}
+
+// claudeCodeTranscriptSet indexes the main transcript session ids under the
+// claude-code roots. It is built once per ledger parse, only when a Code-tab
+// session has a cliSessionId.
+func claudeCodeTranscriptSet() map[string]bool {
+	out := map[string]bool{}
+	for _, root := range claudeCodeRoots() {
+		for _, pattern := range []string{filepath.Join(root, "*", "*.jsonl"), filepath.Join(root, "*.jsonl")} {
+			paths, _ := filepath.Glob(pattern)
+			for _, path := range paths {
+				out[strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))] = true
+			}
+		}
+	}
+	return out
+}
+
 // ledgerLine is one Cowork/Code usage-ledger record.
 type ledgerLine struct {
 	Surface   string                 `json:"surface"`
+	Origin    string                 `json:"origin"`
 	SessionID string                 `json:"sessionId"`
 	TS        json.RawMessage        `json:"ts"`
 	Models    map[string]ledgerUsage `json:"models"`
@@ -801,6 +987,9 @@ func (p *Parser) parseLedger(ctx context.Context, src harness.Source, cur harnes
 	}
 	project := ""
 	seen := map[string]int{}
+	workspaceDir := filepath.Dir(filepath.Dir(src.Path))
+	cliIDs := map[string]string{}
+	var workspaceFiles, codeFiles map[string]bool
 
 	br := bufio.NewReaderSize(f, 1<<20)
 	off := start
@@ -829,6 +1018,34 @@ func (p *Parser) parseLedger(ctx context.Context, src harness.Source, cur harnes
 		if rec.SessionID == "" || len(rec.Models) == 0 {
 			continue
 		}
+		// A session whose per-request transcript is on disk is counted from
+		// the transcript; its turn aggregate would double every request. Code
+		// sessions are the Claude Code CLI, whose transcript the claude-code
+		// harness already counts. A missing mapping or transcript keeps the
+		// ledger record, so Desktop-only usage still appears.
+		cli, known := cliIDs[rec.SessionID]
+		if !known {
+			cli = ledgerSessionCliID(workspaceDir, rec.SessionID)
+			cliIDs[rec.SessionID] = cli
+		}
+		if cli != "" {
+			drop := false
+			switch {
+			case rec.Surface == "code":
+				if codeFiles == nil {
+					codeFiles = claudeCodeTranscriptSet()
+				}
+				drop = codeFiles[cli]
+			case rec.Origin == "" || rec.Origin == "turn":
+				if workspaceFiles == nil {
+					workspaceFiles = workspaceTranscriptSet(workspaceDir)
+				}
+				drop = workspaceFiles[cli]
+			}
+			if drop {
+				continue
+			}
+		}
 		ts, ok := parseTimestamp(rawTime(rec.TS))
 		if !ok {
 			continue
@@ -845,7 +1062,9 @@ func (p *Parser) parseLedger(ctx context.Context, src harness.Source, cur harnes
 		if project == "" {
 			project = coworkProject(src.Path, rec.SessionID, rec.Surface)
 		}
-		stamp := ts.UTC().Format(time.RFC3339)
+		// Millisecond precision plus the line index keep two turns in the same
+		// second distinct; ledgers are only second-resolution on disk.
+		stamp := ts.UTC().Format("2006-01-02T15:04:05.000Z07:00")
 		turn := stamp + ":" + strconv.Itoa(lineIndex)
 		names := make([]string, 0, len(rec.Models))
 		for name := range rec.Models {
@@ -863,7 +1082,7 @@ func (p *Parser) parseLedger(ctx context.Context, src harness.Source, cur harnes
 			if tk.IsZero() && cost == nil {
 				continue // nothing recorded for this model
 			}
-			key := ledgerPrefix + rec.SessionID + ":" + stamp + ":" + name
+			key := ledgerPrefix + rec.SessionID + ":" + stamp + ":" + strconv.Itoa(lineIndex) + ":" + name
 			ev := model.UsageEvent{
 				Harness:     model.ClaudeDesktop,
 				DedupKey:    key,
@@ -1104,6 +1323,9 @@ func maxTokens(a, b model.Tokens) model.Tokens {
 	}
 	if b.CacheWrite > a.CacheWrite {
 		a.CacheWrite = b.CacheWrite
+	}
+	if b.CacheWrite1h > a.CacheWrite1h {
+		a.CacheWrite1h = b.CacheWrite1h
 	}
 	if b.Reasoning > a.Reasoning {
 		a.Reasoning = b.Reasoning

@@ -1,0 +1,4 @@
+{"type":"metadata","protocol_version":"1.1","created_at":1742400105000}
+{"type":"config.update","cwd":"/Users/demo/other-work","time":1742400105100}
+{"type":"turn.prompt","input":[{"type":"text","text":"same-named child in another session"}],"origin":{"kind":"user"},"time":1742400106000}
+{"type":"usage.record","model":"kimi-k2","usage":{"inputOther":15,"output":2},"usageScope":"turn","time":1742400106300}

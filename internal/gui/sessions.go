@@ -1,370 +1,332 @@
 package gui
 
 import (
-	"sort"
+	"fmt"
+	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/chart"
 	"github.com/zzstar101/mytoken/internal/model"
 	"github.com/zzstar101/mytoken/internal/query"
 )
 
-func (s *State) sessionsPage(c *ui.Context, pal palette) {
-	rows := filterRows(s.sessions.Rows, s.search)
-	dups := ambiguousSessions(rows)
-	pageHeader(c, pal, "sessions", trf("sessionsN", s.sessions.Total), func() {
-		if segmentedGroup(c, pal, &s.sortIdx, tr("sortBy"), tr("recent"), tr("mostTokens"), tr("mostCost")) {
-			s.loadSessions()
+const sessionListWidth = 380
+
+// sessionsPage is a searchable list of sessions beside the chosen one.
+func (a *App) sessionsPage(c *ui.Context, pal palette) {
+	ui.Row(c).Grow(1).Basis(0).FillWidth().MinHeight(0).Children(func() {
+		ui.Column(c).Width(sessionListWidth).FillHeight().Shrink(0).Padding(0, 14, 14, 20).Gap(10).Children(func() {
+			pageHeader(c, pal, tr("sessions"), nil)
+			if rangePicker(c, &a.rangeSel) {
+				a.rangeChanged()
+			}
+			if ui.SearchField(c, &a.ssQuery).Placeholder(tr("searchSessions")).FillWidth().Changed() {
+				a.filterSessions()
+				a.ssSel = -1
+			}
+			a.sessionFilters(c)
+			a.sessionList(c, pal)
+		})
+		ui.Box(c).Width(1).FillHeight().Background(pal.line).Shrink(0)
+		ui.Column(c).Grow(1).Basis(0).FillHeight().MinWidth(0).Children(func() {
+			a.sessionPane(c, pal)
+		})
+	})
+}
+
+// sessionFilters is the order switch and the tool picker under the search.
+func (a *App) sessionFilters(c *ui.Context) {
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+		if ui.Segmented(c, &a.ssSort, tr("sortRecent"), tr("sortCost")).Changed() {
+			a.ssSel = -1
+			a.loadSessions()
+		}
+		ui.Spacer(c)
+		keys := []string{""}
+		for _, h := range a.ss.tools {
+			keys = append(keys, string(h))
+		}
+		name := func(k string) string {
+			if k == "" {
+				return tr("allTools")
+			}
+			return model.Harness(k).DisplayName()
+		}
+		if k, ok := choice(c, "", keys, name, a.ssTool); ok {
+			a.ssTool = k
+			a.filterSessions()
+			a.ssSel = -1
 		}
 	})
-	if s.provFilter.Key != "" {
-		s.providerFilterBanner(c, pal)
-	}
-	ui.Row(c).Grow(1).Basis(0).Padding(8, 8, 8, 8).Gap(12).Children(func() {
-		// The list.
-		pane(c, pal).Width(380).FillHeight().Shrink(0).Padding(10).Gap(8).Children(func() {
-			ui.SearchField(c, &s.search).FillWidth().Label(tr("search"))
-			if len(rows) == 0 {
-				ui.Column(c).Grow(1).Center().Children(func() {
-					if s.search != "" {
-						emptyState(c, pal, artPicks, tr("noResults"), tr("noResultsSub"))
-					} else {
-						emptyState(c, pal, artStaff, tr("noSessions"), tr("noSessionsSub"))
-					}
-				})
-				return
-			}
-			s.list.Key = func(i int) any {
-				if i < len(rows) {
-					return refOf(rows[i]).key()
-				}
-				return i
-			}
-			// The rows are one focus group: Tab enters the list at the
-			// chosen row, the arrows move among the rows, Home and End take
-			// the focus to the first and the last of those shown, and Enter
-			// and Space open the row, which is also what a click does. The
-			// focus group is used rather than ListState.Selected because a
-			// chosen row of a List is painted in the theme accent, over the
-			// row's own raised background: the fader and the glass would
-			// change with it.
-			ui.List(c, &s.list, len(rows), func(i int) {
-				r := rows[i]
-				ref := refOf(r)
-				row := s.sessionRow(c, pal, r, showInstance(dups, r), s.sel == ref, func() { s.SelectRef(ref) })
-				row.Focusable()
-				if row.Focused() && s.sel != ref {
-					s.SelectRef(ref)
-				}
-			}).Grow(1).Basis(0).FocusGroup(ui.Vertical)
-		})
-		// The detail.
-		ui.Column(c).Grow(1).Basis(0).FillHeight().Children(func() {
-			if s.sel.SessionID == "" {
-				pane(c, pal).Fill().Center().Children(func() {
-					emptyState(c, pal, artStage, tr("pickSession"), tr("pickSub"))
-				})
-				return
-			}
-			s.detailView(c, pal)
-		})
-	})
 }
 
-// sessionRow is one session in a list: harness mark, title, tokens, and a
-// thin class bar. showInstance marks the rows whose session id alone would
-// not say which instance they belong to. It returns the row, so that a
-// list can make it take the keyboard focus.
-func (s *State) sessionRow(c *ui.Context, pal palette, r query.SessionRow, showInstance, selected bool, onClick func()) ui.Element {
-	col := harnessColor(r.Harness)
-	row := ui.Row(c).Padding(9, 12, 9, 10).Gap(11).Radius(12).AlignItems(ui.Center).Cursor(ui.CursorPointer).Role(ui.RoleButton).Transition(hoverFade)
-	switch {
-	case selected:
-		row.Background(pal.raised).Border(1, pal.edge).Shadow(0, 4, 14, -4, pal.lift)
-		// A colored edge on the left, like a lit fader.
-		row.Draw(func(p *ui.Painter, rr ui.Rect) {
-			p.Fill(ui.Rect{X: rr.X + 1, Y: rr.Y + 12, W: 3, H: rr.H - 24}, col, 2)
-		})
-	case row.Hovered():
-		row.Background(pal.hover)
-	}
-	row.Children(func() {
-		harnessBadge(c, r.Harness, 32)
-		ui.Column(c).Grow(1).Basis(0).Gap(4).Children(func() {
-			title := r.Title
-			if title == "" {
-				title = tr("untitled")
-			}
-			ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…")
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, r.Harness.DisplayName()).FontSize(11).TextColor(col).FontWeight(600).SingleLine().Shrink(0)
-				if showInstance {
-					// The raw instance id, never a prettified guess: it is
-					// the only thing that tells the twins apart.
-					chip(c, refOf(r).instanceLabel(), Soyo)
-				}
-				if r.Project != "" {
-					ui.Text(c, "· "+baseName(r.Project)).FontSize(11).TextColor(pal.muted).SingleLine().Ellipsis("…").Shrink(1)
-				}
-				if len(r.Breakdown) > 0 {
-					ui.Text(c, "· "+r.Breakdown[0].Model).FontSize(11).TextColor(pal.muted).SingleLine().Ellipsis("…").Shrink(1)
-				}
-				if r.Children > 0 {
-					ui.Row(c).Gap(2).AlignItems(ui.Center).Shrink(0).Children(func() {
-						ui.Icon(c, icBranch).FontSize(11).TextColor(pal.muted)
-						ui.Textf(c, "%d", r.Children).FontSize(11).TextColor(pal.muted)
-					})
-				}
-			})
-		})
-		ui.Column(c).Gap(1).AlignItems(ui.End).Shrink(0).Children(func() {
-			bigNumber(c, pal, fmtTokens(r.Tokens.Total()), 17)
-			ui.Text(c, fmtAgo(s.Hooks.Now(), r.UpdatedAt)).FontSize(10.5).TextColor(pal.muted).FontFeatures("tnum")
-		})
-	})
-	if row.Clicked() && onClick != nil {
-		onClick()
-	}
-	return row
+// rangeChanged reloads what the shared range governs.
+func (a *App) rangeChanged() {
+	a.ssSel = -1
+	a.pjSel = ""
+	a.reloadPage()
 }
 
-func (s *State) detailView(c *ui.Context, pal palette) {
-	d := s.detail
-	r := d.Row
-	if r.SessionID == "" {
-		pane(c, pal).Fill().Center().Children(func() { ui.Spinner(c) })
+func (a *App) sessionList(c *ui.Context, pal palette) {
+	s := &a.ss
+	if s.err != "" {
+		errorLine(c, pal, s.err)
+	}
+	if !s.ready {
+		emptyState(c, pal, tr("loading"), "")
 		return
 	}
-	col := harnessColor(r.Harness)
-	ui.Scroll(c).Fill().Children(func() {
-		ui.Column(c).Gap(12).Padding(0, 0, 12, 0).Children(func() {
-			// Header: who, what, when, then the figures and the mix.
-			pane(c, pal).Padding(20, 24, 22, 24).Gap(12).Children(func() {
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					harnessBadge(c, r.Harness, 24)
-					chip(c, r.Harness.DisplayName(), col)
-					if inst := refOf(r).instanceLabel(); inst != "" {
-						chip(c, tr("instance")+": "+inst, Soyo)
-					}
-					if r.Children > 0 {
-						chip(c, trf("childrenN", r.Children), Taki)
-					}
-					if r.Tokens.Total() > 50_000_000 {
-						chip(c, tr("heavy"), Anon)
-					}
-					ui.Spacer(c)
-					ui.Text(c, r.SessionID).FontSize(10.5).TextColor(pal.muted.Alpha(0.8)).FontFeatures("tnum").SingleLine().Ellipsis("…").MaxWidth(220)
-				})
-				title := r.Title
-				if title == "" {
-					title = tr("untitled")
+	caption(c, pal, a.sessionCount()).FontSize(11)
+	if len(s.shown) == 0 {
+		emptyState(c, pal, tr("noSessions"), "")
+		return
+	}
+	now := a.now()
+	a.ssList.Selected = &a.ssSel
+	a.ssList.Key = func(i int) any {
+		r := s.rows[s.shown[i]]
+		return sessionKey(r.Harness, r.SessionID)
+	}
+	a.ssList.Label = func(i int) string { return sessionTitle(s.rows[s.shown[i]]) }
+	l := ui.List(c, &a.ssList, len(s.shown), func(i int) {
+		r := s.rows[s.shown[i]]
+		ui.Row(c).Gap(10).Padding(9, 10).AlignItems(ui.Center).Children(func() {
+			toolBadge(c, r.Harness, 26)
+			ui.Column(c).Gap(3).Grow(1).Basis(0).MinWidth(0).Children(func() {
+				ui.Text(c, sessionTitle(r)).FontSize(13).FontWeight(560).TextColor(pal.ink).SingleLine().Ellipsis("…")
+				sub := fmtAgo(now, r.UpdatedAt)
+				if p := projectName(r.Project); p != "" {
+					sub = p + " · " + sub
 				}
-				ui.Text(c, title).FontSize(22).FontWeight(720).TextColor(pal.ink).MaxLines(2)
-				ui.Row(c).Gap(18).Children(func() {
+				caption(c, pal, sub).FontSize(11).SingleLine().Ellipsis("…")
+			})
+			ui.Column(c).Gap(3).AlignItems(ui.End).Shrink(0).Children(func() {
+				ui.Text(c, costText(r.CostUSD, r.Unpriced, r.Requests)).FontSize(13).FontWeight(600).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
+				caption(c, pal, fmtTokens(shown(r.Tokens))).FontSize(11).FontFeatures("tnum").NoWrap()
+			})
+		})
+	}).Grow(1).Basis(0).FillWidth().Label(tr("sessions"))
+	if l.Changed() && a.ssSel >= 0 && a.ssSel < len(s.shown) {
+		a.openSession(s.rows[s.shown[a.ssSel]])
+	}
+}
+
+func (a *App) sessionCount() string {
+	s := &a.ss
+	if len(s.shown) != len(s.rows) {
+		return trf("sessionsMatch", len(s.shown), len(s.rows))
+	}
+	if s.total > len(s.rows) {
+		return trf("sessionsNewest", len(s.rows), s.total)
+	}
+	return trf("sessionsCount", s.total)
+}
+
+// sessionTitle is a session's title, or its tool and id without one.
+func sessionTitle(r query.SessionRow) string {
+	if r.Title != "" {
+		return r.Title
+	}
+	id := r.SessionID
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	return r.Harness.DisplayName() + " · " + id
+}
+
+// projectName is the last element of a project path.
+func projectName(p string) string {
+	for i := len(p) - 1; i >= 0; i-- {
+		if p[i] == '/' || p[i] == '\\' {
+			if i == len(p)-1 {
+				p = p[:i]
+				continue
+			}
+			return p[i+1:]
+		}
+	}
+	return p
+}
+
+// costText is a cost, saying when none of it could be priced.
+func costText(cost float64, unpriced, requests int64) string {
+	if requests > 0 && unpriced == requests {
+		return tr("unpriced")
+	}
+	return fmtUSD(cost)
+}
+
+func (a *App) sessionPane(c *ui.Context, pal palette) {
+	d := &a.sd
+	if d.key == "" {
+		emptyState(c, pal, tr("pickSession"), tr("pickSessionHint"))
+		return
+	}
+	r := d.row
+	ui.Scroll(c.Key("sd-" + d.key)).Grow(1).Basis(0).FillWidth().Children(func() {
+		ui.Column(c).Padding(0, 28, 28, 24).Gap(16).MaxWidth(1000).FillWidth().Children(func() {
+			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+				toolBadge(c, r.Harness, 34)
+				ui.Column(c).Gap(3).Grow(1).Basis(0).MinWidth(0).Children(func() {
+					ui.Text(c, sessionTitle(r)).Font(display).FontSize(19).FontWeight(700).TextColor(pal.ink).SingleLine().Ellipsis("…")
+					meta := r.Harness.DisplayName()
 					if r.Project != "" {
-						metaItem(c, pal, icFolder, shortPath(r.Project))
+						meta += " · " + r.Project
 					}
-					metaItem(c, pal, icClock, fmtWhen(r.StartedAt)+" → "+fmtWhen(r.UpdatedAt))
+					caption(c, pal, meta).SingleLine().Ellipsis("…")
 				})
-				ui.Box(c).Height(1).FillWidth().Margin(6, 0, 4, 0).Background(pal.faint)
-				den := r.Tokens.Input + r.Tokens.CacheRead + r.Tokens.CacheWrite
-				hit := 0.0
-				if den > 0 {
-					hit = float64(r.Tokens.CacheRead) / float64(den)
-				}
-				ui.Row(c).AlignItems(ui.Stretch).Children(func() {
-					figures := []struct {
-						key   string
-						col   ui.Color
-						value string
-					}{
-						{"tokens", Tomori, fmtTokens(r.Tokens.Total())},
-						{"cost", Anon, fmtCostOf(r.CostUSD, r.Requests, r.Unpriced)},
-						{"requests", Rana, fmtInt(r.Requests)},
-						{"cacheHit", Taki, fmtPct(hit)},
-					}
-					for i, f := range figures {
-						if i > 0 {
-							ui.Box(c.Key("rule"+f.key)).Width(1).Margin(4, 18, 4, 0).Background(pal.faint)
+			})
+			errorLine(c, pal, d.err)
+			ui.Row(c).Gap(12).Children(func() {
+				kpi(c, pal, tr("apiEquivalent"), costText(r.CostUSD, r.Unpriced, r.Requests))
+				kpi(c, pal, tr("tokens"), fmtTokens(shown(r.Tokens)))
+				kpi(c, pal, tr("requests"), fmtInt(r.Requests))
+				kpi(c, pal, tr("hitRate"), fmtPct(r.Tokens.HitRate()))
+				kpi(c, pal, tr("duration"), fmtDuration(d.span))
+			})
+			caption(c, pal, fmtDateTime(r.StartedAt)+" → "+fmtDateTime(r.UpdatedAt)).FontSize(11)
+			if !d.ready {
+				emptyState(c, pal, tr("loading"), "")
+				return
+			}
+			if len(d.events) > 1 {
+				a.sessionChart(c, pal)
+			}
+			if len(r.Breakdown) > 0 {
+				a.rcard(c, pal, "sessions1", 0, false).Children(func() {
+					cardTitle(c, pal, tr("byModel"), nil)
+					for i, b := range r.Breakdown {
+						label := b.Model
+						if b.Provider != "" {
+							label += "  ·  " + b.Provider
 						}
-						ui.Column(c.Key(f.key)).Grow(1).Basis(0).Gap(4).Children(func() {
-							ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
-								dot(c, f.col, 6)
-								kicker(c, pal, tr(f.key))
-							})
-							bigNumber(c, pal, f.value, 38)
+						shareRow(c.Key(i), pal, nil, label, costText(b.CostUSD, b.Unpriced, b.Requests), fmtTokens(shown(b.Tokens)), frac(b.CostUSD, r.CostUSD), seriesAt(i))
+					}
+				})
+			}
+			if len(d.children) > 0 {
+				a.rcard(c, pal, "sessions2", 1, false).Children(func() {
+					cardTitle(c, pal, trf("subagentsN", len(d.children)), nil)
+					for i, k := range d.children {
+						ui.Row(c.Key(i)).Gap(10).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, sessionTitle(k)).FontSize(13).TextColor(pal.ink).SingleLine().Ellipsis("…").Grow(1).Basis(0).MinWidth(0)
+							caption(c, pal, fmtTokens(shown(k.Tokens)))
+							ui.Text(c, costText(k.CostUSD, k.Unpriced, k.Requests)).FontSize(13).FontWeight(600).TextColor(pal.ink).FontFeatures("tnum")
 						})
 					}
 				})
-				ui.Column(c).Gap(10).Margin(8, 0, 0, 0).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						kicker(c, pal, tr("composition"))
-						ui.Spacer(c)
-						classLegend(c, pal)
-					})
-					classBar(c, pal, r.Tokens, 10)
-					ui.Row(c).Gap(22).Children(func() {
-						for _, k := range classes {
-							if v := k.get(r.Tokens); v > 0 {
-								miniStat(c.Key(k.key), pal, tr(k.key), fmtTokens(v))
-							}
-						}
-					})
-				})
-			})
-			// Provider × model.
-			models := detailModels(d.Events, r.Breakdown)
-			card(c, pal, tr("breakdown"), nil, func() {
-				s.breakdownTable(c, pal, r.Breakdown, models, r.Tokens.Total())
-			})
-			// Timeline.
-			if len(d.Events) > 1 {
-				card(c, pal, tr("timeline"), func() {
-					ui.Text(c, trf("requestsN", fmtInt(int64(len(d.Events))))).FontSize(11).TextColor(pal.muted)
-				}, func() {
-					timeline(c.Key("tl"+s.sel.key()), pal, d.Events, models, 170)
-				})
 			}
-			// Cache ledger.
-			if cacheJudged(d.Cache) > 1 {
-				card(c, pal, tr("cacheTimeline"), func() { cacheSummary(c, pal, d.Cache) }, func() {
-					cacheTimeline(c.Key("ctl"+s.sel.key()), pal, d.Cache, 150, tr("cacheTimeline"))
-				})
-			}
-			// Subagents.
-			if len(d.Children) > 0 {
-				card(c, pal, tr("subagents"), func() {
-					chev := ui.Icon(c, icChevron).FontSize(14).TextColor(pal.muted).Cursor(ui.CursorPointer)
-					if !s.openKids {
-						chev.Rotate(-90)
-					}
-					if chev.Clicked() {
-						s.openKids = !s.openKids
-					}
-				}, func() {
-					kids := d.Children
-					n := len(kids)
-					if !s.openKids && n > 3 {
-						n = 3
-					}
-					var top int64 = 1
-					for _, k := range kids {
-						if v := k.Tokens.Total(); v > top {
-							top = v
-						}
-					}
-					for i := 0; i < n; i++ {
-						k := kids[i]
-						ui.Column(c.Key(k.SessionID)).Gap(5).Padding(4, 0).Children(func() {
-							ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-								ui.Icon(c, icBranch).FontSize(12).TextColor(Taki)
-								t := k.Title
-								if t == "" {
-									t = k.SessionID
-								}
-								ui.Text(c, t).FontSize(12.5).TextColor(pal.ink).SingleLine().Ellipsis("…").Shrink(1)
-								ui.Spacer(c)
-								if len(k.Breakdown) > 0 {
-									ui.Text(c, k.Breakdown[0].Model).FontSize(11).TextColor(pal.muted)
-								}
-								ui.Text(c, fmtTokens(k.Tokens.Total())).FontSize(12.5).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum")
-							})
-							rankBar(c, pal, float64(k.Tokens.Total())/float64(top), Taki, 5)
-						})
-					}
-					if len(kids) > 3 {
-						more := ui.Text(c, map[bool]string{true: "▲", false: "▼ +" + fmtInt(int64(len(kids)-3))}[s.openKids]).FontSize(11.5).TextColor(Taki).Cursor(ui.CursorPointer)
-						if more.Clicked() {
-							s.openKids = !s.openKids
-						}
-					}
-				})
-			}
+			a.requestTable(c, pal)
 		})
 	})
 }
 
-func metaItem(c *ui.Context, pal palette, ic *ui.SVG, text string) {
-	ui.Row(c).Gap(5).AlignItems(ui.Center).Shrink(1).Children(func() {
-		ui.Icon(c, ic).FontSize(12).TextColor(pal.muted)
-		ui.Text(c, text).FontSize(12).TextColor(pal.muted).SingleLine().Ellipsis("…")
+func kpi(c *ui.Context, pal palette, label, value string) {
+	ui.Column(c).Gap(4).Padding(12, 14).Radius(12).Background(pal.card).Border(1, pal.line).Grow(1).Basis(0).MinWidth(0).Children(func() {
+		caption(c, pal, label).FontSize(11).NoWrap()
+		ui.Text(c, value).FontSize(18).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum").SingleLine().Ellipsis("…")
 	})
 }
 
-// detailModels orders a session's models, biggest first, so colors agree
-// between the breakdown and the timeline.
-func detailModels(evs []query.AttributedEvent, bd []query.ProviderModel) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, b := range bd {
-		if !seen[b.Model] {
-			seen[b.Model] = true
-			out = append(out, b.Model)
-		}
+// sessionChart is the session's running cost over its requests.
+func (a *App) sessionChart(c *ui.Context, pal palette) {
+	d := &a.sd
+	n := len(d.events)
+	xs := make([]float64, n)
+	t0 := d.events[0].Timestamp
+	for i, e := range d.events {
+		xs[i] = e.Timestamp.Sub(t0).Seconds()
 	}
-	extra := map[string]int64{}
-	for _, e := range evs {
-		if !seen[e.Model] {
-			extra[e.Model] += e.Tokens.Total()
-		}
+	hi := d.cum[n-1]
+	if hi <= 0 {
+		hi = 1
 	}
-	var rest []string
-	for m := range extra {
-		rest = append(rest, m)
+	span := max(xs[n-1], 1)
+	x := chart.NewLinear(0, span)
+	y := chart.NewLinear(0, hi).Nice(4)
+	y.Format = fmtUSDShort
+	yt := y.Ticks(4)
+	var xt []chart.Tick
+	for _, f := range []float64{0, 0.5, 1} {
+		xt = append(xt, chart.Tick{At: x.At(span * f), Label: d.events[0].Timestamp.Add(time.Duration(span*f) * time.Second).Format("15:04")})
 	}
-	sort.Slice(rest, func(i, j int) bool { return extra[rest[i]] > extra[rest[j]] })
-	return append(out, rest...)
+	accent, line := pal.accent, pal.line
+	a.rcard(c, pal, "sessions3", 2, false).Children(func() {
+		cardTitle(c, pal, tr("costOverTime"), nil)
+		chart.Plot(c, chart.Axes{Left: yt, Bottom: xt, Label: func(_ chart.Side, t chart.Tick) {
+			ui.Text(c, t.Label).NoWrap().FontSize(11).TextColor(pal.muted).FontFeatures("tnum")
+		}}, func(area ui.Element) {
+			area.Draw(func(p *ui.Painter, r ui.Rect) {
+				for _, t := range yt {
+					p.Line(r.X, chart.Y(r, t.At), r.X+r.W, chart.Y(r, t.At), 1, line)
+				}
+				// A step line: the cost rises at each request.
+				path := &ui.Path{}
+				fill := &ui.Path{}
+				px := func(i int) float32 { return chart.X(r, x.At(xs[i])) }
+				py := func(v float64) float32 { return chart.Y(r, y.At(v)) }
+				path.MoveTo(px(0), py(0))
+				fill.MoveTo(px(0), py(0))
+				prev := 0.0
+				for i := range xs {
+					path.LineTo(px(i), py(prev))
+					path.LineTo(px(i), py(d.cum[i]))
+					fill.LineTo(px(i), py(prev))
+					fill.LineTo(px(i), py(d.cum[i]))
+					prev = d.cum[i]
+				}
+				fill.LineTo(px(n-1), py(0))
+				fill.Close()
+				p.FillPathGradient(fill, ui.LinearGradient{From: accent.Alpha(0.22), To: accent.Alpha(0.02), Angle: 180})
+				p.StrokePath(path, 2, accent)
+			})
+		}).Label(tr("costOverTime")).Height(160).GapX(8).GapY(6)
+	})
 }
 
-func (s *State) breakdownTable(c *ui.Context, pal palette, bd []query.ProviderModel, models []string, total int64) {
-	if len(bd) == 0 {
-		ui.Text(c, tr("noData")).FontSize(12).TextColor(pal.muted)
+// requestTable lists the session's requests, newest first.
+func (a *App) requestTable(c *ui.Context, pal palette) {
+	d := &a.sd
+	n := len(d.events)
+	if n == 0 {
 		return
 	}
-	colOf := func(m string) ui.Color {
-		for i, x := range models {
-			if x == m {
-				return bandAt(i)
-			}
-		}
-		return pal.muted
-	}
-	ui.Column(c).Gap(10).Children(func() {
-		for _, b := range bd {
-			col := colOf(b.Model)
-			ui.Column(c.Key(b.Provider + "|" + b.Model)).Gap(6).Children(func() {
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					dot(c, col, 9)
-					ui.Text(c, b.Model).FontSize(13).FontWeight(650).TextColor(pal.ink).SingleLine().Ellipsis("…").Shrink(1)
-					ui.Text(c, "@ "+b.Provider).FontSize(12).TextColor(pal.muted).SingleLine()
-					attribChip(c, pal, b.Attrib)
-					ui.Spacer(c)
-					ui.Text(c, trf("requestsN", fmtInt(b.Requests))).FontSize(11).TextColor(pal.muted)
-					ui.Text(c, fmtCostOf(b.CostUSD, b.Requests, b.Unpriced)).FontSize(12).TextColor(pal.muted).FontFeatures("tnum").Width(64).TextAlign(ui.End)
-					ui.Text(c, fmtTokens(b.Tokens.Total())).FontSize(13).FontWeight(750).TextColor(pal.ink).FontFeatures("tnum").Width(70).TextAlign(ui.End)
-				})
-				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					classBar(c, pal, b.Tokens, 6).Grow(1).Basis(0)
-					share := 0.0
-					if total > 0 {
-						share = float64(b.Tokens.Total()) / float64(total)
-					}
-					ui.Text(c, fmtPct(share)).FontSize(11).TextColor(pal.muted).FontFeatures("tnum").Width(44).TextAlign(ui.End)
-				})
+	a.rcard(c, pal, "sessions4", 3, false).Gap(8).Children(func() {
+		cardTitle(c, pal, trf("requestsN", n), nil)
+		head := func() {
+			ui.Row(c).Gap(10).Padding(0, 4).Children(func() {
+				col := func(s string, w float32) {
+					caption(c, pal, s).FontSize(11).Width(w).TextAlign(ui.End).NoWrap()
+				}
+				caption(c, pal, tr("time")).FontSize(11).Width(64).NoWrap()
+				caption(c, pal, tr("model")).FontSize(11).Grow(1).Basis(0).NoWrap()
+				col(tr("input"), 70)
+				col(tr("output"), 70)
+				col(tr("cacheRead"), 80)
+				col(tr("cost"), 70)
 			})
 		}
+		head()
+		// The table holds at most a screenful; long sessions scroll in it.
+		ui.List(c, &a.sdEvents, n, func(i int) {
+			e := d.events[n-1-i]
+			ui.Row(c).Gap(10).Padding(5, 4).AlignItems(ui.Center).Children(func() {
+				num := func(s string, w float32) {
+					ui.Text(c, s).FontSize(12).TextColor(pal.ink).FontFeatures("tnum").Width(w).TextAlign(ui.End).NoWrap()
+				}
+				caption(c, pal, e.Timestamp.Format("15:04:05")).FontFeatures("tnum").Width(64).NoWrap()
+				ui.Text(c, e.Model).FontSize(12).TextColor(pal.ink).Grow(1).Basis(0).MinWidth(0).SingleLine().Ellipsis("…")
+				num(fmtTokens(e.Tokens.Input), 70)
+				num(fmtTokens(e.Tokens.Output+e.Tokens.Reasoning), 70)
+				num(fmtTokens(e.Tokens.CacheRead), 80)
+				cost := fmtUSD(e.Cost)
+				if !e.Priced {
+					cost = "—"
+				}
+				num(cost, 70)
+			})
+		}).Height(float32(min(n, 12))*30 + 4).FillWidth().Label(tr("requests"))
 	})
 }
 
-// attribChip tells how sure the provider is; nothing for the log's own word.
-func attribChip(c *ui.Context, pal palette, a model.AttribSource) {
-	if a == model.AttribLog || a == "" {
-		return
-	}
-	col := map[model.AttribSource]ui.Color{
-		model.AttribCCSwitch: Rana,
-		model.AttribConfig:   Tomori,
-		model.AttribUserRule: Taki,
-		model.AttribInferred: Soyo,
-	}[a]
-	chip(c, attribLabel(a), col)
-}
+var _ = fmt.Sprint

@@ -1,465 +1,219 @@
 package gui
 
 import (
-	"fmt"
+	_ "embed"
 	"time"
 
 	"github.com/egoist/mygo/ui"
+
 	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/query"
 )
+
+// Window geometry the app's main.go uses.
+const (
+	// TrafficLightX and TrafficLightY place macOS's window buttons inside
+	// the sidebar, above the logo.
+	TrafficLightX = 18
+	TrafficLightY = 18
+	sidebarWidth  = 208
+	dragHeight    = 30
+)
+
+var navItems = []struct {
+	id string
+	ic *ui.SVG
+}{{"overview", icOverview}, {"sessions", icSessions}, {"ranking", icRanking}, {"projects", icProjects}, {"settings", icSettings}}
+
+func (a *App) appearance() string {
+	if a.d.Prefs == nil {
+		return ""
+	}
+	return a.d.Prefs.Pref(PrefAppearance)
+}
 
 // MainView is the main window's content.
-func (s *State) MainView(c *ui.Context) {
-	pal := applyTheme(c)
-	// A page switch drops the auxiliary data of the page being entered, so the
-	// settings cards reload when the user goes there and never on a data change.
-	s.enterPage()
-	c.Root().Background(ui.Transparent)
-	// Window buttons on the right (Windows, Linux) sit over the page's
-	// header, so the page starts below them.
-	pageTop := float32(0)
-	if bar := c.TitleBar(); bar.Right > 0 {
-		pageTop = max(bar.Height-SidebarInset, 0)
-	}
-	ui.Box(c).Fill().Draw(aurora(pal)).Children(func() {
-		ui.Row(c).Fill().Padding(SidebarInset).Gap(14).Children(func() {
-			s.sidebar(c, pal)
-			// Keyed by page, so that every page rises in afresh.
-			ui.Column(c.Key("page-"+s.page)).Grow(1).Basis(0).Fill().Padding(pageTop, 0, 0, 0).
-				Transition(ui.ElementTransition{Duration: 320 * time.Millisecond, Enter: &ui.Motion{Y: 10}}).
-				Children(func() {
-					switch s.page {
-					case "sessions":
-						s.sessionsPage(c, pal)
-					case "ranking":
-						s.rankingPage(c, pal)
-					case "projects":
-						s.projectsPage(c, pal)
-					case "cache":
-						s.cachePage(c, pal)
-					case "relays":
-						s.relaysPage(c, pal)
-					case "settings":
-						s.settingsPage(c, pal)
-					default:
-						s.overviewPage(c, pal)
-					}
-				})
+func (a *App) MainView(c *ui.Context) {
+	pal := applyTheme(c, a.appearance())
+	c.Root().Background(pal.bg)
+	ui.Row(c).Fill().Children(func() {
+		a.sidebar(c, pal)
+		ui.Box(c).Width(1).FillHeight().Background(pal.line).Shrink(0)
+		ui.Column(c.Key("page-" + a.page)).Grow(1).Basis(0).FillHeight().MinWidth(0).Children(func() {
+			// The window drags by the strip above the page, as by a title bar.
+			bar := c.TitleBar()
+			ui.Box(c).FillWidth().Height(max(dragHeight, bar.Height)).Shrink(0).DragWindow()
+			switch a.page {
+			case "sessions":
+				a.sessionsPage(c, pal)
+			case "ranking":
+				scrollPage(c, func() { a.rankingPage(c, pal) })
+			case "projects":
+				a.projectsPage(c, pal)
+			case "settings":
+				a.settingsPage(c, pal)
+			default:
+				scrollPage(c, func() { a.overviewPage(c, pal) })
+			}
 		})
-		// The window drags by its top edge, as a hidden title bar's would.
-		ui.Box(c).Absolute().Top(0).Left(240).Right(0).Height(30).DragWindow()
 	})
 }
 
-// navItems are the sidebar's pages, each with its member.
-var navItems = []struct {
-	id  string
-	ic  *ui.SVG
-	col ui.Color
-}{{"overview", icOverview, Tomori}, {"sessions", icSessions, Anon}, {"ranking", icRanking, Rana}, {"projects", icProjects, Soyo}, {"cache", icCache, cacheColor}, {"relays", icScale, relayColor}, {"settings", icSettings, Taki}}
+// scrollPage is the scrolling body of a page.
+func scrollPage(c *ui.Context, body func()) {
+	ui.Scroll(c).Grow(1).Basis(0).FillWidth().Children(func() {
+		ui.Column(c).Padding(0, 28, 28, 28).Gap(16).MaxWidth(1240).FillWidth().Children(body)
+	})
+}
 
-// SidebarInset is the window padding around the sidebar card. The main
-// window puts the close button TrafficLightX, TrafficLightY from its corner:
-// inside the card, about where the logo's left edge is.
-const (
-	SidebarInset  = 10
-	TrafficLightX = SidebarInset + 18
-	TrafficLightY = SidebarInset + 16
-)
-
-func (s *State) sidebar(c *ui.Context, pal palette) {
+func (a *App) sidebar(c *ui.Context, pal palette) {
 	bar := c.TitleBar()
-	top := float32(20)
-	if bar.Left > 0 && bar.Height > 0 {
-		// Traffic lights on the left: they are centred in the title bar, so
-		// the logo goes a little below their bottom edge, measured from the
-		// card's top.
-		const button = 14
-		top = bar.Height/2 + button/2 + 14 - SidebarInset
+	top := float32(22)
+	if bar.Left > 0 {
+		// The window buttons sit at the top left: the logo goes below them.
+		top = TrafficLightY + 30
 	}
-	pane(c, pal).Width(214).FillHeight().Shrink(0).Padding(top, 12, 14, 12).Gap(6).Children(func() {
-		ui.Column(c).Padding(2, 8, 20, 8).Gap(5).DragWindow().Children(func() {
+	ui.Column(c).Width(sidebarWidth).FillHeight().Shrink(0).Background(pal.side).Padding(top, 10, 14, 10).Gap(18).Children(func() {
+		ui.Row(c).Gap(9).AlignItems(ui.Center).Padding(0, 10).DragWindow().Children(func() {
 			logo(c, pal, 22)
-			ui.Text(c, "token × harness × model").FontSize(10.5).TextColor(pal.muted).LetterSpacing(0.5)
+			ui.Text(c, "MyToken").Font(display).FontSize(16).FontWeight(700).TextColor(pal.ink)
 		})
-		// The pages are a tab list: one tab stop, the arrows move the focus
-		// among the rows, Home and End take it to the first and the last,
-		// and Enter and Space choose. The page follows the focused row, so
-		// the keyboard needs no key handling of its own here.
-		nav := ui.Column(c).Gap(2).Role(ui.RoleTabList).Label(tr("navigation")).FocusGroup(ui.Vertical)
-		nav.Children(func() {
-			// One raised pill glides behind the current page. The rows are
-			// built first, unstyled, so that the page the keyboard moved to
-			// is known before anything is painted and before the page column
-			// is built: the pill, the accents and the page change together.
-			rows := make([]ui.Element, 0, len(navItems))
-			for _, it := range navItems {
-				rows = append(rows, ui.Row(c.Key(it.id)).Height(38).Focusable().
-					Padding(0, 12).Gap(11).Radius(12).AlignItems(ui.Center).
-					Cursor(ui.CursorPointer).Role(ui.RoleTab).Label(tr(it.id)).Transition(hoverFade))
-			}
-			for i, it := range navItems {
-				if rows[i].Focused() && s.page != it.id {
-					s.page = it.id
-				}
-			}
-			cur := -1
-			for i, it := range navItems {
-				on := s.page == it.id
-				row := rows[i]
-				if on {
-					cur = i
-				}
-				row.Checked(on)
-				if !on && row.Hovered() {
-					row.Background(pal.hover)
-				}
-				row.Children(func() {
-					col := pal.muted
-					if on {
-						col = it.col
-					}
-					ui.Icon(c, it.ic).FontSize(16).TextColor(col)
-					w, ink := 550, pal.ink.Alpha(0.78)
-					if on {
-						w, ink = 680, pal.ink
-					}
-					ui.Text(c, tr(it.id)).FontSize(13.5).FontWeight(w).TextColor(ink)
-					ui.Spacer(c)
-					if it.id == "sessions" && s.sessions.Total > 0 {
-						ui.Text(c, fmtInt(int64(s.sessions.Total))).FontSize(11).TextColor(pal.muted).FontFeatures("tnum")
-					}
-					if on {
-						ui.Box(c).Size(10, 12).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
-							pick(p, r.X+r.W/2, r.Y+r.H/2, 11, -0.35, it.col)
-						})
-					}
-				})
-				if row.Clicked() {
-					s.page = it.id
-				}
-			}
-			glider(c, nav, rows, cur, 0, 0, 12, pal.raised, pal.edge, pal.lift)
+		a.nav(c, pal)
+		ui.Scroll(c).Grow(1).Basis(0).FillWidth().Children(func() {
+			a.sideToday(c, pal)
 		})
-		ui.Spacer(c)
-		s.todayMini(c, pal)
-		s.scanStatus(c, pal)
+		a.sidebarFooter(c, pal)
 	})
 }
 
-// todayMini is the sidebar's little "today" card.
-func (s *State) todayMini(c *ui.Context, pal palette) {
-	t := s.today.Totals
-	ui.Column(c).Padding(14, 14, 12, 14).Gap(4).Radius(14).Background(pal.well).Border(1, pal.faint).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-			kicker(c, pal, tr("today"))
-			ui.Spacer(c)
-			ui.Text(c, fmtCostOf(t.CostUSD, t.Requests, t.Unpriced)).FontSize(11.5).FontWeight(650).TextColor(Anon.Mix(pal.ink, 0.15)).FontFeatures("tnum")
-		})
-		bigNumber(c, pal, fmtTokens(t.Tokens.Total()), 32)
-		classBar(c, pal, t.Tokens, 4).Margin(4, 0, 0, 0)
+// nav is the page list: an icon, a name and, for some pages, a live value;
+// the selection slides from page to page.
+func (a *App) nav(c *ui.Context, pal palette) {
+	list := ui.Column(c.Key("nav")).Gap(2).Role(ui.RoleList).Label(tr("navigation"))
+	mk := a.slide(c, list, "nav", "nav-"+a.page)
+	sel := pal.selected
+	list.Draw(func(p *ui.Painter, r ui.Rect) {
+		if mk.W > 0 {
+			p.Fill(ui.Rect{X: r.X + mk.X, Y: r.Y + mk.Y, W: mk.W, H: mk.H}, sel, 9)
+		}
 	})
-}
-
-// scanStatus says whether the index is current; while a scan runs the five
-// marks bounce like a level meter.
-func (s *State) scanStatus(c *ui.Context, pal palette) {
-	done, total := 0, 0
-	if s.Hooks.Progress != nil {
-		done, total = s.Hooks.Progress()
-	}
-	live := total > 0 && done < total
-	ui.Row(c).Padding(10, 8, 0, 8).Gap(9).AlignItems(ui.Center).Children(func() {
-		bangs(c, 11, live)
-		if live {
-			ui.Textf(c, "%s %d/%d", tr("scanning"), done, total).FontSize(11).TextColor(pal.muted).FontFeatures("tnum")
-			c.After(500 * time.Millisecond)
-		} else {
-			ui.Text(c, tr("upToDate")).FontSize(11).TextColor(pal.muted)
+	list.Children(func() {
+		for _, it := range navItems {
+			on := a.page == it.id
+			row := ui.Row(c.Key(it.id)).Gap(10).AlignItems(ui.Center).Padding(7, 10).Radius(9).Cursor(ui.CursorPointer)
+			a.mark("nav-"+it.id, row)
+			if row.Hovered() && !on {
+				row.Background(pal.hover.Alpha(0.6))
+			}
+			ink, icCol := pal.muted, pal.muted
+			if on {
+				ink, icCol = pal.ink, pal.accent
+			} else if row.Hovered() {
+				ink = pal.ink
+			}
+			row.Children(func() {
+				ui.Icon(c, it.ic).FontSize(16).TextColor(row.AnimateColor("ic", icCol, quick)).Shrink(0)
+				ui.Text(c, tr(it.id)).FontSize(13.5).FontWeight(map[bool]int{true: 650, false: 500}[on]).TextColor(row.AnimateColor("tx", ink, quick)).SingleLine().Shrink(1).MinWidth(0)
+				ui.Spacer(c)
+				a.navValue(c, pal, it.id)
+			})
+			if row.Clicked() {
+				a.goTo(it.id)
+			}
 		}
 	})
 }
 
-// pageHeader is a page's title with a kicker above it and optional
-// controls on the right.
-func pageHeader(c *ui.Context, pal palette, page, sub string, right func()) {
-	ui.Row(c).Padding(12, 6, 6, 6).AlignItems(ui.End).Gap(12).DragWindow().Children(func() {
-		ui.Column(c).Gap(0).Children(func() {
-			k := tr(page)
-			k = "" // the title says it
-			if sub != "" {
-				if k != "" {
-					k += "  ·  "
-				}
-				k += sub
-			}
-			kicker(c, pal, k)
-			ui.Text(c, tr(page)).Font(display).FontSize(30).FontWeight(750).TextColor(pal.ink).LetterSpacing(-0.6).SingleLine().Margin(4, 0, 0, 0)
-		})
-		ui.Spacer(c)
-		if right != nil {
-			ui.Box(c).Padding(0, 0, 8, 0).Children(right)
-		}
-	})
-}
-
-func (s *State) spanSwitch(c *ui.Context, pal palette) {
-	labels := make([]string, len(spanKeys))
-	for i, k := range spanKeys {
-		labels[i] = tr(k)
-	}
-	if segmentedGroup(c, pal, &s.span, tr("span"), labels...) {
-		s.setSpan()
-	}
-}
-
-// rise wraps the i-th block of a page so that blocks drift up in turn.
-func rise(c *ui.Context, i int, body func()) ui.Element {
-	return ui.Column(c.Key(fmt.Sprint("rise", i))).Gap(14).
-		Transition(ui.ElementTransition{Duration: time.Duration(380+i*120) * time.Millisecond, Enter: &ui.Motion{Y: 18}}).
-		Children(body)
-}
-
-func (s *State) overviewPage(c *ui.Context, pal palette) {
-	ov := s.ov
-	now := s.Hooks.Now()
-	sub := now.Format("Monday, January 2")
-	if Lang() == "zh" {
-		sub = now.Format("2006 年 1 月 2 日 ") + []string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}[now.Weekday()]
-	}
-	pageHeader(c, pal, "overview", sub, func() { s.spanSwitch(c, pal) })
-	ui.Scroll(c).Grow(1).Children(func() {
-		ui.Column(c).Padding(8, 6, 18, 6).Gap(14).Children(func() {
-			s.unpricedBanner(c, pal)
-			rise(c, 0, func() { s.hero(c, pal, ov) })
-			rise(c, 1, func() {
-				ui.Row(c).Gap(14).AlignItems(ui.Stretch).Children(func() {
-					card(c, pal, tr("trend"), func() { classLegend(c, pal) }, func() {
-						stackedBars(c.Key(fmt.Sprint("bars", ov.Span)), pal, ov.Daily, false, 230, tr("trend"))
-					}).Grow(1).Basis(0)
-					card(c, pal, tr("composition"), nil, func() {
-						ui.Column(c).Gap(16).AlignItems(ui.Center).Children(func() {
-							donut(c.Key(fmt.Sprint("donut", ov.Span)), pal, ov.Totals.Tokens, 150)
-							ui.Column(c).FillWidth().Gap(7).Children(func() {
-								total := float64(ov.Totals.Tokens.Total())
-								for _, k := range classes {
-									v := k.get(ov.Totals.Tokens)
-									ui.Row(c.Key(k.key)).Gap(8).AlignItems(ui.Center).Children(func() {
-										dot(c, k.color, 7)
-										ui.Text(c, tr(k.key)).FontSize(12).TextColor(pal.ink.Alpha(0.85))
-										ui.Spacer(c)
-										ui.Text(c, fmtTokens(v)).FontSize(12).FontWeight(650).TextColor(pal.ink).FontFeatures("tnum")
-										share := 0.0
-										if total > 0 {
-											share = float64(v) / total
-										}
-										ui.Text(c, fmtPct(share)).FontSize(11).TextColor(pal.muted).FontFeatures("tnum").Width(44).TextAlign(ui.End)
-									})
-								}
-							})
-						})
-					}).Width(290).Shrink(0)
-				})
-			})
-			rise(c, 2, func() {
-				ui.Row(c).Gap(14).AlignItems(ui.Stretch).Children(func() {
-					card(c, pal, tr("activity"), func() { heatLegend(c, pal) }, func() {
-						heatmap(c, pal, ov.Heat, 132)
-						ui.Row(c).Gap(28).Children(func() {
-							if b, ok := busiest(ov.Heat); ok {
-								miniStat(c, pal, tr("busiestDay"), b.Day.Format("01-02")+" · "+fmtTokens(b.Tokens.Total()))
-							}
-							miniStat(c, pal, tr("streak"), trf("days", streak(ov.Heat)))
-							if days := activeDays(ov.Heat); days > 0 {
-								miniStat(c, pal, tr("perDay"), fmtTokens(sumTokens(ov.Heat)/int64(days)))
-							}
-						})
-					}).Grow(1).Basis(0)
-					card(c, pal, tr("topModels"), nil, func() {
-						s.bucketList(c, pal, topN(ov.Models, 6, "…"), 6, true, false)
-					}).Width(330).Shrink(0)
-				})
-			})
-			rise(c, 3, func() {
-				ui.Row(c).Gap(14).AlignItems(ui.Stretch).Children(func() {
-					card(c, pal, tr("byHarness"), nil, func() {
-						s.bucketList(c, pal, ov.Harnesses, 6, false, true)
-					}).Grow(1).Basis(0)
-					card(c, pal, tr("byProvider"), nil, func() {
-						s.providerList(c, pal, ov.Providers, ov.ProviderErr, 5)
-					}).Grow(1).Basis(0)
-				})
-			})
-			rise(c, 4, func() { s.recentCard(c, pal, ov.Active) })
-		})
-	})
-}
-
-func activeDays(days []query.Point) int {
-	n := 0
-	for _, d := range days {
-		if d.Tokens.Total() > 0 {
-			n++
-		}
-	}
-	return n
-}
-
-func sumTokens(days []query.Point) int64 {
-	var n int64
-	for _, d := range days {
-		n += d.Tokens.Total()
-	}
-	return n
-}
-
-func miniStat(c *ui.Context, pal palette, label, value string) {
-	ui.Column(c).Gap(2).Children(func() {
-		ui.Text(c, label).FontSize(10.5).TextColor(pal.muted)
-		ui.Text(c, value).FontSize(13).FontWeight(680).TextColor(pal.ink).FontFeatures("tnum")
-	})
-}
-
-func classLegend(c *ui.Context, pal palette) {
-	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-		for _, k := range classes {
-			ui.Row(c.Key(k.key)).Gap(5).AlignItems(ui.Center).Children(func() {
-				dot(c, k.color, 6)
-				ui.Text(c, tr(k.key)).FontSize(11).TextColor(pal.muted)
-			})
-		}
-	})
-}
-
-// hero is the overview's headline: the span's tokens counting up in large
-// type, three more figures beside them, and the days drawn as one melody
-// along the bottom.
-func (s *State) hero(c *ui.Context, pal palette, ov Overview) {
-	t, pv := ov.Totals, ov.Prev
-	pane(c, pal).Clip().Children(func() {
-		ui.Row(c).Padding(22, 28, 4, 28).Gap(0).AlignItems(ui.Stretch).Children(func() {
-			ui.Column(c).Grow(1).Basis(0).Gap(2).Children(func() {
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					dot(c, Tomori, 7)
-					kicker(c, pal, tr("tokens")+"  ·  "+tr(spanKeys[clampSpan(s.span)]))
-				})
-				countUp(c, pal, float64(t.Tokens.Total()), func(v float64) string { return fmtTokens(int64(v)) }, 72)
-				ui.Row(c).Gap(12).AlignItems(ui.Center).Height(18).Children(func() {
-					delta(c, pal, float64(t.Tokens.Total()), float64(pv.Tokens.Total()))
-					ui.Text(c, fmtInt(t.Tokens.Total())+" tokens").FontSize(11).TextColor(pal.muted).FontFeatures("tnum")
-				})
-			})
-			metric := func(key string, col ui.Color, value string, cur, prev float64, foot string) {
-				ui.Box(c.Key("rule"+key)).Width(1).Margin(6, 0, 10, 0).Background(pal.faint)
-				ui.Column(c.Key(key)).Width(168).Padding(4, 0, 0, 24).Gap(6).Children(func() {
-					ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
-						dot(c, col, 6)
-						kicker(c, pal, tr(key))
-					})
-					bigNumber(c, pal, value, 40)
-					ui.Row(c).Height(16).AlignItems(ui.Center).Children(func() {
-						if prev > 0 {
-							delta(c, pal, cur, prev)
-						} else if foot != "" {
-							ui.Text(c, foot).FontSize(11).TextColor(pal.muted).FontFeatures("tnum").SingleLine()
-						}
-					})
-				})
-			}
-			metric("cost", Anon, fmtCostOf(t.CostUSD, t.Requests, t.Unpriced), t.CostUSD, pv.CostUSD, "")
-			metric("requests", Rana, fmtTokens(t.Requests), float64(t.Requests), float64(pv.Requests), trf("sessionsN", t.Sessions))
-			metric("cacheHit", Taki, fmtPct(t.CacheHit), t.CacheHit, pv.CacheHit, tr("cacheRead")+" "+fmtTokens(t.Tokens.CacheRead))
-		})
-		heroWave(c.Key(fmt.Sprint("wave", ov.Span)), pal, ov.Daily, 92, tr("trend"))
-	})
-}
-
-func clampSpan(i int) int {
-	if i < 0 || i >= len(spanKeys) {
-		return 1
-	}
-	return i
-}
-
-// bucketList shows ranked buckets with a share bar each.
-func (s *State) bucketList(c *ui.Context, pal palette, bs []query.Bucket, max int, showCost, harnesses bool) {
-	if len(bs) == 0 {
-		ui.Text(c, tr("noData")).FontSize(12).TextColor(pal.muted)
+// navValue is a page's live value beside its name.
+func (a *App) navValue(c *ui.Context, pal palette, page string) {
+	if !a.ov.ready {
 		return
 	}
-	var top int64
-	for _, b := range bs {
-		if v := b.Tokens.Total(); v > top {
-			top = v
+	switch page {
+	case "overview":
+		ui.Text(c, fmtUSDShort(a.ov.today.CostUSD)).FontSize(12).TextColor(pal.muted).FontFeatures("tnum").NoWrap().
+			ContentTransition(ui.ContentTransition{Numeric: true})
+	case "sessions":
+		if n := len(a.ov.active); n > 0 {
+			ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+				liveDot(c, pal)
+				ui.Text(c, itoa(n)).FontSize(12).TextColor(pal.muted).FontFeatures("tnum").NoWrap()
+			})
 		}
 	}
-	var all int64
-	for _, b := range bs {
-		all += b.Tokens.Total()
+}
+
+// liveDot is the green dot of something running, breathing unless motion
+// is reduced.
+func liveDot(c *ui.Context, pal palette) {
+	good := pal.good
+	still := c.Preferences().ReduceMotion
+	ui.Box(c).Size(10, 10).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
+		cx, cy := r.X+r.W/2, r.Y+r.H/2
+		if !still {
+			k := float32(p.Now().UnixMilli()%2000) / 2000
+			rad := 3 + 2.5*k
+			p.Fill(ui.Rect{X: cx - rad, Y: cy - rad, W: rad * 2, H: rad * 2}, good.Alpha(0.35*(1-k)), rad)
+			p.After(time.Second / 20)
+		}
+		p.Fill(ui.Rect{X: cx - 3, Y: cy - 3, W: 6, H: 6}, good, 3)
+	})
+}
+
+// sideToday lists today's spend by tool under the pages.
+func (a *App) sideToday(c *ui.Context, pal palette) {
+	if !a.ov.ready || len(a.ov.todayTools) == 0 {
+		return
 	}
-	ui.Column(c).Gap(10).Children(func() {
-		for i, b := range bs {
-			if i >= max {
-				break
+	ui.Column(c).Gap(4).Children(func() {
+		ui.Text(c, tr("today")).FontSize(11).FontWeight(650).TextColor(pal.faint).Padding(0, 10, 4, 10)
+		for _, b := range a.ov.todayTools {
+			if b.CostUSD <= 0 {
+				continue
 			}
-			col := bandAt(i)
-			if harnesses {
-				col = harnessColor(model.Harness(b.Key))
-			}
-			ui.Column(c.Key(b.Key)).Gap(5).Children(func() {
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					if harnesses {
-						harnessMark(c, model.Harness(b.Key), 15)
-					} else {
-						dot(c, col, 8)
-					}
-					label := b.Label
-					if label == "" {
-						label = b.Key
-					}
-					ui.Text(c, label).FontSize(12.5).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…").Shrink(1)
+			h := model.Harness(b.Key)
+			ui.Row(c.Key("st-"+b.Key)).Gap(9).AlignItems(ui.Center).Padding(4, 10).
+				Transition(ui.ElementTransition{Animation: &snappy, Position: true, Enter: &ui.Motion{Opacity: 0, Collapse: true}, Exit: &ui.Motion{Opacity: 0, Collapse: true}}).
+				Children(func() {
+					toolBadge(c, h, 18)
+					ui.Text(c, h.DisplayName()).FontSize(12.5).TextColor(pal.ink.Alpha(0.85)).SingleLine().Shrink(1).MinWidth(0)
 					ui.Spacer(c)
-					if showCost {
-						ui.Text(c, fmtCostOf(b.CostUSD, b.Requests, b.Unpriced)).FontSize(11).TextColor(pal.muted).FontFeatures("tnum")
-					}
-					ui.Text(c, fmtTokens(b.Tokens.Total())).FontSize(12.5).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum")
+					ui.Text(c, fmtUSDShort(b.CostUSD)).FontSize(12).TextColor(pal.muted).FontFeatures("tnum").NoWrap().
+						ContentTransition(ui.ContentTransition{Numeric: true})
 				})
-				rankBar(c, pal, float64(b.Tokens.Total())/float64(top), col, 4)
-			})
 		}
 	})
 }
 
-// recentCard lists the latest sessions; a click opens one.
-func (s *State) recentCard(c *ui.Context, pal palette, rows []query.SessionRow) {
-	card(c, pal, tr("recent"), nil, func() {
-		if len(rows) == 0 {
-			emptyState(c, pal, artStaff, tr("noSessions"), tr("noSessionsSub"))
+// sidebarFooter says what is running, or that nothing is.
+func (a *App) sidebarFooter(c *ui.Context, pal palette) {
+	if !a.ov.ready {
+		return
+	}
+	act := a.ov.active
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(10, 12).Radius(10).Background(pal.card.Alpha(0.6)).Children(func() {
+		if len(act) == 0 {
+			ui.Box(c).Size(6, 6).Radius(3).Background(pal.faint).Shrink(0)
+			caption(c, pal, tr("idle")).FontSize(11.5)
 			return
 		}
-		ui.Column(c).Gap(2).Children(func() {
-			dups := ambiguousSessions(rows)
-			for _, r := range rows {
-				ref := refOf(r)
-				s.sessionRow(c.Key(ref.key()), pal, r, showInstance(dups, r), false, func() {
-					s.page = "sessions"
-					s.SelectRef(ref)
-				})
-			}
-		})
+		liveDot(c, pal)
+		caption(c, pal, trf("sessionsLive", len(act))).FontSize(11.5).SingleLine()
 	})
 }
 
-// unpricedBanner nudges towards mapping models the price list doesn't know.
-func (s *State) unpricedBanner(c *ui.Context, pal palette) {
-	n := len(s.pr.unpriced)
-	if n == 0 || s.ov.Totals.Unpriced == 0 {
-		return
-	}
-	ui.Row(c).Gap(10).Padding(9, 14).Radius(12).AlignItems(ui.Center).Background(Soyo.Alpha(0.14)).Children(func() {
-		dot(c, Soyo, 8)
-		ui.Text(c, trf("unpricedBanner", n)).FontSize(12.5).TextColor(pal.ink).Grow(1).Basis(0)
-		ui.Text(c, tr("fixIt")).FontSize(12.5).FontWeight(650).TextColor(Soyo.Mix(pal.ink, 0.35)).Cursor(ui.CursorPointer).Role(ui.RoleButton).OnClick(func() { s.SetPage("settings") })
-	})
+// logo is the app's mark, the app icon without its tile's margin: the
+// live orb in a quota ring (resources/icon-src/render.py draws both).
+func logo(c *ui.Context, pal palette, size float32) ui.Element {
+	return ui.Image(c, logoBitmap).Size(size, size).Shrink(0)
 }
+
+//go:embed logo.png
+var logoPNG []byte
+
+var logoBitmap = func() *ui.Bitmap {
+	b, err := ui.DecodeBitmap(logoPNG)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}()

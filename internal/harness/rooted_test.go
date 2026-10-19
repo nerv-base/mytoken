@@ -1,5 +1,5 @@
 // Package harness_test holds the registry-level rooted-parser conformance
-// suite (docs/superpowers/plans/2026-10-13-v040-multi-instance.md, V2).
+// suite.
 //
 // Every registered harness parser must be constructible for an explicit root
 // list through harness.NewRooted without touching the singleton that
@@ -36,6 +36,8 @@ import (
 	_ "github.com/zzstar101/mytoken/internal/harness/kilo"
 	_ "github.com/zzstar101/mytoken/internal/harness/kimi"
 	_ "github.com/zzstar101/mytoken/internal/harness/kiro"
+	_ "github.com/zzstar101/mytoken/internal/harness/mimocode"
+	_ "github.com/zzstar101/mytoken/internal/harness/minimax"
 	_ "github.com/zzstar101/mytoken/internal/harness/mux"
 	_ "github.com/zzstar101/mytoken/internal/harness/openclaude"
 	_ "github.com/zzstar101/mytoken/internal/harness/openclaw"
@@ -43,7 +45,9 @@ import (
 	_ "github.com/zzstar101/mytoken/internal/harness/pi"
 	_ "github.com/zzstar101/mytoken/internal/harness/qwen"
 	_ "github.com/zzstar101/mytoken/internal/harness/roo"
+	_ "github.com/zzstar101/mytoken/internal/harness/stepcode"
 	_ "github.com/zzstar101/mytoken/internal/harness/workbuddy"
+	_ "github.com/zzstar101/mytoken/internal/harness/zcode"
 	_ "github.com/zzstar101/mytoken/internal/harness/zed"
 	"github.com/zzstar101/mytoken/internal/model"
 )
@@ -52,7 +56,7 @@ import (
 // (internal/app/app.go imports exactly these). The suite stops only if fewer
 // are present, so a newly registered harness is covered automatically while a
 // dropped registration cannot make the suite vacuous.
-const wantRegistered = 28
+const wantRegistered = 32
 
 // TestNewRootedSupportsEveryRegisteredHarness is the coverage check: every
 // registered parser must implement harness.Rooted, and NewRooted must build a

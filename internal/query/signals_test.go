@@ -42,7 +42,7 @@ func TestSessionSignalsDoNotConvertNativeBills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total.CostUSD != 2 || total.CostLogUSD != 2 || total.Unpriced != 2 {
+	if total.CostUSD != 2 || total.Unpriced != 2 {
 		t.Fatalf("native units altered USD: %+v", total)
 	}
 	raw, err := json.Marshal(got[2])

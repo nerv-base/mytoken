@@ -40,9 +40,7 @@ type rollupSchema struct {
 	factColumns      string
 	conflict         string
 	daily            string
-	cache            string
 	providerDaily    string
-	providerCache    string
 }
 
 var legacyRollupSchema = rollupSchema{
@@ -50,9 +48,7 @@ var legacyRollupSchema = rollupSchema{
 	factColumns:      legacySignalFactColumns,
 	conflict:         "harness,dedup_key",
 	daily:            legacyDailyDimensions,
-	cache:            legacyCacheDimensions,
 	providerDaily:    legacyProviderDailyDimensions,
-	providerCache:    legacyProviderCacheDimensions,
 }
 
 var instanceRollupSchema = rollupSchema{
@@ -61,9 +57,7 @@ var instanceRollupSchema = rollupSchema{
 	factColumns:      factColumns,
 	conflict:         "harness,instance_id,dedup_key",
 	daily:            dailyDimensions,
-	cache:            cacheDimensions,
 	providerDaily:    providerDailyDimensions,
-	providerCache:    providerCacheDimensions,
 }
 
 const legacyDailyDimensions = "day,harness,session_id,resolved_provider,model,project,attrib"
@@ -238,13 +232,18 @@ func migrateDaily(tx *sql.Tx, sc rollupSchema) error {
 
 // LocalDayZone identifies the timezone rules used by local-day rollups.
 func LocalDayZone() string {
-	// Name plus seasonal offsets also identifies fixed zones and /etc/localtime.
+	// The rules, not the name: "Local" from /etc/localtime and the same zone
+	// named explicitly (a display-timezone choice, the CLI's reporting zone)
+	// bucket days identically and must share the rollups. Offsets twice a month
+	// over several years tell apart zones whose DST rules differ.
 	var b strings.Builder
-	b.WriteString(time.Local.String())
+	b.WriteString("offsets")
 	for _, year := range []int{1970, 2000, 2020, time.Now().Year(), time.Now().Year() + 1} {
-		for _, month := range []time.Month{time.January, time.April, time.July, time.October} {
-			name, offset := time.Date(year, month, 1, 0, 0, 0, 0, time.Local).Zone()
-			fmt.Fprintf(&b, "/%s:%d", name, offset)
+		for month := time.January; month <= time.December; month++ {
+			for _, day := range []int{1, 15} {
+				_, offset := time.Date(year, month, day, 12, 0, 0, 0, time.Local).Zone()
+				fmt.Fprintf(&b, "/%d", offset)
+			}
 		}
 	}
 	return b.String()
@@ -279,9 +278,6 @@ func (s *Store) EnsureLocalDays(ctx context.Context) error {
 		// unfiltered one, which is exactly the divergence these rollups exist to
 		// avoid. The endpoint-aware rollups are rebuilt from the events view too,
 		// so the backfill still reads no state that the change did not touch.
-		if _, err = tx.ExecContext(ctx, "DELETE FROM cache_daily; "+cacheRollupInsert(cacheDimensions)); err != nil {
-			return err
-		}
 		if err = rebuildProviderRollups(ctx, tx, instanceRollupSchema); err != nil {
 			return err
 		}
@@ -291,6 +287,10 @@ func (s *Store) EnsureLocalDays(ctx context.Context) error {
 	}
 	if err = tx.Commit(); err == nil {
 		s.aggregateZone = key
+		if old != key {
+			// Days moved: every reader's totals changed.
+			s.notify()
+		}
 	}
 	return err
 }

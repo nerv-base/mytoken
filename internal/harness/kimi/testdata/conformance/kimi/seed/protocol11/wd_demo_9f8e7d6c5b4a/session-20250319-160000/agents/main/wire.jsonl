@@ -1,0 +1,13 @@
+{"type":"metadata","protocol_version":"1.1","created_at":1742399999000}
+{"type":"config.update","cwd":"/Users/demo/proj-one","profileName":"agent","systemPrompt":"system SENTINEL_PRIVATE_TEXT","time":1742400000000}
+{"type":"tools.set_active_tools","names":["Read","Write"],"time":1742400000001}
+{"type":"permission.set_mode","mode":"manual","time":1742400000002}
+{"type":"turn.prompt","input":[{"type":"text","text":"first prompt for the new layout"},{"type":"text","text":"a second prompt part SENTINEL_PRIVATE_TEXT"}],"origin":{"kind":"user"},"time":1742400001000}
+{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"SENTINEL_PRIVATE_TEXT"}],"toolCalls":[]},"time":1742400001001}
+{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"s1","turnId":"t1","step":0},"time":1742400001100}
+{"type":"context.append_loop_event","event":{"type":"tool.call","uuid":"tc1","turnId":"t1","step":0,"stepUuid":"s1","name":"Shell","arguments":"{\"command\":\"grep -r SENTINEL_PRIVATE_TEXT .\"}"},"time":1742400001200}
+{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"s1","turnId":"t1","step":0,"usage":{"inputOther":10,"output":5,"inputCacheRead":0,"inputCacheCreation":0},"finishReason":"end_turn"},"time":1742400001300}
+{"type":"usage.record","model":"kimi-k2","usage":{"inputOther":10,"output":5,"inputCacheRead":0,"inputCacheCreation":0},"usageScope":"turn","time":1742400001302}
+{"type":"turn.prompt","input":[{"type":"text","text":"a later user turn SENTINEL_PRIVATE_TEXT"}],"origin":{"kind":"user"},"time":1742400010000}
+{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"s2","turnId":"t2","step":0,"usage":{"inputOther":100,"output":20,"inputCacheRead":40,"inputCacheCreation":8},"finishReason":"end_turn"},"time":1742400010300}
+{"type":"usage.record","model":"kimi-k2-turbo","usage":{"inputOther":100,"output":20,"inputCacheRead":40,"inputCacheCreation":8},"usageScope":"turn","time":1742400010302}

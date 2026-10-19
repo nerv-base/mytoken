@@ -1,8 +1,7 @@
 // Package source defines optional, read-only provider data sources: cc-switch's
 // local database and the harness config files that say which provider a tool is
-// currently pointing at. Sources feed attribution and price import, and 0.2
-// relay reconciliation (which gateways a user has, their base URLs, whether a
-// key is configured). A source that is missing or unreadable is skipped, never
+// currently pointing at. Sources feed attribution (which gateway or account a
+// request used). A source that is missing or unreadable is skipped, never
 // fatal: attribution must work with no data source at all.
 package source
 
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/pricing"
 )
 
 // ProviderInfo describes one provider a source knows about. Keys are never
@@ -90,14 +88,7 @@ type Configs interface {
 }
 
 // Providers is implemented by sources that can list the providers they know
-// about (0.2 relay reconciliation).
+// about.
 type Providers interface {
 	Providers() []ProviderInfo
-}
-
-// Pricing is implemented by sources that can contribute price rules
-// (cc-switch's model_pricing table and provider multipliers). Rules carry the
-// source's name in Source and leave Multiplier at 0 where it is not set.
-type Pricing interface {
-	PriceRules(ctx context.Context) ([]pricing.Rule, error)
 }

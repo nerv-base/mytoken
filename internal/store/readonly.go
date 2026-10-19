@@ -57,7 +57,6 @@ import (
 // discloses the sidecar effects instead of refusing ordinary cross-process
 // reads.
 //
-// See docs/verification/v040-readonly-store.md.
 
 // readOnlyBusyTimeoutMS bounds how long a read-only open waits on a lock before
 // it gives up with a typed error, so contention can never hang a UI or a
@@ -247,11 +246,6 @@ var readOnlyMarkers = []readOnlyMarker{
 	{key: providerIdentityVersion, current: "1", check: (*Store).checkProviderIndex},
 	{key: providerRollupVersion, current: "1", check: (*Store).checkProviderRollupIndex},
 	{key: instanceVersionKey, current: "1", check: (*Store).checkInstanceSchema},
-	// The ledger marker is written by EnsurePrices, which a read-only open never
-	// calls, so an index that was never priced holds no row. The derived cache
-	// columns are maintained incrementally by the rollup triggers, so reads are
-	// correct without a rebuild; an unknown value still means a newer build.
-	{key: ledgerVersionKey, current: ledgerVersion, absenceIsOK: true},
 }
 
 // OpenReadOnly opens path through an independent, read-only SQLite connection
