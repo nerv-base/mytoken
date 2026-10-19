@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -177,6 +178,12 @@ func TestRootsAgentDirOverrideIsDirectoryExistenceAgnostic(t *testing.T) {
 // flattened away).
 func TestRootsXDGDataHomeGatedOnOMPDirectory(t *testing.T) {
 	t.Run("existing omp directory redirects", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			// OMP gates the XDG redirect on process.platform === "linux" ||
+			// process.platform === "darwin" (packages/utils/src/dirs.ts), so
+			// XDG_DATA_HOME is inert on Windows and there is nothing to redirect.
+			t.Skip("OMP honours XDG_DATA_HOME only on linux and darwin")
+		}
 		home := isolateHome(t)
 		xdg := mkdirAll(t, filepath.Join(t.TempDir(), "xdg-data"))
 		// The XDG app root is $XDG_DATA_HOME/omp — upstream's APP_NAME ("omp"),

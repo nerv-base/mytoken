@@ -715,6 +715,9 @@ func TestDiscoverLayouts(t *testing.T) {
 func TestRootProvenance(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// os.UserHomeDir reads $HOME on Unix but %USERPROFILE% on Windows, so
+	// setting HOME alone still resolves the real user's home directory there.
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("MYTOKEN_MINIMAX_DIRS", "")
 	t.Setenv("MINIMAX_DATA_DIR", "")
 	t.Setenv("MAVIS_DATA_DIR", "")

@@ -17,11 +17,20 @@ func clearStepEnv(t *testing.T) {
 	}
 }
 
+// setHome points the home lookup at dir on every host: os.UserHomeDir reads
+// $HOME on Unix but %USERPROFILE% on Windows, so a test that only sets HOME
+// still resolves the real user's home directory on Windows.
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
 // TestDefaultRoot checks the built-in default ~/.stepcode/agent/sessions and its
 // provenance.
 func TestDefaultRoot(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	clearStepEnv(t)
 
 	roots, err := New().RootProvenance()
@@ -45,7 +54,7 @@ func TestDefaultRoot(t *testing.T) {
 // session root itself), then STEP_CODING_AGENT_DIR (which names the agent root).
 func TestEnvRootPriority(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 
 	t.Run("session dir wins over agent dir", func(t *testing.T) {
 		session := filepath.Join(t.TempDir(), "sessions-here")
@@ -125,7 +134,7 @@ func TestEnvRootPriority(t *testing.T) {
 // directory must fail loudly and must never fall back to the defaults.
 func TestBadDirsListIsHardError(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	t.Setenv(stepSessionDirEnv, "")
 	t.Setenv(stepAgentDirEnv, "")
 

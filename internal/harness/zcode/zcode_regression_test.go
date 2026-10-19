@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -186,6 +187,11 @@ func TestGenuinelyMissingUsageColumnsStillAdvance(t *testing.T) {
 // file, and restoring the permissions does not change the file's size or
 // modification time, so the cursor signature would keep hiding them.
 func TestUnreadableWALNeverFallsBackToTheStaleSnapshot(t *testing.T) {
+	// Windows has no Unix permission bits: os.Chmod(0o000) does not make a file
+	// unreadable there, so the test cannot establish its premise.
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based unreadability does not exist on Windows: mode bits are not enforced")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: chmod cannot make the write-ahead log unreadable")
 	}
