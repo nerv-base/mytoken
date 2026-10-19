@@ -139,6 +139,12 @@ func TestScreenshots(t *testing.T) {
 			tt.SetSize(1280, 1640)
 			settle(t, h, tt)
 			save(t, tt, filepath.Join(dir, page+"-full-"+suffix+".png"))
+			if page == "overview" {
+				h.app.spendTab = 1
+				settle(t, h, tt)
+				save(t, tt, filepath.Join(dir, "overview-clock-"+suffix+".png"))
+				h.app.spendTab = 0
+			}
 		}
 		tt.SetSize(1280, 860)
 		pt := ui.NewTester(h.app.PanelView, TrayWidth, TrayHeight)

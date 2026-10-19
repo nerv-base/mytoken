@@ -1,0 +1,30 @@
+
+// The glow's colors, around a loop from 0 to 1: the accent's blues and
+// teals, from periwinkle to sea green and back.
+func palette(x float) vec3 {
+	x = fract(x) * 4
+	if x < 1 {
+		return mix(vec3(0.48, 0.64, 0.97), vec3(0.37, 0.79, 0.75), x)
+	}
+	if x < 2 {
+		return mix(vec3(0.37, 0.79, 0.75), vec3(0.62, 0.70, 1.0), x-1)
+	}
+	if x < 3 {
+		return mix(vec3(0.62, 0.70, 1.0), vec3(0.33, 0.55, 0.93), x-2)
+	}
+	return mix(vec3(0.33, 0.55, 0.93), vec3(0.48, 0.64, 0.97), x-3)
+}
+
+// roundRect returns the distance from p, from the rectangle's middle, to
+// a rectangle of half size half with corners of radius r: below zero
+// inside.
+func roundRect(p, half vec2, r float) float {
+	q := abs(p) - half + r
+	return length(max(q, 0)) + min(max(q.x, q.y), 0) - r
+}
+
+// around returns where p, from the middle of a box of size, lies around
+// its outline, from 0 to 1.
+func around(p, size vec2) float {
+	return atan2(p.y/size.y, p.x/size.x)/6.2831853 + 0.5
+}

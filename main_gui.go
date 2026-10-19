@@ -57,12 +57,18 @@ func quotas(s *plan.Service) []gui.Quota {
 			if !w.Valid() {
 				continue
 			}
-			qw := gui.QuotaWindow{Name: w.Name, UsedPercent: w.UsedPercent, ResetsAt: w.ResetsAt}
-			if !w.ResetsAt.IsZero() && w.ResetsAt.Before(now) {
+			qw := gui.QuotaWindow{
+				Name: w.Name, UsedPercent: w.UsedPercent, Used: w.Used, Limit: w.Limit, Unit: w.Unit,
+				Balance: w.Balance, Remaining: w.Remaining, ResetsAt: w.ResetsAt, ExpiresAt: w.ExpiresAt,
+			}
+			if !w.Balance && !w.ResetsAt.IsZero() && w.ResetsAt.Before(now) {
 				// The snapshot predates the window's reset: it is fresh again.
-				qw.UsedPercent, qw.ResetsAt = 0, time.Time{}
+				qw.UsedPercent, qw.Used, qw.ResetsAt = 0, 0, time.Time{}
 			}
 			q.Windows = append(q.Windows, qw)
+		}
+		for _, d := range snap.Daily {
+			q.Daily = append(q.Daily, gui.QuotaDay{Day: d.Day, Used: d.Used, Known: d.Known})
 		}
 		if len(q.Windows) > 0 {
 			out = append(out, q)
@@ -83,6 +89,16 @@ func quotaName(id string) string {
 		return "GitHub Copilot"
 	case "glm":
 		return "GLM"
+	case "trae-cn":
+		return "Trae"
+	case "trae-global":
+		return "Trae Global"
+	case "workbuddy":
+		return "WorkBuddy"
+	case "workbuddy-ai":
+		return "WorkBuddy AI"
+	case "qoder-cn":
+		return "Qoder"
 	}
 	if id == "" {
 		return id
@@ -94,6 +110,9 @@ func quotaName(id string) string {
 // "Business Prolite".
 func planLabel(p string) string {
 	p = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(p)), "self_serve_")
+	if p == "credits" {
+		return "" // says nothing the tile does not
+	}
 	words := strings.FieldsFunc(p, func(r rune) bool { return r == '_' || r == '-' || r == ' ' })
 	for i, w := range words {
 		if len(w) <= 2 && strings.ContainsAny(w, "0123456789") {

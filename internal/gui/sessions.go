@@ -93,12 +93,12 @@ func (a *App) sessionList(c *ui.Context, pal palette) {
 		ui.Row(c).Gap(10).Padding(9, 10).AlignItems(ui.Center).Children(func() {
 			toolBadge(c, r.Harness, 26)
 			ui.Column(c).Gap(3).Grow(1).Basis(0).MinWidth(0).Children(func() {
-				ui.Text(c, sessionTitle(r)).FontSize(13).FontWeight(560).TextColor(pal.ink).NoWrap().Ellipsis("…")
+				ui.Text(c, sessionTitle(r)).FontSize(13).FontWeight(560).TextColor(pal.ink).SingleLine().Ellipsis("…")
 				sub := fmtAgo(now, r.UpdatedAt)
 				if p := projectName(r.Project); p != "" {
 					sub = p + " · " + sub
 				}
-				caption(c, pal, sub).FontSize(11).NoWrap().Ellipsis("…")
+				caption(c, pal, sub).FontSize(11).SingleLine().Ellipsis("…")
 			})
 			ui.Column(c).Gap(3).AlignItems(ui.End).Shrink(0).Children(func() {
 				ui.Text(c, costText(r.CostUSD, r.Unpriced, r.Requests)).FontSize(13).FontWeight(600).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
@@ -168,12 +168,12 @@ func (a *App) sessionPane(c *ui.Context, pal palette) {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				toolBadge(c, r.Harness, 34)
 				ui.Column(c).Gap(3).Grow(1).Basis(0).MinWidth(0).Children(func() {
-					ui.Text(c, sessionTitle(r)).Font(display).FontSize(19).FontWeight(700).TextColor(pal.ink).NoWrap().Ellipsis("…")
+					ui.Text(c, sessionTitle(r)).Font(display).FontSize(19).FontWeight(700).TextColor(pal.ink).SingleLine().Ellipsis("…")
 					meta := r.Harness.DisplayName()
 					if r.Project != "" {
 						meta += " · " + r.Project
 					}
-					caption(c, pal, meta).NoWrap().Ellipsis("…")
+					caption(c, pal, meta).SingleLine().Ellipsis("…")
 				})
 			})
 			errorLine(c, pal, d.err)
@@ -209,7 +209,7 @@ func (a *App) sessionPane(c *ui.Context, pal palette) {
 					cardTitle(c, pal, trf("subagentsN", len(d.children)), nil)
 					for i, k := range d.children {
 						ui.Row(c.Key(i)).Gap(10).AlignItems(ui.Center).Children(func() {
-							ui.Text(c, sessionTitle(k)).FontSize(13).TextColor(pal.ink).NoWrap().Ellipsis("…").Grow(1).Basis(0).MinWidth(0)
+							ui.Text(c, sessionTitle(k)).FontSize(13).TextColor(pal.ink).SingleLine().Ellipsis("…").Grow(1).Basis(0).MinWidth(0)
 							caption(c, pal, fmtTokens(shown(k.Tokens)))
 							ui.Text(c, costText(k.CostUSD, k.Unpriced, k.Requests)).FontSize(13).FontWeight(600).TextColor(pal.ink).FontFeatures("tnum")
 						})
@@ -224,7 +224,7 @@ func (a *App) sessionPane(c *ui.Context, pal palette) {
 func kpi(c *ui.Context, pal palette, label, value string) {
 	ui.Column(c).Gap(4).Padding(12, 14).Radius(12).Background(pal.card).Border(1, pal.line).Grow(1).Basis(0).MinWidth(0).Children(func() {
 		caption(c, pal, label).FontSize(11).NoWrap()
-		ui.Text(c, value).FontSize(18).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum").NoWrap().Ellipsis("…")
+		ui.Text(c, value).FontSize(18).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum").SingleLine().Ellipsis("…")
 	})
 }
 
@@ -315,7 +315,7 @@ func (a *App) requestTable(c *ui.Context, pal palette) {
 					ui.Text(c, s).FontSize(12).TextColor(pal.ink).FontFeatures("tnum").Width(w).TextAlign(ui.End).NoWrap()
 				}
 				caption(c, pal, e.Timestamp.Format("15:04:05")).FontFeatures("tnum").Width(64).NoWrap()
-				ui.Text(c, e.Model).FontSize(12).TextColor(pal.ink).Grow(1).Basis(0).MinWidth(0).NoWrap().Ellipsis("…")
+				ui.Text(c, e.Model).FontSize(12).TextColor(pal.ink).Grow(1).Basis(0).MinWidth(0).SingleLine().Ellipsis("…")
 				num(fmtTokens(e.Tokens.Input), 70)
 				num(fmtTokens(e.Tokens.Output+e.Tokens.Reasoning), 70)
 				num(fmtTokens(e.Tokens.CacheRead), 80)

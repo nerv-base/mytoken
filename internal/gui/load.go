@@ -34,6 +34,16 @@ type overview struct {
 	byTool  [3][]query.Bucket
 	byModel [3][]query.Bucket
 
+	// monthCum is this month's cumulative cost by day up to today;
+	// lastCum last month's, every day of it. monthTools splits this month
+	// by tool, todayTools today.
+	monthCum, lastCum      []float64
+	monthTools, todayTools []query.Bucket
+
+	// hours is today by clock hour, split by hourTools (today's top tools).
+	hours     [24]dayCost
+	hourTools []model.Harness
+
 	quotas []Quota
 	active []activeSession
 }
@@ -102,11 +112,15 @@ func computeOverview(ctx context.Context, q Query, now time.Time, recent *recent
 	// today's session count (which needs session identity) and the running
 	// sessions are read alongside it.
 	var (
-		wg               sync.WaitGroup
-		rows             []query.UsageRow
-		errU, errT, errA error
+		wg                     sync.WaitGroup
+		rows, hrows            []query.UsageRow
+		errU, errT, errA, errH error
 	)
-	wg.Add(3)
+	wg.Add(4)
+	go func() {
+		defer wg.Done()
+		hrows, errH = q.HourlyUsage(ctx, query.Filter{Range: query.Range{From: today, To: tomorrow}})
+	}()
 	go func() {
 		defer wg.Done()
 		rows, errU = q.Usage(ctx, query.Filter{Range: query.Range{From: from, To: tomorrow}})
@@ -120,7 +134,7 @@ func computeOverview(ctx context.Context, q Query, now time.Time, recent *recent
 		ov.active, errA = activeSessions(ctx, q, now, recent)
 	}()
 	wg.Wait()
-	if err := errors.Join(errU, errT, errA); err != nil {
+	if err := errors.Join(errU, errT, errA, errH); err != nil {
 		return ov, err
 	}
 
@@ -182,6 +196,79 @@ func computeOverview(ctx context.Context, q Query, now time.Time, recent *recent
 		d := &ov.days[i]
 		d.cost += r.CostUSD
 		if k, ok := slot[r.Harness]; ok {
+			d.tools[k] += r.CostUSD
+		} else {
+			d.other += r.CostUSD
+		}
+	}
+
+	// This month and last, day by day, added up.
+	monthCost := map[int]float64{}
+	lastCost := map[int]float64{}
+	for _, r := range rows {
+		switch {
+		case !r.Day.Before(mon) && r.Day.Before(tomorrow):
+			monthCost[r.Day.Day()] += r.CostUSD
+		case !r.Day.Before(lastMon) && r.Day.Before(mon):
+			lastCost[r.Day.Day()] += r.CostUSD
+		}
+	}
+	run := 0.0
+	for d := 1; d <= today.Day(); d++ {
+		run += monthCost[d]
+		ov.monthCum = append(ov.monthCum, run)
+	}
+	run = 0
+	for d := 1; d <= mon.AddDate(0, 0, -1).Day(); d++ {
+		run += lastCost[d]
+		ov.lastCum = append(ov.lastCum, run)
+	}
+	split := func(from, to time.Time) []query.Bucket {
+		m := map[string]*query.Bucket{}
+		for _, r := range rows {
+			if r.Day.Before(from) || !r.Day.Before(to) {
+				continue
+			}
+			b := m[string(r.Harness)]
+			if b == nil {
+				b = &query.Bucket{Key: string(r.Harness), Label: r.Harness.DisplayName()}
+				m[b.Key] = b
+			}
+			b.Tokens = b.Tokens.Add(r.Tokens)
+			b.CostUSD += r.CostUSD
+			b.Requests += r.Requests
+			b.Unpriced += r.Unpriced
+		}
+		out := flatten(m)
+		byCost(out)
+		return out
+	}
+	ov.monthTools = split(mon, tomorrow)
+	ov.todayTools = split(today, tomorrow)
+
+	// Today by hour, split by today's top tools.
+	for i, b := range ov.todayTools {
+		if i == 4 || b.CostUSD <= 0 {
+			break
+		}
+		ov.hourTools = append(ov.hourTools, model.Harness(b.Key))
+	}
+	for h := range ov.hours {
+		ov.hours[h] = dayCost{day: today.Add(time.Duration(h) * time.Hour), tools: make([]float64, len(ov.hourTools))}
+	}
+	for _, r := range hrows {
+		if r.Day.Before(today) || !r.Day.Before(tomorrow) {
+			continue
+		}
+		d := &ov.hours[r.Day.Hour()]
+		d.cost += r.CostUSD
+		k := -1
+		for i, h := range ov.hourTools {
+			if h == r.Harness {
+				k = i
+			}
+		}
+		if k >= 0 {
 			d.tools[k] += r.CostUSD
 		} else {
 			d.other += r.CostUSD
@@ -308,7 +395,7 @@ func (c *recentEvents) keep(live map[string]bool) {
 }
 
 func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentEvents) ([]activeSession, error) {
-	rows, _, err := q.Sessions(ctx, query.Filter{Range: query.Range{From: now.Add(-activeWindow)}}, query.SortRecent, 4, 0)
+	rows, _, err := q.Sessions(ctx, query.Filter{Range: query.Range{From: now.Add(-activeWindow)}}, query.SortRecent, 12, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -338,6 +425,13 @@ func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentE
 		}
 		out = append(out, s)
 	}
+	// The fastest first: that is where the money goes now.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].rate != out[j].rate {
+			return out[i].rate > out[j].rate
+		}
+		return out[i].last.After(out[j].last)
+	})
 	return out, nil
 }
 

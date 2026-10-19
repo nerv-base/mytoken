@@ -18,6 +18,8 @@ type Query interface {
 	ByProvider(ctx context.Context, f query.Filter) ([]query.Bucket, error)
 	ByProject(ctx context.Context, f query.Filter) ([]query.Bucket, error)
 	Usage(ctx context.Context, f query.Filter) ([]query.UsageRow, error)
+	// HourlyUsage is Usage by local clock hour.
+	HourlyUsage(ctx context.Context, f query.Filter) ([]query.UsageRow, error)
 	Sessions(ctx context.Context, f query.Filter, sort string, limit, offset int) ([]query.SessionRow, int, error)
 	Session(ctx context.Context, h model.Harness, id string) (query.SessionRow, []query.SessionRow, []query.AttributedEvent, error)
 	// Subscribe notifies (throttled) whenever new data is committed.
@@ -34,13 +36,32 @@ type Quota struct {
 	Source    string
 	FetchedAt time.Time
 	Err       string // last fetch error, shown beside a stale snapshot
+	// Daily is what a credit balance lost each day, oldest first, for the
+	// last two weeks; empty when unknown.
+	Daily []QuotaDay
 }
 
-// QuotaWindow is one window of a plan quota.
+// QuotaWindow is one window of a plan quota, or a credit balance.
 type QuotaWindow struct {
-	Name        string // "5h", "week", "month", or a tool's own label
+	Name        string // "5h", "week", "month", "credits", or a tool's own label
 	UsedPercent float64
-	ResetsAt    time.Time
+	// Used and Limit are absolute amounts in Unit when the tool states
+	// them ("usd", "requests", "credits"); 0 when it only gives a percent.
+	Used, Limit float64
+	Unit        string
+	// Balance marks credits without a fixed cap (top-ups, gift packs):
+	// Remaining is what is left and there is no percent.
+	Balance   bool
+	Remaining float64
+	ResetsAt  time.Time
+	ExpiresAt time.Time // when the soonest of the remaining credits expire
+}
+
+// QuotaDay is one day of credit use.
+type QuotaDay struct {
+	Day   time.Time
+	Used  float64
+	Known bool
 }
 
 // Source is one tool MyToken can read and how it is set up.

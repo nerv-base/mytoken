@@ -20,36 +20,45 @@ const (
 	textFace = "SF Pro Text, system-ui"
 )
 
-// palette is one appearance's colors.
+// palette is one appearance's colors. The surfaces are quiet graphite or
+// paper; the one accent is a calm blue; color otherwise belongs to the
+// tools (their brands) and to state (good, warn, bad).
 type palette struct {
 	dark bool
-	// bg is the window, side the sidebar, card a raised surface, well a
-	// recessed track (bars, rings, inputs).
-	bg, side, card, well ui.Color
-	// ink and muted color text; line colors hairlines and chart grids.
-	ink, muted, line ui.Color
-	hover, selected  ui.Color
-	accent           ui.Color
-	good, warn, bad  ui.Color
+	// bg is the window, side the sidebar, card a raised surface, raised a
+	// tile inside a card, well a recessed track (bars, rings, inputs).
+	bg, side, card, raised, well ui.Color
+	// ink, muted and faint color text; line colors hairlines and grids.
+	ink, muted, faint, line ui.Color
+	hover, selected         ui.Color
+	accent, accent2         ui.Color // accent2 is the accent's cooler partner in gradients
+	good, warn, bad         ui.Color
+	tip                     ui.Color // a tooltip's background
 }
 
 func paletteFor(dark bool) palette {
 	if dark {
 		return palette{
 			dark: true,
-			bg:   ui.Hex("#101013"), side: ui.Hex("#16161A"), card: ui.Hex("#1B1B20"), well: ui.RGBA(255, 255, 255, 0.07),
-			ink: ui.Hex("#F2F2F5"), muted: ui.RGBA(235, 235, 245, 0.56), line: ui.RGBA(255, 255, 255, 0.075),
-			hover: ui.RGBA(255, 255, 255, 0.05), selected: ui.RGBA(124, 140, 255, 0.20),
-			accent: ui.Hex("#7C8CFF"),
-			good:   ui.Hex("#32D17C"), warn: ui.Hex("#FFB547"), bad: ui.Hex("#FF5A52"),
+			bg:   ui.Hex("#121214"), side: ui.Hex("#161619"), card: ui.Hex("#1C1C20"),
+			raised: ui.RGBA(255, 255, 255, 0.035), well: ui.RGBA(255, 255, 255, 0.07),
+			ink: ui.Hex("#EDEDF0"), muted: ui.RGBA(235, 235, 245, 0.56), faint: ui.RGBA(235, 235, 245, 0.32),
+			line:  ui.RGBA(255, 255, 255, 0.06),
+			hover: ui.RGBA(255, 255, 255, 0.05), selected: ui.RGBA(122, 162, 247, 0.16),
+			accent: ui.Hex("#7AA2F7"), accent2: ui.Hex("#5FC9C0"),
+			good: ui.Hex("#4CC38A"), warn: ui.Hex("#E5B454"), bad: ui.Hex("#EE6D6D"),
+			tip: ui.Hex("#2A2A2F"),
 		}
 	}
 	return palette{
-		bg: ui.Hex("#F5F5F7"), side: ui.Hex("#ECECEF"), card: ui.Hex("#FFFFFF"), well: ui.RGBA(20, 20, 40, 0.06),
-		ink: ui.Hex("#1C1C1F"), muted: ui.RGBA(60, 60, 70, 0.62), line: ui.RGBA(20, 20, 40, 0.07),
-		hover: ui.RGBA(20, 20, 40, 0.04), selected: ui.RGBA(76, 96, 245, 0.11),
-		accent: ui.Hex("#4C60F5"),
-		good:   ui.Hex("#1FAF5F"), warn: ui.Hex("#E89A12"), bad: ui.Hex("#E5483F"),
+		bg: ui.Hex("#F4F4F6"), side: ui.Hex("#EDEDF0"), card: ui.Hex("#FFFFFF"),
+		raised: ui.RGBA(20, 20, 40, 0.025), well: ui.RGBA(20, 20, 40, 0.06),
+		ink: ui.Hex("#1A1B1F"), muted: ui.RGBA(40, 42, 52, 0.60), faint: ui.RGBA(40, 42, 52, 0.36),
+		line:  ui.RGBA(20, 20, 40, 0.07),
+		hover: ui.RGBA(20, 20, 40, 0.04), selected: ui.RGBA(59, 111, 224, 0.10),
+		accent: ui.Hex("#3B6FE0"), accent2: ui.Hex("#169C93"),
+		good: ui.Hex("#1F9D62"), warn: ui.Hex("#C98A12"), bad: ui.Hex("#D9534F"),
+		tip: ui.Hex("#FFFFFF"),
 	}
 }
 
@@ -94,7 +103,7 @@ func applyTheme(c *ui.Context, appearance string) palette {
 // usageColor is the color of a quota or share that is frac used.
 func (p palette) usageColor(frac float64) ui.Color {
 	switch {
-	case frac >= 0.9:
+	case frac >= 0.85:
 		return p.bad
 	case frac >= 0.7:
 		return p.warn
@@ -103,16 +112,17 @@ func (p palette) usageColor(frac float64) ui.Color {
 }
 
 // series is the palette of chart series that are not tools (models,
-// providers, projects), in the order they are given.
+// providers, projects), in the order they are given: muted, evenly spaced
+// hues that sit together.
 var series = []ui.Color{
-	ui.Hex("#4C60F5"), ui.Hex("#F0B83C"), ui.Hex("#2FB8A6"), ui.Hex("#FF7A92"),
-	ui.Hex("#7B6FD0"), ui.Hex("#5AA9D6"), ui.Hex("#E36A3B"), ui.Hex("#8FB339"),
+	ui.Hex("#6F96EA"), ui.Hex("#4FB3A9"), ui.Hex("#D9A54C"), ui.Hex("#D97A8C"),
+	ui.Hex("#9A86DB"), ui.Hex("#5BAAD1"), ui.Hex("#C9845A"), ui.Hex("#8BAF6A"),
 }
 
 func seriesAt(i int) ui.Color { return series[((i%len(series))+len(series))%len(series)] }
 
 // otherColor colors the "everything else" bucket.
-var otherColor = ui.Hex("#9A9AA6")
+var otherColor = ui.Hex("#8E8E99")
 
 // harnessColor gives each tool a stable color close to its brand.
 func harnessColor(h model.Harness) ui.Color {
@@ -199,14 +209,34 @@ type brandMark struct {
 	tile    bool // the logo is its own rounded tile
 }
 
-var harnessIcons = func() map[model.Harness]brandMark {
-	load := func(name string) *ui.SVG {
-		b, err := brandFS.ReadFile("brand/" + name + ".svg")
-		if err != nil {
-			panic(err)
-		}
-		return ui.MustParseSVG(b)
+func loadBrand(name string) *ui.SVG {
+	b, err := brandFS.ReadFile("brand/" + name + ".svg")
+	if err != nil {
+		panic(err)
 	}
+	return ui.MustParseSVG(b)
+}
+
+// quotaHarness maps quota accounts that belong to a tracked tool to it, so
+// they wear the tool's badge.
+var quotaHarness = map[string]model.Harness{
+	"codex":     model.Codex,
+	"workbuddy": model.WorkBuddy,
+	"codebuddy": model.CodeBuddy,
+	"kimi":      model.Kimi,
+}
+
+// quotaIcons are the marks of quota accounts without a tracked tool.
+var quotaIcons = map[string]brandMark{
+	"claude":  {loadBrand("claude-color"), true, false},
+	"cursor":  {loadBrand("cursor"), false, false},
+	"trae":    {loadBrand("trae-color"), true, false},
+	"qoder":   {loadBrand("qoder-color"), true, false},
+	"copilot": {loadBrand("githubcopilot"), false, false},
+}
+
+var harnessIcons = func() map[model.Harness]brandMark {
+	load := loadBrand
 	return map[model.Harness]brandMark{
 		model.ClaudeCode:    {load("claudecode-color"), true, false},
 		model.Codex:         {load("openai"), false, false},

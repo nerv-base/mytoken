@@ -64,7 +64,7 @@ func (a *App) rankRow(c *ui.Context, pal palette, i int, b query.Bucket, top, to
 				if lead != nil {
 					lead()
 				}
-				ui.Text(c, label).FontSize(13.5).FontWeight(600).TextColor(pal.ink).NoWrap().Ellipsis("…").Shrink(1).MinWidth(0)
+				ui.Text(c, label).FontSize(13.5).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 				ui.Spacer(c)
 				caption(c, pal, trf("rankSub", fmtTokens(shown(b.Tokens)), fmtInt(b.Requests))).NoWrap().FontFeatures("tnum")
 			})

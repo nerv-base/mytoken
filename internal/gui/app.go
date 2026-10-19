@@ -24,6 +24,12 @@ type App struct {
 	recent recentEvents
 	// chartRange is the overview chart's range: 0 = 7, 1 = 30, 2 = 90 days.
 	chartRange int
+	// spendTab is the spend card's view: 0 = this month, 1 = today's clock.
+	spendTab int
+	// quotaAll shows every quota account instead of the first rows.
+	quotaAll bool
+	// mo is the motion state: which cards revealed, where markers were.
+	mo motion
 
 	rk    ranking
 	rkJob job
@@ -190,6 +196,7 @@ func (a *App) goTo(page string) {
 		return
 	}
 	a.page = page
+	a.mo.reset()
 	a.reloadPage()
 }
 

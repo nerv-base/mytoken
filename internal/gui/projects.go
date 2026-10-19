@@ -62,7 +62,7 @@ func (a *App) projectList(c *ui.Context, pal palette) {
 		ui.Column(c).Gap(6).Padding(9, 10).Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Icon(c, icFolder).FontSize(14).TextColor(pal.muted)
-				ui.Text(c, projectLabel(b)).FontSize(13).FontWeight(560).TextColor(pal.ink).NoWrap().Ellipsis("…").Grow(1).Basis(0).MinWidth(0)
+				ui.Text(c, projectLabel(b)).FontSize(13).FontWeight(560).TextColor(pal.ink).SingleLine().Ellipsis("…").Grow(1).Basis(0).MinWidth(0)
 				ui.Text(c, costText(b.CostUSD, b.Unpriced, b.Requests)).FontSize(13).FontWeight(600).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
 			})
 			bar(c, pal, frac(b.CostUSD, pj.maxCost), pal.accent).Height(4)
@@ -89,8 +89,8 @@ func (a *App) projectPane(c *ui.Context, pal palette) {
 				if a.pjSel == "" || name == "" {
 					name = tr("noProject")
 				}
-				ui.Text(c, name).Font(display).FontSize(20).FontWeight(700).TextColor(pal.ink).NoWrap().Ellipsis("…")
-				caption(c, pal, a.pjSel).NoWrap().Ellipsis("…")
+				ui.Text(c, name).Font(display).FontSize(20).FontWeight(700).TextColor(pal.ink).SingleLine().Ellipsis("…")
+				caption(c, pal, a.pjSel).SingleLine().Ellipsis("…")
 			})
 			errorLine(c, pal, d.err)
 			if !d.ready {
@@ -138,7 +138,7 @@ func (a *App) projectPane(c *ui.Context, pal palette) {
 						}
 						row := ui.Row(c.Key(sessionKey(r.Harness, r.SessionID))).Gap(10).Padding(7, 8).Radius(8).AlignItems(ui.Center).Cursor(ui.CursorPointer).Children(func() {
 							toolBadge(c, r.Harness, 20)
-							ui.Text(c, sessionTitle(r)).FontSize(13).TextColor(pal.ink).NoWrap().Ellipsis("…").Grow(1).Basis(0).MinWidth(0)
+							ui.Text(c, sessionTitle(r)).FontSize(13).TextColor(pal.ink).SingleLine().Ellipsis("…").Grow(1).Basis(0).MinWidth(0)
 							caption(c, pal, fmtAgo(now, r.UpdatedAt)).NoWrap()
 							ui.Text(c, costText(r.CostUSD, r.Unpriced, r.Requests)).FontSize(13).FontWeight(600).TextColor(pal.ink).FontFeatures("tnum").Width(80).TextAlign(ui.End)
 						})

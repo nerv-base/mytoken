@@ -3,7 +3,9 @@ package gui
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -11,12 +13,12 @@ import (
 // The tray panel's size.
 const (
 	TrayWidth  = 340
-	TrayHeight = 500
+	TrayHeight = 520
 )
 
-// PanelView is the tray panel: today's spend, the plan quotas and the
-// sessions running now. Its window is translucent; the panel draws on the
-// desktop's frosted material.
+// PanelView is the tray panel: today's spend, the sessions running now and
+// the quotas, nearest to running out first. Its window is translucent; the
+// panel draws on the desktop's frosted material.
 func (a *App) PanelView(c *ui.Context) {
 	pal := applyTheme(c, a.appearance())
 	ov := &a.ov
@@ -24,55 +26,29 @@ func (a *App) PanelView(c *ui.Context) {
 	c.Root().Background(ui.Color{})
 	// A tint over the window's frosted material keeps text readable where
 	// the material is missing or too light.
-	ui.Column(c).Fill().Radius(12).Background(pal.bg.Alpha(0.82)).Padding(14, 14, 12, 14).Gap(12).Children(func() {
+	ui.Column(c).Fill().Radius(12).Background(pal.bg.Alpha(0.82)).Padding(14, 14, 12, 14).Gap(10).Children(func() {
 		a.panelHeader(c, pal)
 		if !ov.ready {
 			emptyState(c, pal, tr("loading"), "")
 			return
 		}
+		a.panelLive(c, pal)
 		if len(ov.quotas) > 0 {
-			panelBox(c, pal).Gap(9).Children(func() {
-				for _, q := range ov.quotas {
-					for i, w := range q.Windows {
-						if i == 2 {
-							break
-						}
-						frac := w.UsedPercent / 100
-						ui.Column(c.Key(q.ID + w.Name)).Gap(4).Children(func() {
-							ui.Row(c).Gap(6).Children(func() {
-								ui.Text(c, q.Name+" · "+windowName(w.Name)).FontSize(12).TextColor(pal.ink).NoWrap()
-								ui.Spacer(c)
-								ui.Text(c, fmt.Sprintf("%.0f%%", w.UsedPercent)).FontSize(12).FontWeight(650).TextColor(pal.usageColor(frac)).FontFeatures("tnum")
-								if !w.ResetsAt.IsZero() {
-									caption(c, pal, fmtIn(now, w.ResetsAt)).FontSize(11).NoWrap()
-								}
-							})
-							bar(c, pal, frac, pal.usageColor(frac)).Height(5)
-						})
+			qs := append([]Quota(nil), ov.quotas...)
+			sort.SliceStable(qs, func(i, j int) bool { return urgency(qs[i], now) > urgency(qs[j], now) })
+			ui.Scroll(c).Grow(1).Basis(0).MinHeight(0).FillWidth().Children(func() {
+				panelBox(c, pal).Gap(11).Children(func() {
+					ui.Text(c, tr("planQuota")).FontSize(12).FontWeight(650).TextColor(pal.ink)
+					for _, q := range qs {
+						a.panelQuota(c.Key("pq-"+q.ID), pal, q, now)
 					}
-				}
-			})
-		}
-		panelBox(c, pal).Gap(8).Grow(1).Basis(0).MinHeight(0).Children(func() {
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, tr("activeNow")).FontSize(12).FontWeight(650).TextColor(pal.ink)
-				ui.Spacer(c)
-				if len(ov.active) > 0 {
-					caption(c, pal, tr("rateEstimated")).FontSize(10.5)
-				}
-			})
-			if len(ov.active) == 0 {
-				ui.Column(c).Grow(1).Center().Children(func() {
-					caption(c, pal, tr("noActive"))
 				})
-				return
-			}
-			for _, s := range ov.active {
-				a.panelSession(c.Key(sessionKey(s.row.Harness, s.row.SessionID)), pal, s)
-			}
-		})
+			})
+		} else {
+			ui.Spacer(c)
+		}
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			caption(c, pal, trf("monthSoFar", fmtUSD(ov.month.CostUSD))).FontSize(11.5)
+			caption(c, pal, trf("monthSoFar", fmtUSD(ov.month.CostUSD))).FontSize(11.5).FontFeatures("tnum")
 			ui.Spacer(c)
 			if a.d.OpenMain != nil && ui.Button(c, tr("openMain")).Clicked() {
 				if a.d.HidePanel != nil {
@@ -87,6 +63,82 @@ func (a *App) PanelView(c *ui.Context) {
 				}
 			}
 		})
+	})
+}
+
+// panelLive is the sessions running now: the fastest three, then how many
+// more; one quiet line when nothing runs.
+func (a *App) panelLive(c *ui.Context, pal palette) {
+	act := a.ov.active
+	if len(act) == 0 {
+		panelBox(c, pal).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Size(6, 6).Radius(3).Background(pal.faint).Shrink(0)
+				caption(c, pal, tr("noActive")).FontSize(11.5)
+			})
+		})
+		return
+	}
+	panelBox(c, pal).Gap(9).Children(func() {
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			liveDot(c, pal)
+			ui.Text(c, trf("sessionsLive", len(act))).FontSize(12).FontWeight(650).TextColor(pal.ink)
+			ui.Spacer(c)
+			caption(c, pal, tr("rateEstimated")).FontSize(10.5)
+		})
+		for i, s := range act {
+			if i == 3 {
+				caption(c, pal, trf("moreSessions", len(act)-3)).FontSize(11)
+				break
+			}
+			a.panelSession(c.Key(sessionKey(s.row.Harness, s.row.SessionID)), pal, s)
+		}
+	})
+}
+
+// panelQuota is one account on a line: its tightest window as a bar, or
+// its balance and how long it lasts.
+func (a *App) panelQuota(c *ui.Context, pal palette, q Quota, now time.Time) {
+	ui.Column(c).Gap(5).Children(func() {
+		bw, isBal := balanceOf(q)
+		w := QuotaWindow{}
+		if !isBal && len(q.Windows) > 0 {
+			w = q.Windows[primary(q)]
+		}
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			quotaBadge(c, pal, q, 16)
+			name := q.Name
+			if !isBal && len(q.Windows) > 1 {
+				name += " · " + windowName(w.Name)
+			}
+			ui.Text(c, name).FontSize(12).TextColor(pal.ink).SingleLine().Shrink(1).MinWidth(0)
+			ui.Spacer(c)
+			if isBal {
+				v := fmtAmount(bw.Remaining, bw.Unit)
+				if bw.Unit != "usd" {
+					v += " " + unitName(bw.Unit)
+				}
+				ui.Text(c, v).FontSize(12).FontWeight(650).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
+				if _, days := runway(q, bw); days >= 0 {
+					col := pal.muted
+					if days < 3 {
+						col = pal.bad
+					} else if days < 7 {
+						col = pal.warn
+					}
+					ui.Text(c, trf("runwayDays", int(math.Floor(days)))).FontSize(11).TextColor(col).NoWrap()
+				}
+				return
+			}
+			f := usedFrac(w)
+			ui.Text(c, fmt.Sprintf("%.0f%%", f*100)).FontSize(12).FontWeight(650).TextColor(pal.meterColor(w, now)).FontFeatures("tnum").NoWrap()
+			if !w.ResetsAt.IsZero() {
+				caption(c, pal, fmtIn(now, w.ResetsAt)).FontSize(11).NoWrap()
+			}
+		})
+		if !isBal {
+			bar(c, pal, usedFrac(w), pal.meterColor(w, now)).Height(4)
+		}
 	})
 }
 
@@ -123,14 +175,16 @@ func (a *App) panelHeader(c *ui.Context, pal palette) {
 		}
 		w := r.W * 0.6
 		x := r.X - w + (r.W+w)*phase
-		band := ui.Rect{X: x, Y: r.Y, W: w, H: 3}
-		p.FillGradient(band, ui.LinearGradient{Angle: 90, Stops: []ui.GradientStop{
-			{Color: accent.Alpha(0), At: 0}, {Color: accent.Alpha(0.9), At: 0.5}, {Color: accent.Alpha(0), At: 1},
-		}}, 1.5)
-		glow := ui.Rect{X: x, Y: r.Y, W: w, H: r.H}
-		p.FillGradient(glow, ui.LinearGradient{Angle: 90, Stops: []ui.GradientStop{
-			{Color: accent.Alpha(0), At: 0}, {Color: accent.Alpha(0.09), At: 0.5}, {Color: accent.Alpha(0), At: 1},
-		}}, 0)
+		p.Clip(r, 12, func() {
+			band := ui.Rect{X: x, Y: r.Y, W: w, H: 3}
+			p.FillGradient(band, ui.LinearGradient{Angle: 90, Stops: []ui.GradientStop{
+				{Color: accent.Alpha(0), At: 0}, {Color: accent.Alpha(0.9), At: 0.5}, {Color: accent.Alpha(0), At: 1},
+			}}, 1.5)
+			glow := ui.Rect{X: x, Y: r.Y, W: w, H: r.H}
+			p.FillGradient(glow, ui.LinearGradient{Angle: 90, Stops: []ui.GradientStop{
+				{Color: accent.Alpha(0), At: 0}, {Color: accent.Alpha(0.09), At: 0.5}, {Color: accent.Alpha(0), At: 1},
+			}}, 0)
+		})
 	})
 	box.Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -155,12 +209,12 @@ func (a *App) panelSession(c *ui.Context, pal palette, s activeSession) {
 	ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 		toolBadge(c, s.row.Harness, 24)
 		ui.Column(c).Gap(2).Grow(1).Basis(0).MinWidth(0).Children(func() {
-			ui.Text(c, sessionTitle(s.row)).FontSize(12.5).FontWeight(600).TextColor(pal.ink).NoWrap().Ellipsis("…")
+			ui.Text(c, sessionTitle(s.row)).FontSize(12.5).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…")
 			sub := s.model
 			if p := projectName(s.row.Project); p != "" {
 				sub = p + " · " + sub
 			}
-			caption(c, pal, sub).FontSize(10.5).NoWrap().Ellipsis("…")
+			caption(c, pal, sub).FontSize(10.5).SingleLine().Ellipsis("…")
 		})
 		ui.Column(c).Gap(2).AlignItems(ui.End).Shrink(0).Children(func() {
 			rate := "—"
@@ -200,7 +254,9 @@ func (a *App) TrayTitle() string {
 			best := -1.0
 			for _, q := range ov.quotas {
 				for _, w := range q.Windows {
-					best = max(best, w.UsedPercent)
+					if !w.Balance {
+						best = max(best, usedFrac(w)*100)
+					}
 				}
 			}
 			if best >= 0 {

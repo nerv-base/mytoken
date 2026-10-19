@@ -9,17 +9,17 @@ import (
 
 // card is a raised, opaque surface.
 func card(c *ui.Context, pal palette) ui.Element {
-	e := ui.Column(c).Padding(18, 20).Gap(14).Radius(14).Background(pal.card).MinWidth(0)
+	e := ui.Column(c).Padding(18, 20, 20, 20).Gap(14).Radius(16).Background(pal.card).MinWidth(0)
 	if pal.dark {
-		return e.Border(1, pal.line)
+		return e.Border(1, ui.RGBA(255, 255, 255, 0.045))
 	}
-	return e.Border(1, pal.line).Shadow(0, 1, 2, 0, ui.RGBA(20, 20, 40, 0.04))
+	return e.Border(1, ui.RGBA(20, 20, 40, 0.05)).Shadow(0, 1, 3, 0, ui.RGBA(20, 20, 40, 0.04))
 }
 
 // cardTitle is a card's heading with optional content on the right.
 func cardTitle(c *ui.Context, pal palette, title string, right func()) {
 	ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, title).FontSize(13).FontWeight(650).TextColor(pal.ink)
+		ui.Text(c, title).FontSize(14).FontWeight(650).TextColor(pal.ink)
 		ui.Spacer(c)
 		if right != nil {
 			right()
@@ -67,7 +67,7 @@ func shareRow(c *ui.Context, pal palette, lead func(), label, value, sub string,
 			if lead != nil {
 				lead()
 			}
-			ui.Text(c, label).FontSize(13).TextColor(pal.ink).NoWrap().Ellipsis("…").Shrink(1).MinWidth(0)
+			ui.Text(c, label).FontSize(13).TextColor(pal.ink).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 			ui.Spacer(c)
 			if sub != "" {
 				ui.Text(c, sub).FontSize(12).TextColor(pal.muted).NoWrap().FontFeatures("tnum")

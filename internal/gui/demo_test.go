@@ -83,9 +83,26 @@ func newDemo(now time.Time) *demo {
 			n++
 		}
 	}
-	// Two sessions running right now, for the tray.
-	d.sessions = append(d.sessions, makeSession(r, n, demoTools[0], now.Add(-40*time.Minute), now), makeSession(r, n+1, demoTools[1], now.Add(-12*time.Minute), now))
+	// Three sessions running right now, for the live card and the tray.
+	d.sessions = append(d.sessions,
+		live(makeSession(r, n, demoTools[0], now.Add(-40*time.Minute), now), now.Add(-20*time.Second)),
+		live(makeSession(r, n+1, demoTools[1], now.Add(-12*time.Minute), now), now.Add(-70*time.Second)),
+		live(makeSession(r, n+2, demoTools[2], now.Add(-25*time.Minute), now), now.Add(-4*time.Minute)))
 	return d
+}
+
+// live shifts a session so its last request is at last.
+func live(s demoSession, last time.Time) demoSession {
+	if len(s.events) == 0 {
+		return s
+	}
+	d := last.Sub(s.events[len(s.events)-1].Timestamp)
+	for i := range s.events {
+		s.events[i].Timestamp = s.events[i].Timestamp.Add(d)
+	}
+	s.meta.StartedAt = s.meta.StartedAt.Add(d)
+	s.meta.UpdatedAt = last
+	return s
 }
 
 func pickTool(r *rand.Rand) demoTool {
@@ -242,6 +259,14 @@ func (d *demo) Daily(_ context.Context, f query.Filter) ([]query.Point, error) {
 }
 
 func (d *demo) Usage(_ context.Context, f query.Filter) ([]query.UsageRow, error) {
+	return d.usage(f, false), nil
+}
+
+func (d *demo) HourlyUsage(_ context.Context, f query.Filter) ([]query.UsageRow, error) {
+	return d.usage(f, true), nil
+}
+
+func (d *demo) usage(f query.Filter, hourly bool) []query.UsageRow {
 	type key struct {
 		day      time.Time
 		h        model.Harness
@@ -250,7 +275,11 @@ func (d *demo) Usage(_ context.Context, f query.Filter) ([]query.UsageRow, error
 	m := map[key]*query.UsageRow{}
 	d.each(f, func(_ *demoSession, e query.AttributedEvent) {
 		ts := e.Timestamp.In(time.Local)
-		day := time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, time.Local)
+		hour := 0
+		if hourly {
+			hour = ts.Hour()
+		}
+		day := time.Date(ts.Year(), ts.Month(), ts.Day(), hour, 0, 0, 0, time.Local)
 		k := key{day, e.Harness, e.Model, e.ResolvedProvider}
 		r := m[k]
 		if r == nil {
@@ -265,7 +294,7 @@ func (d *demo) Usage(_ context.Context, f query.Filter) ([]query.UsageRow, error
 	for _, r := range m {
 		out = append(out, *r)
 	}
-	return out, nil
+	return out
 }
 
 func (d *demo) group(f query.Filter, key func(s *demoSession, e query.AttributedEvent) (string, string)) []query.Bucket {
@@ -381,6 +410,19 @@ func (d *demo) Session(_ context.Context, h model.Harness, id string) (query.Ses
 func (d *demo) Subscribe() (<-chan struct{}, func()) { return make(chan struct{}), func() {} }
 
 func demoQuotas(now time.Time) []Quota {
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	daily := func(base float64, seed int) []QuotaDay {
+		var out []QuotaDay
+		for i := 13; i >= 0; i-- {
+			d := day.AddDate(0, 0, -i)
+			v := base * (0.4 + 0.9*math.Abs(math.Sin(float64(i*seed)*0.7)))
+			if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+				v *= 0.3
+			}
+			out = append(out, QuotaDay{Day: d, Used: math.Round(v), Known: i != 9})
+		}
+		return out
+	}
 	return []Quota{
 		{ID: "codex", Name: "Codex", Plan: "Pro", Source: "local-log", FetchedAt: now, Windows: []QuotaWindow{
 			{Name: "5h", UsedPercent: 42, ResetsAt: now.Add(2*time.Hour + 14*time.Minute)},
@@ -389,6 +431,21 @@ func demoQuotas(now time.Time) []Quota {
 		{ID: "claude", Name: "Claude", Plan: "Max 5x", Source: "api", FetchedAt: now, Windows: []QuotaWindow{
 			{Name: "5h", UsedPercent: 88, ResetsAt: now.Add(47 * time.Minute)},
 			{Name: "week", UsedPercent: 31, ResetsAt: now.Add(5 * 24 * time.Hour)},
+		}},
+		{ID: "cursor", Name: "Cursor", Plan: "Pro", Source: "api", FetchedAt: now.Add(-3 * time.Minute), Windows: []QuotaWindow{
+			{Name: "month", UsedPercent: 71, Used: 14.2, Limit: 20, Unit: "usd", ResetsAt: now.Add(11 * 24 * time.Hour)},
+		}},
+		{ID: "workbuddy", Name: "WorkBuddy", Plan: "Pro", Source: "api", FetchedAt: now, Windows: []QuotaWindow{
+			{Name: "credits", Balance: true, Remaining: 1240, Unit: "credits", ExpiresAt: now.Add(13 * 24 * time.Hour)},
+		}, Daily: daily(150, 3)},
+		{ID: "trae", Name: "Trae", Plan: "Pro", Source: "api", FetchedAt: now, Windows: []QuotaWindow{
+			{Name: "month", UsedPercent: 69, Used: 412, Limit: 600, Unit: "requests", ResetsAt: now.Add(9 * 24 * time.Hour)},
+		}},
+		{ID: "qoder", Name: "Qoder", Source: "api", FetchedAt: now, Windows: []QuotaWindow{
+			{Name: "credits", Balance: true, Remaining: 180, Unit: "credits"},
+		}, Daily: daily(60, 5)},
+		{ID: "copilot", Name: "GitHub Copilot", Plan: "Pro", Source: "api", FetchedAt: now, Windows: []QuotaWindow{
+			{Name: "month", UsedPercent: 35, Used: 105, Limit: 300, Unit: "requests", ResetsAt: now.Add(11 * 24 * time.Hour)},
 		}},
 	}
 }

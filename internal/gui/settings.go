@@ -360,7 +360,7 @@ func (a *App) sourceRow(c *ui.Context, pal palette, s Source) {
 				dir = s.Override
 			}
 			if dir != "" {
-				caption(c, pal, dir).FontSize(11).NoWrap().Ellipsis("…")
+				caption(c, pal, dir).FontSize(11).SingleLine().Ellipsis("…")
 			}
 			if s.Problem != "" {
 				caption(c, pal, s.Problem).FontSize(11).TextColor(pal.warn)
@@ -431,7 +431,7 @@ func (a *App) priceSettings(c *ui.Context, pal palette) {
 			}
 			ui.Column(c.Key(u.Provider+"/"+u.Model)).Gap(6).Padding(4, 0).Children(func() {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, u.Model).FontSize(13).FontWeight(600).TextColor(pal.ink).NoWrap().Ellipsis("…").Shrink(1).MinWidth(0)
+					ui.Text(c, u.Model).FontSize(13).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 					if u.Provider != "" {
 						caption(c, pal, u.Provider)
 					}
@@ -456,9 +456,9 @@ func (a *App) priceSettings(c *ui.Context, pal palette) {
 		caption(c, pal, tr("aliasesHint"))
 		for _, al := range st.aliases {
 			ui.Row(c.Key(al.From)).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, al.From).FontSize(13).TextColor(pal.ink).NoWrap().Ellipsis("…").Shrink(1).MinWidth(0)
+				ui.Text(c, al.From).FontSize(13).TextColor(pal.ink).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 				caption(c, pal, "→")
-				ui.Text(c, al.To).FontSize(13).FontWeight(600).TextColor(pal.ink).NoWrap().Ellipsis("…").Shrink(1).MinWidth(0)
+				ui.Text(c, al.To).FontSize(13).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 				ui.Spacer(c)
 				if ui.Button(c, tr("delete")).Disabled(st.act.running).Clicked() {
 					st.deleteWhat, st.confirmDelete = "alias:"+al.From, true
@@ -480,7 +480,7 @@ func (a *App) priceSettings(c *ui.Context, pal palette) {
 		caption(c, pal, tr("customPricesHint"))
 		for _, cp := range st.custom {
 			ui.Row(c.Key(cp.Model)).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, cp.Model).FontSize(13).FontWeight(600).TextColor(pal.ink).NoWrap().Ellipsis("…").Shrink(1).MinWidth(0)
+				ui.Text(c, cp.Model).FontSize(13).FontWeight(600).TextColor(pal.ink).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
 				ui.Spacer(c)
 				caption(c, pal, trf("priceLine", trimZero(fmtF(cp.Input)), trimZero(fmtF(cp.Output)), trimZero(fmtF(cp.CacheRead)), trimZero(fmtF(cp.CacheWrite)))).FontFeatures("tnum").NoWrap()
 				if ui.Button(c, tr("delete")).Disabled(st.act.running).Clicked() {
@@ -556,7 +556,7 @@ func (a *App) dataSettings(c *ui.Context, pal palette) {
 				}
 			}
 		})
-		caption(c, pal, db.Path).NoWrap().Ellipsis("…")
+		caption(c, pal, db.Path).SingleLine().Ellipsis("…")
 		ui.Row(c).Gap(12).Children(func() {
 			kpi(c, pal, tr("dbSize"), fmtBytes(db.Bytes))
 			kpi(c, pal, tr("requests"), fmtInt(db.Events))
