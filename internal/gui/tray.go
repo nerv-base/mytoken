@@ -111,9 +111,15 @@ func (a *App) panelQuota(c *ui.Context, pal palette, q Quota, now time.Time) {
 			}
 			ui.Text(c, name).FontSize(12).TextColor(pal.ink).SingleLine().Shrink(1).MinWidth(0)
 			ui.Spacer(c)
+			if len(q.Windows) == 0 {
+				if q.SignIn {
+					ui.Text(c, tr("signInShort")).FontSize(11).TextColor(pal.warn).NoWrap()
+				}
+				return
+			}
 			if isBal {
 				v := fmtAmount(bw.Remaining, bw.Unit)
-				if bw.Unit != "usd" {
+				if !isMoney(bw.Unit) {
 					v += " " + unitName(bw.Unit)
 				}
 				ui.Text(c, v).FontSize(12).FontWeight(650).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
@@ -134,7 +140,7 @@ func (a *App) panelQuota(c *ui.Context, pal palette, q Quota, now time.Time) {
 				caption(c, pal, fmtIn(now, w.ResetsAt)).FontSize(11).NoWrap()
 			}
 		})
-		if !isBal {
+		if !isBal && len(q.Windows) > 0 {
 			bar(c, pal, usedFrac(w), pal.meterColor(w, now)).Height(4)
 		}
 	})
@@ -217,7 +223,11 @@ func (a *App) panelSession(c *ui.Context, pal palette, s activeSession) {
 		})
 		ui.Column(c).Gap(2).AlignItems(ui.End).Shrink(0).Children(func() {
 			ui.Text(c, fmtUSD(s.row.CostUSD)).FontSize(12).FontWeight(650).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
-			caption(c, pal, trf("perHour", fmtUSD(s.perHour))+" · "+fmtPct(s.hit)).FontSize(10.5).FontFeatures("tnum").NoWrap()
+			line := trf("perHour", fmtUSD(s.perHour)) + " · " + fmtPct(s.hit)
+			if s.rate > 0 {
+				line = trf("tpsShort", fmtTokens(int64(math.Round(s.rate)))) + " · " + line
+			}
+			caption(c, pal, line).FontSize(10.5).FontFeatures("tnum").NoWrap()
 		})
 	})
 }

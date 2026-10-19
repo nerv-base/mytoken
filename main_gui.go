@@ -41,8 +41,16 @@ func quotas(s *plan.Service) []gui.Quota {
 		return nil
 	}
 	problems := map[string]string{}
+	signIn := map[string]bool{}
 	for _, st := range s.Statuses() {
-		if st.Reason != plan.ReasonNone {
+		switch st.Reason {
+		case plan.ReasonNone:
+		case plan.ReasonUnauthorized, plan.ReasonForbidden, plan.ReasonTokenExpired:
+			// Signed in once, but the service no longer takes the login.
+			if st.Detected {
+				signIn[st.Provider] = true
+			}
+		default:
 			problems[st.Provider] = st.Reason.Text()
 		}
 	}
@@ -52,7 +60,9 @@ func quotas(s *plan.Service) []gui.Quota {
 		q := gui.Quota{
 			ID: snap.Provider, Name: quotaName(snap.Provider), Plan: planLabel(snap.Plan),
 			Source: snap.Source, FetchedAt: snap.FetchedAt, Err: problems[snap.Provider],
+			SignIn: signIn[snap.Provider],
 		}
+		delete(signIn, snap.Provider)
 		for _, w := range snap.Windows {
 			if !w.Valid() {
 				continue
@@ -70,8 +80,14 @@ func quotas(s *plan.Service) []gui.Quota {
 		for _, d := range snap.Daily {
 			q.Daily = append(q.Daily, gui.QuotaDay{Day: d.Day, Used: d.Used, Known: d.Known})
 		}
-		if len(q.Windows) > 0 {
+		if len(q.Windows) > 0 || q.SignIn {
 			out = append(out, q)
+		}
+	}
+	// Accounts whose login was turned away before any figure came in.
+	for _, st := range s.Statuses() {
+		if signIn[st.Provider] {
+			out = append(out, gui.Quota{ID: st.Provider, Name: quotaName(st.Provider), SignIn: true})
 		}
 	}
 	return out
@@ -89,6 +105,8 @@ func quotaName(id string) string {
 		return "GitHub Copilot"
 	case "glm":
 		return "GLM"
+	case "deepseek":
+		return "DeepSeek"
 	case "trae-cn":
 		return "Trae"
 	case "trae-global":
@@ -118,7 +136,11 @@ func planLabel(p string) string {
 		if len(w) <= 2 && strings.ContainsAny(w, "0123456789") {
 			continue // "5x", "20x"
 		}
-		words[i] = strings.ToUpper(w[:1]) + w[1:]
+		// Title-case Latin words only; "体验版" stays as it is (slicing its
+		// first byte would cut a character in half).
+		if c := w[0]; c >= 'a' && c <= 'z' {
+			words[i] = string(c-'a'+'A') + w[1:]
+		}
 	}
 	return strings.Join(words, " ")
 }

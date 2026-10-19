@@ -31,11 +31,14 @@ type Quota struct {
 	ID, Name string // provider id ("claude") and display name ("Claude")
 	Plan     string // "Max 20x", "Pro", "" when unknown
 	Windows  []QuotaWindow
-	// Source is "local-log" when read from the tool's own logs, "api" when
-	// fetched with its stored credentials.
+	// Source is "api": figures are always asked of the service, with the
+	// tool's stored login.
 	Source    string
 	FetchedAt time.Time
 	Err       string // last fetch error, shown beside a stale snapshot
+	// SignIn is set when the service turned the stored login away: the
+	// tool needs signing in again (MyToken never refreshes a login).
+	SignIn bool
 	// Daily is what a credit balance lost each day, oldest first, for the
 	// last two weeks; empty when unknown.
 	Daily []QuotaDay

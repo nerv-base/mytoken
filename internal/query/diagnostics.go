@@ -131,6 +131,12 @@ func readDiagnosticsTx(ctx context.Context, tx *sql.Tx, instanceIDs []string) ([
 	return out, nil
 }
 
+// likePrefix escapes a literal prefix for a LIKE ... ESCAPE '\' pattern.
+func likePrefix(prefix string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(prefix) + "%"
+}
+
 // storedDiagnosticsKeys lists every diagnostics key in the settings table,
 // ordered, so one read is one stable picture.
 func storedDiagnosticsKeys(ctx context.Context, tx *sql.Tx) ([]string, error) {

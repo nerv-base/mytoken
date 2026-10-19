@@ -44,7 +44,6 @@ import (
 
 	"github.com/zzstar101/mytoken/internal/harness"
 	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/quota"
 )
 
 const (
@@ -175,13 +174,6 @@ type state struct {
 	Updated  string                `json:"u,omitempty"`
 	Total    *model.Tokens         `json:"tot,omitempty"`
 	Boundary harness.BoundaryState `json:"boundary,omitzero"`
-	// Lines counts the complete rollout lines consumed so far, so a quota
-	// line number stays absolute across incremental batches.
-	Lines int64 `json:"ln,omitempty"`
-	// Quota is the bounded selection state of this rollout's rate_limits
-	// payloads (see quota.Collector). It is opaque to the store and stays empty
-	// for a rollout that carries no rate_limits.
-	Quota string `json:"q,omitempty"`
 	// Branch is the repository branch session_meta recorded. It is carried
 	// across an incremental cursor because the session_meta line lives in
 	// already-consumed bytes; it is only ever applied to records of the same
@@ -222,10 +214,6 @@ type rawPayload struct {
 
 	Usage            *rawUsage `json:"usage"`
 	ThreadTokenUsage *rawUsage `json:"thread_token_usage"`
-
-	// RateLimits is the quota observation Codex attaches to some records. It is
-	// read from the payload object and never inferred from token counts.
-	RateLimits json.RawMessage `json:"rate_limits"`
 
 	// Git is the repository snapshot Codex writes on session_meta. Only the
 	// branch is retained: the remote URL and commit hash are not repository
@@ -306,7 +294,6 @@ func decodePayload(raw json.RawMessage) (rawPayload, bool) {
 	}
 	pl.Usage = usage("usage")
 	pl.ThreadTokenUsage = usage("thread_token_usage")
-	pl.RateLimits = fields["rate_limits"]
 	// A failed strict decode above can still have allocated pl.Git before it
 	// rejected the shape, so clear it first: a non-object git field must read as
 	// absent (unknown branch), never as an empty branch that looks recorded.
@@ -381,9 +368,6 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 	var skipped int64
 	var skippedTime time.Time
 	off := start
-	// lineNo counts complete lines, continuing the count an earlier batch
-	// persisted so a quota observation's line number is absolute for the file.
-	lineNo := stt.Lines
 	for {
 		if err := ctx.Err(); err != nil {
 			return b, err
@@ -407,7 +391,6 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 		}
 		if skipped > 0 {
 			off += skipped + int64(len(line))
-			lineNo++
 			acc.observe(skippedTime)
 			skipped = 0
 			continue
@@ -420,8 +403,6 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 		if cap(pending) > 1<<20 {
 			pending = nil
 		}
-		lineNo++
-		acc.line = lineNo
 		line = trimEOL(line)
 		if len(line) == 0 {
 			continue
@@ -444,11 +425,7 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 		p.handleLine(&b, &rl, acc, ts)
 	}
 
-	acc.line = lineNo
 	b.Sessions = acc.sessionMeta()
-	// Quota is additive: a rollout with no rate_limits payload leaves it nil,
-	// and the token accounting above is unaffected either way.
-	b.Quota = acc.collector.Report(quota.CodexOptions{Source: src.Path})
 	b.Next = harness.Cursor{
 		Offset:      off,
 		Size:        st.Size(),
@@ -462,9 +439,6 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 var (
 	tsPrefix      = []byte(`{"timestamp":"`)
 	payloadPrefix = []byte(`"payload":{"type":"`)
-	// rateLimitsKey guards the fast skip path: a record mentioning it must be
-	// decoded, because it may be the only carrier of a quota observation.
-	rateLimitsKey = []byte(`"rate_limits"`)
 )
 
 // skippable recognises, without decoding, the rollout lines whose only effect is
@@ -531,13 +505,6 @@ func skippable(line []byte) (time.Time, bool) {
 	default:
 		return time.Time{}, false
 	}
-	// A record that carries a rate_limits payload is never skipped, whatever
-	// its type: quota is read from the payload and must be retained even when
-	// the record contributes no usage event. The scan is a cheap byte search
-	// over bytes this function already walked.
-	if bytes.Contains(head[end+1:], rateLimitsKey) {
-		return time.Time{}, false
-	}
 	ts, _ := parseTime(string(stamp))
 	return ts, true
 }
@@ -562,11 +529,6 @@ func (p *Parser) handleLine(b *harness.Batch, rl *rawLine, acc *accumulator, ts 
 }
 
 func handlePayload(b *harness.Batch, typ string, pl *rawPayload, acc *accumulator, ts time.Time) {
-	// Quota is captured before the record's own handling, so a quota-only
-	// record (a rate_limits payload with no usage, no info block, or a
-	// duplicate cumulative snapshot) still contributes its observation even
-	// when it emits no usage event.
-	acc.observeQuota(typ, pl.Type, ts, pl.RateLimits)
 	switch typ {
 	case "compacted":
 		acc.boundary.Pending = model.BoundaryCompact
@@ -645,17 +607,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// recordLabel renders a record's static type path the way the quota package
-// names records (outer type, then the payload's own type when it differs).
-func recordLabel(typ, ptype string) string {
-	switch {
-	case typ == "" || ptype == "" || typ == ptype:
-		return firstNonEmpty(typ, ptype)
-	default:
-		return typ + "." + ptype
-	}
-}
-
 func parentOf(pl *rawPayload) string {
 	if p := sourceParent(pl.Source); p != "" {
 		return p
@@ -727,11 +678,6 @@ type accumulator struct {
 	prevTotal *model.Tokens
 	boundary  harness.BoundaryState
 
-	// collector holds this rollout's quota selection state across incremental
-	// batches; line is the absolute 1-based line of the record being handled.
-	collector *quota.Collector
-	line      int64
-
 	index map[string]int
 	// unmodeled indexes events of the current batch that were written before a
 	// turn_context was seen; Codex writes usage records for replayed history
@@ -750,7 +696,6 @@ func newAccumulator(st *state) *accumulator {
 		branch:    st.Branch,
 		prevTotal: st.Total,
 		boundary:  st.Boundary,
-		collector: quota.LoadCollector(st.Quota),
 		index:     map[string]int{},
 	}
 	if t, err := time.Parse(time.RFC3339, st.Started); err == nil {
@@ -810,27 +755,6 @@ func (a *accumulator) setTitle(text string) {
 		return
 	}
 	a.title = harness.Title(text)
-}
-
-// observeQuota records the quota observation a record carried. Nothing is
-// inferred from tokens: only a record that actually carries a rate_limits
-// payload contributes, and it is reduced by the same selector an offline read
-// of the whole rollout would use, so incremental batches agree with ReadCodex.
-func (a *accumulator) observeQuota(typ, ptype string, ts time.Time, raw json.RawMessage) {
-	if len(raw) == 0 {
-		return
-	}
-	if a.collector == nil {
-		a.collector = quota.NewCollector()
-	}
-	// The record's instant is re-rendered rather than forwarded raw: the
-	// parser and the quota reader accept the same RFC3339 form, and a record
-	// with no usable timestamp is reported as such instead of being dated.
-	stamp := ""
-	if !ts.IsZero() {
-		stamp = ts.UTC().Format(time.RFC3339)
-	}
-	a.collector.ObserveRateLimits(recordLabel(typ, ptype), stamp, int(a.line), raw)
 }
 
 // addUsage turns one token record into a UsageEvent. total is the
@@ -950,8 +874,6 @@ func (a *accumulator) encodeState() string {
 		Branch:   a.branch,
 		Total:    a.prevTotal,
 		Boundary: a.boundary,
-		Lines:    a.line,
-		Quota:    a.collector.EncodeState(),
 	}
 	if !a.started.IsZero() {
 		st.Started = a.started.UTC().Format(time.RFC3339Nano)

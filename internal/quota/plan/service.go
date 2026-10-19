@@ -53,7 +53,7 @@ type Options struct {
 	Providers []Provider
 	// Store persists the last good snapshot of each provider. Optional.
 	Store Store
-	// Offline disables network providers; local-log providers keep working.
+	// Offline disables every network fetch; only the stored snapshots are read.
 	Offline bool
 	// Interval overrides DefaultInterval for every provider.
 	Interval time.Duration
@@ -386,7 +386,7 @@ func (s *Service) fetchOne(ctx context.Context, p Provider, force bool) {
 			return
 		}
 	}
-	offline := s.offline && !providerLocal(p)
+	offline := s.offline
 	if offline {
 		st := s.status[id]
 		st.Detected = false
@@ -650,11 +650,6 @@ func (s *Service) intervalFor(id string) time.Duration {
 		return v
 	}
 	return s.interval
-}
-
-func providerLocal(p Provider) bool {
-	lp, ok := p.(LocalProvider)
-	return ok && lp.Local()
 }
 
 func errorReason(err error) Reason {

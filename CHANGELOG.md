@@ -5,6 +5,13 @@ every release needs one here (`## 0.2.1`), written for the people updating.
 
 ## 0.5.2
 
+- **Plan quotas always come from the provider's server.** Codex quota is now
+  fetched from the ChatGPT backend (the same read the codex CLI makes) instead
+  of the last rollout log, so a log that stopped in September can no longer
+  show 0%. Every other provider already fetched; all of them cache only the
+  last server response. If the stored Codex token is rejected, the app asks you
+  to sign in to Codex again — it never refreshes the token, because that would
+  sign you out of Codex.
 - **In your language again.** 0.5.0 and 0.5.1 showed English on Chinese
   systems; the app now follows the system's languages again, and picking a
   language in Settings also switches the toolkit's own texts (menus, the
@@ -13,10 +20,18 @@ every release needs one here (`## 0.2.1`), written for the people updating.
   and the daily average, over daily bars by input, output, cache write and
   cache read, above the spend card. Token counts everywhere now include
   cache reads.
+- **DeepSeek balance.** When DeepSeek Harness holds a DeepSeek API key (or
+  `DEEPSEEK_API_KEY` is set), the plan-quota card shows the account balance
+  from DeepSeek's balance API.
+- **Plan quota tiles fixed.** Names no longer collapse to "…", Chinese plan
+  names are no longer garbled, long plans shorten instead of pushing the
+  header out, four accounts sit two by two, and a provider that turns the
+  saved login away says to sign in again.
 - **Running now, calmer.** The running-sessions card sits in the page like
-  the other cards: each session's tool mark ripples while it works, and a
-  strip shows its requests of the last 15 minutes, each as tall as what it
-  cost, drifting left as time passes.
+  the other cards: each session keeps its orb, now with a softer highlight,
+  shows what it cost and its output speed (estimated from the gaps between
+  requests), and a strip of its requests of the last 15 minutes, each as
+  tall as what it cost, drifting left as time passes.
 - **Running sessions are marked** in the session list and on the session's
   page.
 - **Today's dial** keeps its hour labels outside, clear of the total.

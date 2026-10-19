@@ -36,6 +36,7 @@ const (
 	ReasonSourceUnreadable Reason = "source_unreadable"
 	ReasonUnsupported      Reason = "unsupported"
 	ReasonNoData           Reason = "no_data"
+	ReasonBalanceExhausted Reason = "balance_exhausted"
 )
 
 var reasonText = map[Reason]string{
@@ -54,6 +55,7 @@ var reasonText = map[Reason]string{
 	ReasonSourceUnreadable: "the credential source could not be read",
 	ReasonUnsupported:      "this platform or installation is not supported",
 	ReasonNoData:           "no quota data is available",
+	ReasonBalanceExhausted: "the account balance is exhausted",
 }
 
 // Text returns the fixed, user-facing message for the reason.

@@ -21,9 +21,6 @@ type Envelope struct {
 	// Groups holds the extra rankings requested through EnvelopeOptions, in the
 	// order they were asked for. Empty unless options requested them.
 	Groups []Group
-	// Quota holds the persisted Codex quota observations when EnvelopeOptions
-	// asked for them, read in the same transaction as the totals.
-	Quota []QuotaObservation
 }
 
 // GroupDim names one extra ranking an Envelope can carry.
@@ -68,11 +65,6 @@ type EnvelopeOptions struct {
 	Groups []GroupDim
 	// SessionLimit caps a GroupBySession ranking; 0 means every root session.
 	SessionLimit int
-	// Quota reads the persisted Codex quota observations for f.InstanceIDs in
-	// the same transaction, so a quota view and the totals it accompanies
-	// always describe one index state. Off by default: a caller that does not
-	// display quota does not pay for the read.
-	Quota bool
 }
 
 // ReadEnvelope reads one consistent envelope for f. The handle may be a
@@ -99,11 +91,6 @@ func ReadEnvelope(ctx context.Context, st *store.Store, f Filter, opts ...Envelo
 	}
 	if out.Groups, err = s.groupsOf(ctx, tx, d, f, o); err != nil {
 		return out, err
-	}
-	if o.Quota {
-		if out.Quota, err = readQuotaTx(ctx, tx, f.InstanceIDs); err != nil {
-			return out, err
-		}
 	}
 	return out, tx.Commit()
 }

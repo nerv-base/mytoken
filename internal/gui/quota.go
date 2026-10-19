@@ -19,6 +19,15 @@ import (
 // they show what is left, what the last two weeks used day by day, and how
 // long the balance lasts at that rate.
 
+// windowLabel names a window; credits with a cap are an allowance being
+// used up, not a balance.
+func windowLabel(w QuotaWindow) string {
+	if !w.Balance && strings.EqualFold(w.Name, "credits") {
+		return tr("creditsUsed")
+	}
+	return windowName(w.Name)
+}
+
 func windowName(n string) string {
 	switch n {
 	case "5h":
@@ -87,10 +96,17 @@ func unitName(u string) string {
 	return u
 }
 
+// isMoney tells units shown with a currency sign and no unit after.
+func isMoney(u string) bool { return u == "usd" || u == "cny" }
+
 // fmtAmount formats an amount of a unit compactly.
 func fmtAmount(v float64, unit string) string {
-	if unit == "usd" {
+	switch unit {
+	case "usd":
 		return fmtUSD(v)
+	case "cny":
+		// Yuan as the account holds them, whatever currency is shown.
+		return "¥" + strconv.FormatFloat(v, 'f', 2, 64)
 	}
 	if v >= 10000 {
 		return fmtTokens(int64(v))
@@ -106,8 +122,8 @@ func windowValue(w QuotaWindow) string {
 	if w.Limit <= 0 {
 		return ""
 	}
-	if w.Unit == "usd" {
-		return fmtUSD(w.Used) + " / " + fmtUSD(w.Limit)
+	if isMoney(w.Unit) {
+		return fmtAmount(w.Used, w.Unit) + " / " + fmtAmount(w.Limit, w.Unit)
 	}
 	return fmtAmount(w.Used, w.Unit) + " / " + fmtAmount(w.Limit, w.Unit) + " " + unitName(w.Unit)
 }
@@ -193,6 +209,15 @@ func (pal palette) meterColor(w QuotaWindow, now time.Time) ui.Color {
 
 const quotaCols = 3
 
+// quotaColsFor lays n accounts out without a lone tile on a row of three:
+// four go two by two.
+func quotaColsFor(n int) int {
+	if n <= 2 || n == 4 {
+		return 2
+	}
+	return quotaCols
+}
+
 func (a *App) quotaCard(c *ui.Context, pal palette) {
 	now := a.now()
 	qs := append([]Quota(nil), a.ov.quotas...)
@@ -218,12 +243,13 @@ func (a *App) quotaCard(c *ui.Context, pal palette) {
 				ui.Text(c, trf("nearlyOutN", low)).FontSize(12).FontWeight(650).TextColor(pal.bad).Padding(3, 9).Radius(10).Background(pal.bad.Alpha(0.12)).NoWrap()
 			}
 		})
+		cols := quotaColsFor(len(shown))
 		ui.Column(c).Gap(12).Children(func() {
-			for r := 0; r*quotaCols < len(shown); r++ {
+			for r := 0; r*cols < len(shown); r++ {
 				ui.Row(c.Key("qr" + itoa(r))).Gap(12).AlignItems(ui.Stretch).
 					Transition(ui.ElementTransition{Animation: &snappy, Enter: &ui.Motion{Y: -8, Collapse: true}, Exit: &ui.Motion{Collapse: true}}).
 					Children(func() {
-						for k := r * quotaCols; k < r*quotaCols+quotaCols; k++ {
+						for k := r * cols; k < r*cols+cols; k++ {
 							if k < len(shown) {
 								a.mo.cur = rv
 								a.quotaTile(c.Key("qt-"+shown[k].ID), pal, shown[k], k, now)
@@ -270,18 +296,22 @@ func (a *App) quotaTile(c *ui.Context, pal palette, q Quota, order int, now time
 	tile.Background(tile.AnimateColor("bg", bg, quick)).Border(1, pal.line)
 	delay := rv.delay + time.Duration(120+60*order)*time.Millisecond
 	tile.Children(func() {
-		ui.Row(c).Gap(9).AlignItems(ui.Center).Children(func() {
-			quotaBadge(c, pal, q, 22)
-			ui.Text(c, q.Name).FontSize(14).FontWeight(650).TextColor(pal.ink).SingleLine().Shrink(1).MinWidth(0)
-			if q.Plan != "" {
-				ui.Text(c, q.Plan).FontSize(11).FontWeight(650).TextColor(pal.muted).Padding(2, 7).Radius(6).Background(pal.well).NoWrap()
-			}
-			ui.Spacer(c)
-			src := tr("viaAPI")
-			if q.Source == "local-log" {
-				src = tr("viaLog")
-			}
-			ui.Text(c, src+" · "+fmtAgo(now, q.FetchedAt)).FontSize(11).TextColor(pal.faint).NoWrap()
+		// The name never gives way: the plan shortens first, and where the
+		// figures come from sits on its own line.
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			quotaBadge(c, pal, q, 28)
+			ui.Column(c).Gap(2).Grow(1).Basis(0).MinWidth(0).Children(func() {
+				ui.Row(c).Gap(7).AlignItems(ui.Center).MinWidth(0).Children(func() {
+					ui.Text(c, q.Name).FontSize(14).FontWeight(650).TextColor(pal.ink).NoWrap().Shrink(0)
+					if q.Plan != "" {
+						ui.Text(c, q.Plan).FontSize(11).FontWeight(650).TextColor(pal.muted).Padding(2, 7).Radius(6).Background(pal.well).
+							SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+					}
+				})
+				if !q.FetchedAt.IsZero() {
+					ui.Text(c, tr("viaAPI")+" · "+fmtAgo(now, q.FetchedAt)).FontSize(11).TextColor(pal.faint).SingleLine().Ellipsis("…")
+				}
+			})
 		})
 		if bw, ok := balanceOf(q); ok {
 			a.balanceBody(c, pal, q, bw, delay, now)
@@ -303,7 +333,12 @@ func (a *App) quotaTile(c *ui.Context, pal palette, q Quota, order int, now time
 			}
 			a.quotaBar(c.Key("qb-"+itoa(i)), pal, w, delay+time.Duration(80*(i+1))*time.Millisecond, now)
 		}
-		if q.Err != "" {
+		if q.SignIn {
+			ui.Row(c).Gap(7).AlignItems(ui.Center).Padding(8, 10).Radius(8).Background(pal.warn.Alpha(0.1)).Children(func() {
+				ui.Box(c).Size(6, 6).Radius(3).Background(pal.warn).Shrink(0)
+				ui.Text(c, trf("signInAgain", q.Name)).FontSize(12).TextColor(pal.warn).MaxLines(2)
+			})
+		} else if q.Err != "" {
 			ui.Text(c, q.Err).FontSize(11.5).TextColor(pal.warn).MaxLines(2)
 		}
 	})
@@ -315,7 +350,7 @@ func extraBalance(c *ui.Context, pal palette, w QuotaWindow) {
 		ui.Text(c, windowName(w.Name)).FontSize(12).TextColor(pal.ink).SingleLine().Shrink(1).MinWidth(0)
 		ui.Spacer(c)
 		v := fmtAmount(w.Remaining, w.Unit)
-		if w.Unit != "usd" {
+		if !isMoney(w.Unit) {
 			v += " " + unitName(w.Unit)
 		}
 		ui.Text(c, v).FontSize(12).FontWeight(650).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
@@ -377,7 +412,7 @@ func (a *App) windowRing(c *ui.Context, pal palette, w QuotaWindow, delay time.D
 		})
 		ui.Column(c).Gap(3).Grow(1).MinWidth(0).Children(func() {
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, windowName(w.Name)).FontSize(13.5).FontWeight(600).TextColor(pal.ink).SingleLine().Shrink(1).MinWidth(0)
+				ui.Text(c, windowLabel(w)).FontSize(13.5).FontWeight(600).TextColor(pal.ink).SingleLine().Shrink(1).MinWidth(0)
 				switch {
 				case f >= 0.85:
 					chip(c, tr("nearlyOut"), pal.bad)
@@ -407,7 +442,7 @@ func (a *App) quotaBar(c *ui.Context, pal palette, w QuotaWindow, delay time.Dur
 	col := pal.meterColor(w, now)
 	ui.Column(c).Gap(6).Children(func() {
 		ui.Row(c).Gap(8).Children(func() {
-			ui.Text(c, windowName(w.Name)).FontSize(12).TextColor(pal.ink).SingleLine().Shrink(1).MinWidth(0)
+			ui.Text(c, windowLabel(w)).FontSize(12).TextColor(pal.ink).SingleLine().Shrink(1).MinWidth(0)
 			ui.Spacer(c)
 			ui.Text(c, fmt.Sprintf("%.0f%%", f*100)).FontSize(12).FontWeight(650).TextColor(col).FontFeatures("tnum").NoWrap()
 			if !w.ResetsAt.IsZero() {
@@ -451,12 +486,19 @@ func (a *App) balanceBody(c *ui.Context, pal palette, q Quota, w QuotaWindow, de
 				a.num(c, "bal", w.Remaining, func(v float64) string { return fmtAmount(v, w.Unit) }, func(e ui.Element) ui.Element {
 					return e.Font(display).FontSize(26).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum").LetterSpacing(-0.4).NoWrap()
 				})
-				if w.Unit != "usd" {
+				if !isMoney(w.Unit) {
 					ui.Text(c, unitName(w.Unit)).FontSize(12.5).FontWeight(600).TextColor(pal.muted).Padding(0, 0, 4, 0).NoWrap()
 				}
 			})
 		})
-		// The last 14 days of use.
+		// The last 14 days of use, once there is any to show.
+		known := false
+		for _, d := range q.Daily {
+			known = known || (d.Known && d.Used > 0)
+		}
+		if !known {
+			return
+		}
 		bars := ui.Box(c.Key("days")).Size(126, 40).Shrink(0)
 		target := float32(0)
 		if rv.seen {

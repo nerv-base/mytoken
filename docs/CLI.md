@@ -5,7 +5,7 @@ The same `mytoken` binary runs the desktop app and the command line.
 ```
 mytoken                 # today's and this month's API-equivalent cost (default)
 mytoken daily           # one row per day
-mytoken quota           # plan quota from local logs and logged-in tools
+mytoken quota           # plan quota fetched from the providers' servers
 mytoken scan            # index the harness logs once (also migrates the index)
 mytoken statusline      # one-line status for a shell prompt
 mytoken doctor          # read-only health check
@@ -61,18 +61,16 @@ daily points, `--no-cost` omits the cost column.
 ## quota
 
 ```
-mytoken quota [list] [--json|--format table|json|csv] [--db PATH]
-mytoken quota status [INSTANCE] [options]
-mytoken quota plan [--json] [--db PATH]
+mytoken quota [plan] [--json|--format table|json|csv] [--db PATH]
 ```
 
-Shows plan windows recorded from local logs (Codex `rate_limits`) and, when the tool's own
-credential already exists on disk, queried from the provider (Claude, Cursor, GitHub Copilot,
-Z.ai/BigModel). There is no separate consent step and no credential is copied into the index.
-A provider with no detected plan is hidden. `--instance-id ID` (repeatable) selects stored
-Codex instances; instances are never combined. `quota plan` prints the plan snapshots the
-background quota service stored (`quota.plan.*`): provider, plan, source, fetch time and each
-window's used percentage with its reset time. Read-only.
+Shows the plan windows the background quota service fetched from each provider's own server
+(Codex, Claude, Cursor, GitHub Copilot, GLM, DeepSeek, Trae, WorkBuddy, Qoder). A server response
+is cached in the index (`quota.plan.*`) so the command can show the last good snapshot offline;
+its source is always `api`. Quotas are never derived from local usage logs — those only supply
+tokens and cost. Credentials the tool itself stored are read to authenticate; no credential is
+copied into the index, and no token is refreshed or rewritten. A provider with no detected plan
+is hidden. Read-only.
 
 ## scan
 

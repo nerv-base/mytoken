@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-// Source labels a Snapshot's origin.
+// Source labels a Snapshot's origin. Every provider fetches its quota from the
+// vendor's server, so a snapshot is always SourceAPI: a value read from a local
+// usage log is never a quota.
 const (
-	// SourceLocalLog is a reading taken from a log the tool wrote itself.
-	SourceLocalLog = "local-log"
 	// SourceAPI is a reading fetched from the vendor's usage endpoint.
 	SourceAPI = "api"
 )
@@ -32,12 +32,6 @@ type Provider interface {
 	Detect(ctx context.Context) bool
 	// Fetch reads the current quota and returns it as a Snapshot.
 	Fetch(ctx context.Context) (Snapshot, error)
-}
-
-// LocalProvider is a Provider that reads only state already on this machine.
-// A Service in offline mode still polls it.
-type LocalProvider interface {
-	Local() bool
 }
 
 // Reasoner is an error that names a stable, sanitized failure cause. The
@@ -117,10 +111,9 @@ type Snapshot struct {
 	// derives it from the credit-balance history. Known is false for a day
 	// without data.
 	Daily []DayUse `json:"daily,omitempty"`
-	// FetchedAt is when the reading was taken (provider-stated for a local log,
-	// the request time for an API call).
+	// FetchedAt is when the request that produced the reading was made.
 	FetchedAt time.Time `json:"fetched_at"`
-	// Source is SourceLocalLog or SourceAPI.
+	// Source is SourceAPI.
 	Source string `json:"source,omitempty"`
 }
 
@@ -203,9 +196,12 @@ func (s *Snapshot) validate(now time.Time) error {
 	if s.FetchedAt.IsZero() {
 		s.FetchedAt = now.UTC()
 	}
-	if s.Source == "" {
-		s.Source = SourceAPI
+	if s.Source != "" && s.Source != SourceAPI {
+		// A snapshot that names any other origin (a local usage log, a cache)
+		// is not a quota: the numbers must have come from the provider.
+		return fmt.Errorf("plan: snapshot source %q is not %q", s.Source, SourceAPI)
 	}
+	s.Source = SourceAPI
 	return nil
 }
 

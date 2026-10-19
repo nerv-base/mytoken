@@ -274,7 +274,7 @@ login item uses `--hidden`). The full reference is in
 mytoken                                        # today and this month, API-equivalent cost
 mytoken daily                                  # one row per day, last 30 days
 mytoken daily --days 7 --json                  # scripting
-mytoken quota                                  # plan quota from local logs and logged-in tools
+mytoken quota                                  # plan quota fetched from the providers' servers
 mytoken scan                                   # re-index now
 mytoken statusline                             # one-line status for a shell prompt
 mytoken doctor                                 # check index, sources and schema, read-only

@@ -82,8 +82,8 @@ func readOnlyCases(dbPath string) []readOnlyCase {
 		},
 		{
 			name: "quota",
-			args: []string{"quota", "--json", "--db", dbPath},
-			want: []string{`"generatedAt"`, `"no_observation"`},
+			args: []string{"quota", "--db", dbPath},
+			want: []string{"no plan quota stored"},
 		},
 		{
 			name: "statusline",

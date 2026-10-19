@@ -226,6 +226,7 @@ var quotaHarness = map[string]model.Harness{
 	"workbuddy": model.WorkBuddy,
 	"codebuddy": model.CodeBuddy,
 	"kimi":      model.Kimi,
+	"deepseek":  model.DSH,
 }
 
 // quotaIcons are the marks of quota accounts without a tracked tool.

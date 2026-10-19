@@ -184,6 +184,13 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	// Quota values are server facts now, cached under quota.plan.*. Rows an older
+	// build published from local rollouts under quota.codex.* would otherwise
+	// survive forever and could be mistaken for a quota again, so they are
+	// deleted once, in the migration transaction.
+	if _, err = tx.Exec(`DELETE FROM settings WHERE key LIKE 'quota.codex.%'`); err != nil {
+		return err
+	}
 	if identityMigration || rollupMigration || instanceMigration {
 		after, err := historyDigest(tx)
 		if err != nil {

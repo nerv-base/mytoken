@@ -424,7 +424,7 @@ func demoQuotas(now time.Time) []Quota {
 		return out
 	}
 	return []Quota{
-		{ID: "codex", Name: "Codex", Plan: "Pro", Source: "local-log", FetchedAt: now, Windows: []QuotaWindow{
+		{ID: "codex", Name: "Codex", Plan: "Pro", Source: "api", FetchedAt: now, Windows: []QuotaWindow{
 			{Name: "5h", UsedPercent: 42, ResetsAt: now.Add(2*time.Hour + 14*time.Minute)},
 			{Name: "week", UsedPercent: 63, ResetsAt: now.Add(3*24*time.Hour + 5*time.Hour)},
 		}},
@@ -444,6 +444,9 @@ func demoQuotas(now time.Time) []Quota {
 		{ID: "qoder", Name: "Qoder", Source: "api", FetchedAt: now, Windows: []QuotaWindow{
 			{Name: "credits", Balance: true, Remaining: 180, Unit: "credits"},
 		}, Daily: daily(60, 5)},
+		{ID: "deepseek", Name: "DeepSeek", Source: "api", FetchedAt: now, Windows: []QuotaWindow{
+			{Name: "balance", Balance: true, Remaining: 36.55, Unit: "cny"},
+		}},
 		{ID: "copilot", Name: "GitHub Copilot", Plan: "Pro", Source: "api", FetchedAt: now, Windows: []QuotaWindow{
 			{Name: "month", UsedPercent: 35, Used: 105, Limit: 300, Unit: "requests", ResetsAt: now.Add(11 * 24 * time.Hour)},
 		}},

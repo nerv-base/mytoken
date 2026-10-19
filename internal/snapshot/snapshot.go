@@ -39,6 +39,9 @@ const (
 	ReasonDiagnosticsNotCollected = "not_collected"
 	ReasonDiagnosticsCorrupt      = "corrupt_record"
 	ReasonDiagnosticsUnavailable  = "index_unavailable"
+	// ReasonQuotaUnavailable means the plan-quota cache could not be read, so
+	// no server-fetched quota is available.
+	ReasonQuotaUnavailable = "unavailable"
 )
 
 // Status is one availability verdict: a reason is always present when the

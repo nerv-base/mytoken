@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/zzstar101/mytoken/internal/store"
 )
 
 type sumPeriodJSON struct {
@@ -207,40 +208,66 @@ func TestQuota(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errOut)
 	}
-	mustContain(t, out, "QUOTA  generated ", "no stored Codex quota observation", "instances are never combined")
+	mustContain(t, out, "no plan quota stored")
 
 	js, errOut, code := runCLI(t, "quota", "--json", "--db", f.dbPath)
 	if code != 0 {
 		t.Fatalf("json exit = %d, stderr = %s", code, errOut)
 	}
-	var got struct {
-		GeneratedAt time.Time `json:"generatedAt"`
-		Status      struct {
-			Available bool   `json:"available"`
-			Reason    string `json:"reason"`
-		} `json:"status"`
-		Instances []any `json:"instances"`
-	}
-	jsonInto(t, js, &got)
-	if got.GeneratedAt.IsZero() {
-		t.Error("generatedAt is zero")
-	}
-	if got.Status.Available {
-		t.Errorf("status.available = true with no observations")
-	}
-	if got.Status.Reason != "no_observation" {
-		t.Errorf("status.reason = %q, want no_observation", got.Status.Reason)
-	}
-	if len(got.Instances) != 0 {
-		t.Errorf("instances = %d, want 0", len(got.Instances))
+	var empty []any
+	jsonInto(t, js, &empty)
+	if len(empty) != 0 {
+		t.Errorf("plans = %d, want 0", len(empty))
 	}
 
-	plan, _, code := runCLI(t, "quota", "plan", "--db", f.dbPath)
+	// Seed a server-fetched snapshot the way the plan service stores one, then
+	// check the table, JSON and CSV views read it.
+	st, err := store.Open(f.dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	raw := `{"provider":"codex","plan":"plus","source":"api","fetched_at":"2026-10-20T00:00:00Z",` +
+		`"windows":[{"name":"5h","used_percent":42.5},{"name":"week","used_percent":12,"resets_at":"2026-10-27T00:00:00Z"}]}`
+	if err := st.SetSetting(t.Context(), "quota.plan.codex", raw); err != nil {
+		st.Close()
+		t.Fatalf("SetSetting: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	out, errOut, code = runCLI(t, "quota", "--db", f.dbPath)
 	if code != 0 {
-		t.Fatalf("plan exit = %d", code)
+		t.Fatalf("seeded exit = %d, stderr = %s", code, errOut)
 	}
-	mustContain(t, plan, "no plan quota stored")
+	mustContain(t, out, "PROVIDER", "codex", "plus", "api", "5h 42.5%", "week 12.0%")
 
+	js, errOut, code = runCLI(t, "quota", "plan", "--json", "--db", f.dbPath)
+	if code != 0 {
+		t.Fatalf("seeded json exit = %d, stderr = %s", code, errOut)
+	}
+	var plans []struct {
+		Provider string `json:"provider"`
+		Plan     string `json:"plan"`
+		Source   string `json:"source"`
+		Windows  []struct {
+			Name        string  `json:"name"`
+			UsedPercent float64 `json:"usedPercent"`
+		} `json:"windows"`
+	}
+	jsonInto(t, js, &plans)
+	if len(plans) != 1 || plans[0].Provider != "codex" || plans[0].Plan != "plus" ||
+		plans[0].Source != "api" || len(plans[0].Windows) != 2 || plans[0].Windows[0].Name != "5h" {
+		t.Fatalf("plans = %+v", plans)
+	}
+
+	csv, errOut, code := runCLI(t, "quota", "--format", "csv", "--db", f.dbPath)
+	if code != 0 {
+		t.Fatalf("csv exit = %d, stderr = %s", code, errOut)
+	}
+	mustContain(t, csv, "provider,plan,source,fetched_at,window,used_percent,resets_at", "codex,plus,api")
+
+	// list/status read local usage logs and were removed with that path.
 	_, errOut, code = runCLI(t, "quota", "bogus", "--db", f.dbPath)
 	if code != 2 {
 		t.Fatalf("unknown quota exit = %d, want 2", code)

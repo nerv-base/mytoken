@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/quota"
 )
 
 // Source is one discovered log file or database.
@@ -56,13 +55,6 @@ type Batch struct {
 	Events   []model.UsageEvent
 	Sessions []model.SessionMeta
 	Next     Cursor
-	// Quota is the quota observation a parser saw while reading this batch,
-	// already reduced to the newest trustworthy record in append order. It is
-	// additive: most parsers leave it nil, and a parser that observes quota
-	// only on some records sets it whenever the batch contained any
-	// rate_limits payload. The scanner persists it per instance after the batch
-	// commits; the store schema is unchanged.
-	Quota *quota.Report
 }
 
 // Parser reads one harness's local logs. Implementations must be safe to call

@@ -15,7 +15,6 @@ import (
 
 type fakeProvider struct {
 	id       string
-	local    bool
 	detected bool
 
 	mu    sync.Mutex
@@ -26,7 +25,6 @@ type fakeProvider struct {
 
 func (p *fakeProvider) ID() string          { return p.id }
 func (p *fakeProvider) DisplayName() string { return p.id }
-func (p *fakeProvider) Local() bool         { return p.local }
 
 func (p *fakeProvider) Detect(context.Context) bool {
 	p.mu.Lock()
@@ -312,12 +310,14 @@ func TestServiceRetryAfterAndDetection(t *testing.T) {
 	}
 }
 
-func TestServiceOfflineSkipsNetworkProviders(t *testing.T) {
+func TestServiceOfflineSkipsEveryProvider(t *testing.T) {
+	// Every quota comes from a provider's server now, so offline mode skips
+	// all of them and only the cached snapshots are shown.
 	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
-	remote := &fakeProvider{id: "remote", detected: true}
-	local := &fakeProvider{id: "local", detected: true, local: true}
+	first := &fakeProvider{id: "first", detected: true}
+	second := &fakeProvider{id: "second", detected: true}
 	svc, err := NewService(Options{
-		Providers: []Provider{remote, local},
+		Providers: []Provider{first, second},
 		Offline:   true,
 		Now:       func() time.Time { return now },
 	})
@@ -326,15 +326,16 @@ func TestServiceOfflineSkipsNetworkProviders(t *testing.T) {
 	}
 	defer svc.Close()
 	svc.Refresh(context.Background())
-	if calls, _ := remote.stats(); calls != 0 {
-		t.Fatalf("remote fetched %d times", calls)
+	if calls, _ := first.stats(); calls != 0 {
+		t.Fatalf("first fetched %d times", calls)
 	}
-	if calls, _ := local.stats(); calls != 1 {
-		t.Fatalf("local fetched %d times", calls)
+	if calls, _ := second.stats(); calls != 0 {
+		t.Fatalf("second fetched %d times", calls)
 	}
-	statuses := svc.Statuses()
-	if !statuses[0].Offline || statuses[1].Offline {
-		t.Fatalf("statuses = %+v", statuses)
+	for _, st := range svc.Statuses() {
+		if !st.Offline {
+			t.Fatalf("status = %+v, want Offline", st)
+		}
 	}
 }
 

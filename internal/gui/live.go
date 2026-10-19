@@ -203,74 +203,75 @@ func (a *App) deckView(c *ui.Context, pal palette, idx int, moving bool) {
 			bg = front.Mix(pal.ink, 0.03)
 		}
 		card.Background(card.AnimateColor("bg", bg, quick))
-		card.Children(func() { a.deckFront(c, pal, s, moving) })
+		hov := card.Hovered()
+		card.Children(func() { a.deckFront(c, pal, s, moving, hov) })
 		if card.Clicked() {
 			a.showSession(s.row)
 		}
 	})
 }
 
-// deckFront is one running session: what, where, what it costs, and its
-// requests of the last minutes as a strip of beats drifting left.
-func (a *App) deckFront(c *ui.Context, pal palette, s activeSession, moving bool) {
+// deckFront is one running session: its orb of light, breathing faster the
+// busier the session; what and where; what it costs; and its requests of
+// the last minutes as beats drifting left. Pointing at the card lifts the
+// orb a little (motion.dev's whileHover).
+func (a *App) deckFront(c *ui.Context, pal palette, s activeSession, moving, hovered bool) {
 	key := sessionKey(s.row.Harness, s.row.SessionID)
-	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-		a.beacon(c, pal, s, moving)
-		ui.Column(c).Gap(3).Grow(1).Basis(0).MinWidth(0).Children(func() {
-			ui.Text(c, sessionTitle(s.row)).FontSize(14.5).FontWeight(650).TextColor(pal.ink).SingleLine().Ellipsis("…")
-			sub := s.model
-			if p := projectName(s.row.Project); p != "" {
-				sub = p + " · " + sub
-			}
-			sub += " · " + fmtAgo(a.now(), s.last)
-			ui.Text(c, sub).FontSize(12).TextColor(pal.muted).SingleLine().Ellipsis("…")
-		})
-	})
-	ui.Row(c).Gap(18).AlignItems(ui.Start).Children(func() {
-		ui.Column(c).Gap(2).Shrink(0).Children(func() {
-			ui.Text(c, tr("thisSession")).FontSize(11.5).TextColor(pal.muted).NoWrap().Padding(0, 0, 2, 0)
-			a.num(c, "cost-"+key, s.row.CostUSD, fmtUSD, func(e ui.Element) ui.Element {
-				return e.Font(display).FontSize(24).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum").LetterSpacing(-0.5).NoWrap()
+	ui.Row(c).Gap(18).AlignItems(ui.Center).Children(func() {
+		orb := ui.Box(c.Key("orb")).Size(84, 84).Shrink(0)
+		// Liveliness is the session's requests in the last ten minutes.
+		e := orb.AnimateTo("e", float32(min(float64(s.requests)/30, 1)), gentle)
+		orb.AnimatePose(ui.Pose{Scale: map[bool]float32{false: 1, true: 1.06}[hovered]}, bouncy)
+		orb.Draw(func(p *ui.Painter, r ui.Rect) { drawOrb(p, r, e, moving, pal) })
+		ui.Column(c).Gap(12).Grow(1).Basis(0).MinWidth(0).Children(func() {
+			ui.Column(c).Gap(3).Children(func() {
+				ui.Row(c).Gap(7).AlignItems(ui.Center).MinWidth(0).Children(func() {
+					toolBadge(c, s.row.Harness, 18)
+					ui.Text(c, sessionTitle(s.row)).FontSize(14.5).FontWeight(650).TextColor(pal.ink).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+				})
+				sub := s.model
+				if p := projectName(s.row.Project); p != "" {
+					sub = p + " · " + sub
+				}
+				sub += " · " + fmtAgo(a.now(), s.last)
+				ui.Text(c, sub).FontSize(12).TextColor(pal.muted).SingleLine().Ellipsis("…")
+			})
+			// What it cost and how fast it writes, then the pace in one
+			// quiet line.
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Row(c).Gap(22).AlignItems(ui.End).Children(func() {
+					ui.Row(c).Gap(8).AlignItems(ui.End).Children(func() {
+						a.num(c, "cost-"+key, s.row.CostUSD, fmtUSD, func(e ui.Element) ui.Element {
+							return e.Font(display).FontSize(24).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum").LetterSpacing(-0.4).NoWrap()
+						})
+						ui.Text(c, tr("thisSession")).FontSize(12).TextColor(pal.muted).NoWrap().Padding(0, 0, 4, 0)
+					})
+					// Output speed, estimated from the gaps between requests.
+					ui.Row(c).Gap(6).AlignItems(ui.End).Children(func() {
+						v := "—"
+						if s.rate > 0 {
+							v = fmtTokens(int64(math.Round(s.rate)))
+						}
+						ui.Text(c.Key("tps"), v).Font(display).FontSize(24).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum").LetterSpacing(-0.4).NoWrap().
+							ContentTransition(ui.ContentTransition{Numeric: true})
+						ui.Text(c, tr("tpsUnit")).FontSize(12).TextColor(pal.muted).NoWrap().Padding(0, 0, 4, 0)
+					})
+				})
+				ui.Text(c.Key("pace"), trf("perHour", fmtUSD(s.perHour))+"  ·  "+tr("hitRate")+" "+fmtPct(s.hit)+"  ·  "+trf("reqIn10m", s.requests)).
+					FontSize(12).TextColor(pal.muted).FontFeatures("tnum").SingleLine().Ellipsis("…").
+					ContentTransition(ui.ContentTransition{Numeric: true})
 			})
 		})
-		deckStat(c, pal, tr("perHourLabel"), fmtUSD(s.perHour))
-		deckStat(c, pal, tr("hitRate"), fmtPct(s.hit))
-		deckStat(c, pal, tr("requests10m"), itoaN(s.requests))
 	})
 	beats(c, pal, s, a.now(), moving)
-}
-
-// beacon is the session's tool mark with rings rippling out of it, the
-// faster the busier the session (its requests in the last ten minutes).
-func (a *App) beacon(c *ui.Context, pal palette, s activeSession, moving bool) {
-	col := harnessColor(s.row.Harness)
-	box := ui.Box(c.Key("beacon")).Size(46, 46).Shrink(0).AlignItems(ui.Center).Justify(ui.Center)
-	busy := box.AnimateTo("busy", float32(min(float64(s.requests)/30, 1)), gentle)
-	box.Draw(func(p *ui.Painter, r ui.Rect) {
-		cx, cy := r.X+r.W/2, r.Y+r.H/2
-		p.FillPath((&ui.Path{}).Circle(cx, cy, 15), col.Alpha(0.16))
-		if !moving {
-			p.StrokePath(ringPath(cx, cy, 19), 1.5, col.Alpha(0.35))
-			return
-		}
-		period := 2600 - 1400*float64(busy)
-		t := float64(p.Now().UnixMilli())
-		for k := range 2 {
-			f := float32(math.Mod(t/period+float64(k)/2, 1))
-			rad := 15 + 8*f
-			p.StrokePath(ringPath(cx, cy, rad), 1.6*(1-f)+0.4, col.Alpha(0.55*(1-f)*(1-f)))
-		}
-		p.After(liveFrame)
-	}).Children(func() {
-		toolBadge(c, s.row.Harness, 22)
-	})
 }
 
 // beats is the session's requests over the running window, one tick each,
 // as tall as what it cost; they drift left as time passes and the newest
 // glows.
 func beats(c *ui.Context, pal palette, s activeSession, now time.Time, moving bool) {
-	col := harnessColor(s.row.Harness)
+	// The orb's own light: periwinkle into violet, the newest in rose.
+	from, to, newest := ui.Hex("#8C9EFF"), ui.Hex("#B97CF0"), ui.Hex("#E58AD6")
 	faint, line := pal.faint, pal.line
 	peak := 0.0
 	for _, b := range s.pulses {
@@ -305,12 +306,13 @@ func beats(c *ui.Context, pal palette, s activeSession, now time.Time, moving bo
 			}
 			bh := max((h-4)*v*in, 2)
 			a := 0.35 + 0.55*(1-age/win)
+			col := from.Mix(to, (x-r.X)/r.W)
 			p.Fill(ui.Rect{X: x - 1.5, Y: base - bh, W: 3, H: bh}, col.Alpha(a), 1.5)
 			if i == len(s.pulses)-1 && moving {
 				k := float32(p.Now().UnixMilli()%1800) / 1800
 				rad := 3 + 5*k
-				p.FillPath((&ui.Path{}).Circle(x, base-bh, rad), col.Alpha(0.3*(1-k)))
-				p.FillPath((&ui.Path{}).Circle(x, base-bh, 2.5), col)
+				p.FillPath((&ui.Path{}).Circle(x, base-bh, rad), newest.Alpha(0.3*(1-k)))
+				p.FillPath((&ui.Path{}).Circle(x, base-bh, 2.5), newest)
 			}
 		}
 		left := trf("minutesAgo", int(activeWindow/time.Minute))
@@ -323,23 +325,15 @@ func beats(c *ui.Context, pal palette, s activeSession, now time.Time, moving bo
 	})
 }
 
-func deckStat(c *ui.Context, pal palette, label, value string) {
-	ui.Column(c).Gap(4).MinWidth(0).Children(func() {
-		ui.Text(c, label).FontSize(11.5).TextColor(pal.muted).SingleLine()
-		ui.Text(c, value).Font(display).FontSize(15).FontWeight(650).TextColor(pal.ink).FontFeatures("tnum").NoWrap().
-			ContentTransition(ui.ContentTransition{Numeric: true})
-	})
-}
-
-// idleBody is the deck's place when nothing runs: a quiet ring.
+// idleBody is the deck's place when nothing runs: the orb's place, dark.
 func idleBody(c *ui.Context, pal palette) {
 	ui.Row(c).Gap(16).AlignItems(ui.Center).Grow(1).Children(func() {
 		well, faint := pal.well, pal.faint
-		ui.Box(c).Size(46, 46).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
+		ui.Box(c).Size(84, 84).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
 			cx, cy := r.X+r.W/2, r.Y+r.H/2
-			p.FillPath((&ui.Path{}).Circle(cx, cy, 15), well)
-			p.StrokePath(ringPath(cx, cy, 19), 1.5, faint.Alpha(0.4))
-			p.FillPath((&ui.Path{}).Circle(cx, cy, 3.5), faint)
+			p.FillPath((&ui.Path{}).Circle(cx, cy, 30), well)
+			p.StrokePath(ringPath(cx, cy, 24), 1.5, faint.Alpha(0.4))
+			p.FillPath((&ui.Path{}).Circle(cx, cy, 4), faint)
 		})
 		ui.Column(c).Gap(3).MinWidth(0).Grow(1).Children(func() {
 			ui.Text(c, tr("noActiveTitle")).FontSize(15).FontWeight(650).TextColor(pal.ink)

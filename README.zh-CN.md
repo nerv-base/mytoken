@@ -243,7 +243,7 @@ go install github.com/zzstar101/mytoken@latest
 mytoken                                        # 今日与本月，API 等价费用
 mytoken daily                                  # 每日一行，默认最近 30 天
 mytoken daily --days 7 --json                  # 脚本使用
-mytoken quota                                  # 本地日志与已登录工具里的套餐额度
+mytoken quota                                  # 从服务商服务器获取的套餐额度
 mytoken scan                                   # 立刻重新索引
 mytoken statusline                             # 给 shell 提示符的一行状态
 mytoken doctor                                 # 只读检查索引、数据源与 schema

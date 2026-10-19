@@ -171,7 +171,7 @@ func open(refresh bool) (*App, error) {
 	a.Scanner = scan.New(st, resolver, prices, parsers...)
 	a.scanner = a.Scanner
 	svc, e := plan.NewService(plan.Options{
-		Providers: providers.All(providers.Options{Store: st}),
+		Providers: providers.All(),
 		Store:     st,
 		Offline:   !refresh,
 	})

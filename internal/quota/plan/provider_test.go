@@ -90,6 +90,24 @@ func TestSnapshotCloneCopiesDaily(t *testing.T) {
 	}
 }
 
+func TestSnapshotRejectsNonAPISource(t *testing.T) {
+	s := Snapshot{
+		Provider: "codex",
+		Windows:  []Window{{Name: "5h", UsedPercent: 10}},
+		Source:   "local-log",
+	}
+	if err := s.validate(time.Now()); err == nil {
+		t.Fatal("validate accepted a snapshot whose source is a local log")
+	}
+	s.Source = ""
+	if err := s.validate(time.Now()); err != nil {
+		t.Fatalf("validate with an unset source: %v", err)
+	}
+	if s.Source != SourceAPI {
+		t.Fatalf("unset source became %q, want %q", s.Source, SourceAPI)
+	}
+}
+
 func TestWindowJSONBackwardsCompatible(t *testing.T) {
 	old := []byte(`{"name":"week","used_percent":10,"used":1,"limit":10,"unit":"requests","resets_at":"2026-10-20T00:00:00Z"}`)
 	var w Window

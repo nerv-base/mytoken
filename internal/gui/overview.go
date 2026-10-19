@@ -28,7 +28,7 @@ func (a *App) overviewPage(c *ui.Context, pal palette) {
 		return
 	}
 	ui.Row(c).Gap(16).AlignItems(ui.Stretch).Children(func() {
-		a.todayCard(c, pal).Grow(1.25).Basis(0)
+		a.todayCard(c, pal).Grow(1).Basis(0)
 		a.liveCard(c, pal)
 	})
 	a.tokenUsageCard(c, pal)
