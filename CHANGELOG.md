@@ -3,6 +3,14 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## 0.5.3
+
+- **Opening the app works again.** Since 0.5.0, opening MyToken!!!!! from
+  Finder, the Dock or Spotlight printed the command-line summary into the
+  void and quit, because the app took the empty output it gets there for a
+  terminal. It now checks for a real terminal, so only a bare `mytoken` typed
+  in a shell prints the summary.
+
 ## 0.5.2
 
 - **Plan quotas always come from the provider's server.** Codex quota is now

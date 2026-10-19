@@ -556,8 +556,6 @@ func trayIcon() []byte {
 }
 
 // fromTerminal reports whether standard output is a terminal, which is how a
-// shell user's bare `mytoken` differs from opening the app bundle.
-func fromTerminal() bool {
-	fi, err := os.Stdout.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
+// shell user's bare `mytoken` differs from opening the app bundle. A character
+// device is not enough: apps opened from Finder get /dev/null.
+func fromTerminal() bool { return isTerminal(os.Stdout.Fd()) }
