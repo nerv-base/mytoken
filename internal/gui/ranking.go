@@ -2,6 +2,7 @@ package gui
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -96,7 +97,7 @@ func rankNo(c *ui.Context, pal palette, n int) {
 	})
 }
 
-const cell, cellGap = 13, 3
+const cellGap = 3
 
 // heatmapCard is a year of daily cost, a week per column, with streaks.
 func (a *App) heatmapCard(c *ui.Context, pal palette) {
@@ -114,7 +115,7 @@ func (a *App) heatmapCard(c *ui.Context, pal palette) {
 		levels := heatLevels(rk.year)
 		ramp := heatRamp(pal)
 		weeks := (len(rk.year) + 6) / 7
-		// The weeks share the card's width; cells keep a fixed height.
+		// The weeks share the card's width; cells stay square.
 		ui.Column(c).FillWidth().Gap(4).Children(func() {
 			ui.Row(c).FillWidth().Height(14).Gap(cellGap).Children(func() {
 				last := time.Month(0)
@@ -135,22 +136,7 @@ func (a *App) heatmapCard(c *ui.Context, pal palette) {
 					})
 				}
 			})
-			ui.Row(c).FillWidth().Gap(cellGap).Children(func() {
-				for w := range weeks {
-					ui.Column(c.Key(w)).Grow(1).Basis(0).Gap(cellGap).Children(func() {
-						for d := range 7 {
-							i := w*7 + d
-							if i >= len(rk.year) {
-								ui.Box(c.Key(d)).FillWidth().Height(cell)
-								continue
-							}
-							p := rk.year[i]
-							ui.Box(c.Key(d)).FillWidth().Height(cell).Radius(3).Background(ramp[levels[i]]).
-								Tooltip(fmtDateYear(p.Day) + "  " + fmtUSD(p.CostUSD) + "  " + fmtTokens(shown(p.Tokens)))
-						}
-					})
-				}
-			})
+			a.heatGrid(c, pal, rk.year, levels, ramp, weeks)
 		})
 		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 			ui.Spacer(c)
@@ -160,6 +146,91 @@ func (a *App) heatmapCard(c *ui.Context, pal palette) {
 			}
 			caption(c, pal, tr("more")).FontSize(10)
 		})
+	})
+}
+
+// heatGrid paints the year's cells. They come in as a wave from the oldest
+// week to today, then breathe: a slow swell of light runs across the
+// active days and today's cell pulses. Hovering a day names it.
+func (a *App) heatGrid(c *ui.Context, pal palette, year []query.Point, levels []int, ramp [5]ui.Color, weeks int) {
+	box := ui.Box(c.Key("heat-grid")).FillWidth().AspectRatio(float32(weeks) / 7)
+	rv := a.mo.cur
+	target := float32(0)
+	if rv.seen {
+		target = 1
+	}
+	in := box.AnimateTo("in", target, delayed(ui.Animation{Duration: 1600 * time.Millisecond, Ease: easeOut}, rv.delay+100*time.Millisecond))
+	still := c.Preferences().ReduceMotion
+	if still {
+		in = 1
+	}
+	px, py, over := box.PointerPosition()
+	accent, ink := pal.accent, pal.ink
+	dark := pal.dark
+	box.Draw(func(p *ui.Painter, r ui.Rect) {
+		if weeks == 0 {
+			return
+		}
+		size := min((r.W-cellGap*float32(weeks-1))/float32(weeks), (r.H-cellGap*6)/7)
+		slot := size + cellGap
+		t := float64(p.Now().UnixMilli()%600000) / 1000
+		breathing := !still && in >= 1
+		hover := -1
+		if over {
+			w, d := int(px/slot), int(py/slot)
+			if w >= 0 && w < weeks && d >= 0 && d < 7 && w*7+d < len(year) {
+				hover = w*7 + d
+			}
+		}
+		last := len(year) - 1
+		for i, pt := range year {
+			w, d := i/7, i%7
+			// Entrance: the oldest week first, a column at a time.
+			k := clamp01((float64(in)*1.5 - float64(w)/float64(weeks)) * 2)
+			if k <= 0 {
+				continue
+			}
+			k = outQuint(k)
+			s := size * float32(0.55+0.45*k)
+			x := r.X + float32(w)*slot + (size-s)/2
+			y := r.Y + float32(d)*slot + (size-s)/2
+			col := ramp[levels[i]]
+			if breathing && levels[i] > 0 {
+				// A swell of light travels from left to right every
+				// seven seconds, stronger on the busier days.
+				ph := t/7 - (float64(w)+float64(d)*0.35)/float64(weeks)*1.3
+				swell := math.Pow(0.5+0.5*math.Sin(2*math.Pi*ph), 3)
+				col = col.Mix(accent, float32(swell*0.10*float64(levels[i])))
+				if dark {
+					col = col.Mix(ink, float32(swell*0.05*float64(levels[i])))
+				}
+			}
+			p.Fill(ui.Rect{X: x, Y: y, W: s, H: s}, col.Alpha(float32(k)), min(3, s/3))
+			if i == last && pt.CostUSD > 0 && breathing {
+				// Today breathes.
+				b := float32(0.5 + 0.5*math.Sin(2*math.Pi*t/2.6))
+				g := 1.5 + 2.5*b
+				p.Stroke(ui.Rect{X: x - g, Y: y - g, W: s + 2*g, H: s + 2*g}, accent.Alpha(0.15+0.35*(1-b)), 3+g, 1.5)
+			}
+			if i == hover {
+				p.Stroke(ui.Rect{X: x - 1.5, Y: y - 1.5, W: s + 3, H: s + 3}, ink.Alpha(0.7), 4, 1.5)
+			}
+		}
+		if hover >= 0 {
+			pt := year[hover]
+			hx := r.X + float32(hover/7)*slot + size/2
+			lines := []string{fmtDateYear(pt.Day), fmtUSD(pt.CostUSD) + "  ·  " + fmtTokens(shown(pt.Tokens)) + " Token"}
+			ty := r.Y + float32(hover%7)*slot - 4
+			if ty > r.Y+r.H/2 {
+				ty -= 48
+			} else {
+				ty += size + 8
+			}
+			tooltip(p, pal, hx, ty, r, lines, 1)
+		}
+		if in < 1 || breathing {
+			p.After(33 * time.Millisecond)
+		}
 	})
 }
 

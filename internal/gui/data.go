@@ -164,8 +164,10 @@ type Deps struct {
 	SetTrayTitle func(title string)
 	// Login, Export and SaveFile are optional; their settings hide
 	// without them. SaveFile asks where to save a file named name.
-	Login    Login
-	Updates  Updates
-	Export   Exporter
-	SaveFile func(name string) (string, bool)
+	Login Login
+	// SetLocale tells the toolkit the language picked ("zh", "en", "").
+	SetLocale func(lang string)
+	Updates   Updates
+	Export    Exporter
+	SaveFile  func(name string) (string, bool)
 }

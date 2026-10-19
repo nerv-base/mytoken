@@ -32,6 +32,10 @@ to identify each tool.
 | trae-color.svg | Trae (quota account) |
 | qoder-color.svg | Qoder (quota account) |
 | githubcopilot.svg | GitHub Copilot (quota account) |
+| zai.svg | Z Code (Z.ai) |
+| minimax-color.svg | MiniMax Code |
+| xiaomimimo.svg | MiMo Code (Xiaomi MiMo) |
+| stepfun-color.svg | Step Code (StepFun) |
 
 ## Not from @lobehub/icons
 

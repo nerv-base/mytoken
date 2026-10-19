@@ -94,11 +94,20 @@ func (a *App) sessionList(c *ui.Context, pal palette) {
 			toolBadge(c, r.Harness, 26)
 			ui.Column(c).Gap(3).Grow(1).Basis(0).MinWidth(0).Children(func() {
 				ui.Text(c, sessionTitle(r)).FontSize(13).FontWeight(560).TextColor(pal.ink).SingleLine().Ellipsis("…")
+				live := isLive(now, r)
 				sub := fmtAgo(now, r.UpdatedAt)
+				if live {
+					sub = tr("running")
+				}
 				if p := projectName(r.Project); p != "" {
 					sub = p + " · " + sub
 				}
-				caption(c, pal, sub).FontSize(11).SingleLine().Ellipsis("…")
+				ui.Row(c).Gap(5).AlignItems(ui.Center).MinWidth(0).Children(func() {
+					if live {
+						liveDot(c, pal)
+					}
+					caption(c, pal, sub).FontSize(11).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
+				})
 			})
 			ui.Column(c).Gap(3).AlignItems(ui.End).Shrink(0).Children(func() {
 				ui.Text(c, costText(r.CostUSD, r.Unpriced, r.Requests)).FontSize(13).FontWeight(600).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
@@ -164,7 +173,7 @@ func (a *App) sessionPane(c *ui.Context, pal palette) {
 	}
 	r := d.row
 	ui.Scroll(c.Key("sd-" + d.key)).Grow(1).Basis(0).FillWidth().Children(func() {
-		ui.Column(c).Padding(0, 28, 28, 24).Gap(16).MaxWidth(1000).FillWidth().Children(func() {
+		ui.Column(c).Padding(0, 28, 28, 24).Gap(16).MaxWidth(1240).FillWidth().AlignSelf(ui.Center).Children(func() {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				toolBadge(c, r.Harness, 34)
 				ui.Column(c).Gap(3).Grow(1).Basis(0).MinWidth(0).Children(func() {
@@ -175,6 +184,9 @@ func (a *App) sessionPane(c *ui.Context, pal palette) {
 					}
 					caption(c, pal, meta).SingleLine().Ellipsis("…")
 				})
+				if isLive(a.now(), r) {
+					livePill(c, pal, trf("runningAgo", fmtAgo(a.now(), r.UpdatedAt)))
+				}
 			})
 			errorLine(c, pal, d.err)
 			ui.Row(c).Gap(12).Children(func() {
@@ -184,7 +196,11 @@ func (a *App) sessionPane(c *ui.Context, pal palette) {
 				kpi(c, pal, tr("hitRate"), fmtPct(r.Tokens.HitRate()))
 				kpi(c, pal, tr("duration"), fmtDuration(d.span))
 			})
-			caption(c, pal, fmtDateTime(r.StartedAt)+" → "+fmtDateTime(r.UpdatedAt)).FontSize(11)
+			end := fmtDateTime(r.UpdatedAt)
+			if isLive(a.now(), r) {
+				end = tr("now")
+			}
+			caption(c, pal, fmtDateTime(r.StartedAt)+" → "+end).FontSize(11)
 			if !d.ready {
 				emptyState(c, pal, tr("loading"), "")
 				return
@@ -330,3 +346,17 @@ func (a *App) requestTable(c *ui.Context, pal palette) {
 }
 
 var _ = fmt.Sprint
+
+// isLive tells whether a session made a request in the last minutes, as
+// the overview's running sessions are picked.
+func isLive(now time.Time, r query.SessionRow) bool {
+	return now.Sub(r.UpdatedAt) <= activeWindow
+}
+
+// livePill is a green pill with a breathing dot: running.
+func livePill(c *ui.Context, pal palette, text string) {
+	ui.Row(c.Key("live-pill")).Gap(6).AlignItems(ui.Center).Padding(4, 10, 4, 8).Radius(12).Background(pal.good.Alpha(0.12)).Shrink(0).Children(func() {
+		liveDot(c, pal)
+		ui.Text(c, text).FontSize(12).FontWeight(600).TextColor(pal.good).NoWrap()
+	})
+}

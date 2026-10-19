@@ -267,6 +267,10 @@ var harnessIcons = func() map[model.Harness]brandMark {
 		model.Antigravity:   {load("antigravity-color"), true, false},
 		model.Zed:           {load("zed"), false, false},
 		model.Mux:           {load("mux"), false, false},
+		model.ZCode:         {load("zai"), false, false},
+		model.MiniMaxCode:   {load("minimax-color"), true, false},
+		model.MiMoCode:      {load("xiaomimimo"), false, false},
+		model.StepCode:      {load("stepfun-color"), true, false},
 	}
 }()
 

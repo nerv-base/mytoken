@@ -3,6 +3,7 @@ package gui
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -49,10 +50,11 @@ type overview struct {
 }
 
 type dayCost struct {
-	day   time.Time
-	cost  float64
-	tools []float64 // aligned with overview.tools
-	other float64
+	day    time.Time
+	cost   float64
+	tokens model.Tokens
+	tools  []float64 // aligned with overview.tools
+	other  float64
 }
 
 // activeSession is a session that made a request in the last minutes.
@@ -66,6 +68,14 @@ type activeSession struct {
 	last     time.Time
 	model    string
 	requests int // in the last ten minutes
+	// pulses are its requests within activeWindow, oldest first.
+	pulses []pulse
+}
+
+// pulse is one request of a running session: when, and what it cost.
+type pulse struct {
+	at   time.Time
+	cost float64
 }
 
 var chartDays = [3]int{7, 30, 90}
@@ -195,6 +205,7 @@ func computeOverview(ctx context.Context, q Query, now time.Time, recent *recent
 		}
 		d := &ov.days[i]
 		d.cost += r.CostUSD
+		d.tokens = d.tokens.Add(r.Tokens)
 		if k, ok := slot[r.Harness]; ok {
 			d.tools[k] += r.CostUSD
 		} else {
@@ -415,6 +426,9 @@ func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentE
 		s.rate, s.requests = outputRate(events, now)
 		for i := len(events) - 1; i >= 0; i-- {
 			e := events[i]
+			if now.Sub(e.Timestamp) <= activeWindow {
+				s.pulses = append(s.pulses, pulse{e.Timestamp, e.Cost})
+			}
 			if now.Sub(e.Timestamp) > time.Hour {
 				break
 			}
@@ -423,6 +437,7 @@ func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentE
 				s.model = e.Model
 			}
 		}
+		slices.Reverse(s.pulses)
 		out = append(out, s)
 	}
 	// The fastest first: that is where the money goes now.

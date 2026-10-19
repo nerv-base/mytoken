@@ -2,7 +2,6 @@ package gui
 
 import (
 	_ "embed"
-	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -59,9 +58,12 @@ func (a *App) MainView(c *ui.Context) {
 }
 
 // scrollPage is the scrolling body of a page.
+const pageMaxWidth = 1560
+
 func scrollPage(c *ui.Context, body func()) {
 	ui.Scroll(c).Grow(1).Basis(0).FillWidth().Children(func() {
-		ui.Column(c).Padding(0, 28, 28, 28).Gap(16).MaxWidth(1240).FillWidth().Children(body)
+		// Wide screens get a wider page, centred, not a strip on the left.
+		ui.Column(c).Padding(0, 28, 28, 28).Gap(16).MaxWidth(pageMaxWidth).FillWidth().AlignSelf(ui.Center).Children(body)
 	})
 }
 
@@ -153,7 +155,7 @@ func liveDot(c *ui.Context, pal palette) {
 			k := float32(p.Now().UnixMilli()%2000) / 2000
 			rad := 3 + 2.5*k
 			p.Fill(ui.Rect{X: cx - rad, Y: cy - rad, W: rad * 2, H: rad * 2}, good.Alpha(0.35*(1-k)), rad)
-			p.After(time.Second / 20)
+			p.After(liveFrame)
 		}
 		p.Fill(ui.Rect{X: cx - 3, Y: cy - 3, W: 6, H: 6}, good, 3)
 	})

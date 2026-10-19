@@ -28,9 +28,10 @@ func (a *App) overviewPage(c *ui.Context, pal palette) {
 		return
 	}
 	ui.Row(c).Gap(16).AlignItems(ui.Stretch).Children(func() {
-		a.todayCard(c, pal).Grow(1).Basis(0)
+		a.todayCard(c, pal).Grow(1.25).Basis(0)
 		a.liveCard(c, pal)
 	})
+	a.tokenUsageCard(c, pal)
 	a.spendCard(c, pal)
 	if len(ov.quotas) > 0 {
 		a.quotaCard(c, pal)
@@ -174,7 +175,7 @@ func stat(c *ui.Context, pal palette, label, value string) {
 // spendCard answers whether the month runs above or below the last, and
 // when today's money went.
 func (a *App) spendCard(c *ui.Context, pal palette) {
-	el := a.rcard(c, pal, "spend", 2, false)
+	el := a.rcard(c, pal, "spend", 3, false)
 	rv := a.mo.cur
 	el.Children(func() {
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
@@ -373,7 +374,7 @@ func (a *App) burnup(c *ui.Context, pal palette) {
 				t := float64(p.Now().UnixMilli()%2400) / 2400
 				k := float32(0.5 + 0.5*math.Sin(t*2*math.Pi))
 				p.FillPath((&ui.Path{}).Circle(xa, ya, 7+5*k), pal.accent.Alpha(0.22*(1-k)))
-				p.After(glowFrame)
+				p.After(liveFrame)
 			}
 			p.FillPath((&ui.Path{}).Circle(xa, ya, 5), pal.card)
 			p.FillPath((&ui.Path{}).Circle(xa, ya, 3.2), pal.accent)
@@ -519,7 +520,7 @@ func (a *App) clock(c *ui.Context, pal palette) {
 		peak = max(peak, d.cost)
 	}
 	ui.Row(c).Gap(36).AlignItems(ui.Center).Children(func() {
-		const size = 268
+		const size = 300
 		box := ui.Box(c.Key("clock")).Size(size, size).Shrink(0)
 		target := float32(0)
 		if a.drawIn(c, "clock") {
@@ -527,7 +528,7 @@ func (a *App) clock(c *ui.Context, pal palette) {
 		}
 		prog := box.AnimateTo("p", target, delayed(ui.Animation{Duration: 1100 * time.Millisecond, Ease: easeOut}, rv.delay+100*time.Millisecond))
 		hov := -1
-		const r0, r1 = 64, 126
+		const r0, r1 = 74, 120
 		if px, py, over := box.PointerPosition(); over {
 			dx, dy := float64(px-size/2), float64(py-size/2)
 			if d := math.Hypot(dx, dy); d > r0-16 && d < r1+12 {
@@ -582,9 +583,10 @@ func (a *App) clock(c *ui.Context, pal palette) {
 			hx, hy := pointOn(cx, cy, r1+6, float32(fr))
 			p.FillPath((&ui.Path{}).Circle(hx, hy, 4.5), pal.card)
 			p.FillPath((&ui.Path{}).Circle(hx, hy, 3), pal.accent)
+			// Hours outside the dial, clear of the total in its middle.
 			for _, l := range []int{0, 6, 12, 18} {
 				ang := float64(l) / 24 * 2 * math.Pi
-				x, y := cx+float32(math.Sin(ang))*(r0-24), cy-float32(math.Cos(ang))*(r0-24)
+				x, y := cx+float32(math.Sin(ang))*(r1+20), cy-float32(math.Cos(ang))*(r1+20)
 				s := fmt.Sprint(l)
 				w, _ := p.MeasureText(0, ui.Span{Text: s, Size: 10.5})
 				p.Text(x-w/2, y-7, s, 10.5, pal.faint)

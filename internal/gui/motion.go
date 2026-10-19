@@ -12,7 +12,7 @@ import (
 // selections slide from one item to the next (layoutId); what is pressed
 // squashes a little (whileTap). Springs keep their velocity when a value
 // changes mid-flight. Nothing moves at rest: the only continuous motion is
-// the live session's glow, and only while a session is running.
+// the running sessions' beats and the heatmap's slow breath.
 
 var (
 	easeOut  = ui.CubicBezier(0.22, 1, 0.36, 1)
@@ -243,3 +243,9 @@ func itoa(i int) string {
 func clamp01(x float64) float64 { return math.Max(0, math.Min(1, x)) }
 
 func lerp(a, b, k float64) float64 { return a + (b-a)*k }
+
+// liveFrame is how often the slow, continuous motions (the running
+// sessions' ripples and beats, the breathing dots) repaint: they drift
+// too slowly to need every display frame, and the window costs CPU per
+// frame.
+const liveFrame = time.Second / 15

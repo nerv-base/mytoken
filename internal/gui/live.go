@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"math"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -24,9 +25,9 @@ const deckEvery = 6 * time.Second
 const deckPeek = 9
 
 // liveCard shows what is running now as a deck of cards, one session per
-// card. The front card rises into place as cards do when the page opens;
-// the deck turns by itself, or by its dots and arrows, and holds still
-// under the pointer. A ring of light flows around it while anything runs.
+// card, in the same quiet card as the rest of the page. The front card
+// rises into place as cards do when the page opens; the deck turns by
+// itself, or by its dots and arrows, and holds still under the pointer.
 //
 // It shows money and requests, which the logs record, and not output
 // speed, which they do not (it would be a guess from gaps).
@@ -34,38 +35,31 @@ func (a *App) liveCard(c *ui.Context, pal palette) {
 	act := a.ov.active
 	live := len(act) > 0
 	reduce := c.Preferences().ReduceMotion
-	const pad = 14
-	outer := ui.Box(c.Key("live-wrap")).Margin(-pad).Padding(pad).Grow(1.2).Basis(0).MinWidth(0)
-	glow := outer.AnimateTo("glow", map[bool]float32{false: 0, true: 1}[live], gentle)
-	moving := live && !reduce
-	outer.Draw(func(p *ui.Painter, r ui.Rect) { drawRing(p, r, pad, 16, glow, moving) })
 	var perHour float64
 	for _, s := range act {
 		perHour += s.perHour
 	}
 	idx := a.deckIndex()
-	outer.Children(func() {
-		el := a.rcard(c, pal, "live", 1, false).FillWidth().FillHeight().Gap(14)
-		el.Children(func() {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, tr("activeNow")).FontSize(14).FontWeight(650).TextColor(pal.ink)
-				if live {
-					liveDot(c, pal)
-					ui.Text(c.Key("n"), trf("sessionsLive", len(act))+" · "+trf("perHour", fmtUSD(perHour))).
-						FontSize(12.5).TextColor(pal.muted).FontFeatures("tnum").SingleLine().
-						ContentTransition(ui.ContentTransition{})
-				}
-				ui.Spacer(c)
-				if len(act) > 1 {
-					a.deckPager(c, pal, len(act), idx)
-				}
-			})
-			if !live {
-				idleBody(c, pal)
-				return
+	el := a.rcard(c, pal, "live", 1, false).Grow(1).Basis(0).MinWidth(0).Gap(14)
+	el.Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, tr("activeNow")).FontSize(14).FontWeight(650).TextColor(pal.ink)
+			if live {
+				liveDot(c, pal)
+				ui.Text(c.Key("n"), trf("sessionsLive", len(act))+" · "+trf("perHour", fmtUSD(perHour))).
+					FontSize(12.5).TextColor(pal.muted).FontFeatures("tnum").SingleLine().Shrink(1).MinWidth(0).
+					ContentTransition(ui.ContentTransition{})
 			}
-			a.deckView(c, pal, idx, moving)
+			ui.Spacer(c)
+			if len(act) > 1 {
+				a.deckPager(c, pal, len(act), idx)
+			}
 		})
+		if !live {
+			idleBody(c, pal)
+			return
+		}
+		a.deckView(c, pal, idx, !reduce)
 	})
 	if len(act) > 1 && !reduce {
 		a.armDeck()
@@ -165,17 +159,15 @@ func (a *App) deckPager(c *ui.Context, pal palette, n, idx int) {
 func (a *App) deckView(c *ui.Context, pal palette, idx int, moving bool) {
 	act := a.ov.active
 	behind := min(len(act)-1, 2)
-	front := pal.card.Mix(pal.ink, 0.035)
-	if !pal.dark {
-		front = ui.Hex("#FAFAFC")
-	}
+	// Opaque, as the quota tiles look, so the cards behind stay behind.
+	front := pal.card.Mix(pal.ink, 0.025)
 	// The cards behind are painted under the front one, which stays in the
 	// flow so that the one leaving can lift away over the deck.
 	peek := deckPeek * float32(behind)
 	box := ui.Column(c.Key("deck")).FillWidth().Grow(1).Padding(0, 0, peek, 0)
 	a.deck.hover = box.Hovered()
 	shown := box.AnimateTo("behind", float32(behind), gentle)
-	dark, card0 := pal.dark, pal.card
+	dark, card0, line := pal.dark, pal.card, pal.line
 	box.Draw(func(p *ui.Painter, r ui.Rect) {
 		for k := 2; k >= 1; k-- {
 			o := clamp01(float64(shown) - float64(k-1))
@@ -183,10 +175,8 @@ func (a *App) deckView(c *ui.Context, pal palette, idx int, moving bool) {
 				continue
 			}
 			kf := float32(k)
-			back, edge := front.Mix(card0, 0.3*kf), ui.RGBA(20, 20, 40, float32(o)*(0.09-0.02*kf))
-			if dark {
-				back, edge = front.Mix(card0, 0.25*kf), ui.RGBA(255, 255, 255, float32(o)*(0.10-0.025*kf))
-			}
+			back, edge := front.Mix(card0, 0.35*kf), line.Alpha(float32(o)*(1-0.3*kf))
+			_ = dark
 			rr := ui.Rect{X: r.X + 14*kf, Y: r.Y + deckPeek*kf*float32(o), W: r.W - 28*kf, H: r.H - peek}
 			p.Fill(ui.Rect{X: rr.X - 1, Y: rr.Y - 1, W: rr.W + 2, H: rr.H + 2}, edge, 15)
 			p.Fill(rr, back.Alpha(float32(o)), 14)
@@ -199,8 +189,8 @@ func (a *App) deckView(c *ui.Context, pal palette, idx int, moving bool) {
 		if dir == 0 {
 			dir = 1
 		}
-		card := ui.Column(c.Key("front-"+key)).FillWidth().Grow(1).MinHeight(150).
-			Radius(14).Background(front).Border(1, pal.line).Padding(16, 18).Gap(12).Cursor(ui.CursorPointer).
+		card := ui.Column(c.Key("front-"+key)).FillWidth().Grow(1).
+			Radius(14).Border(1, pal.line).Padding(14, 16, 12, 16).Gap(12).Cursor(ui.CursorPointer).
 			Transition(ui.ElementTransition{
 				Animation: &gentle,
 				// The next card comes up off the deck as cards rise into a
@@ -208,9 +198,11 @@ func (a *App) deckView(c *ui.Context, pal palette, idx int, moving bool) {
 				// as a blur).
 				Enter: &ui.Motion{Y: 30 * dir, Scale: 0.96, Opacity: 0.45},
 			})
-		if !pal.dark {
-			card.Shadow(0, 6, 18, 0, ui.RGBA(20, 20, 40, 0.07))
+		bg := front
+		if card.Hovered() {
+			bg = front.Mix(pal.ink, 0.03)
 		}
+		card.Background(card.AnimateColor("bg", bg, quick))
 		card.Children(func() { a.deckFront(c, pal, s, moving) })
 		if card.Clicked() {
 			a.showSession(s.row)
@@ -218,40 +210,116 @@ func (a *App) deckView(c *ui.Context, pal palette, idx int, moving bool) {
 	})
 }
 
-// deckFront is one running session: what, where, and what it costs.
+// deckFront is one running session: what, where, what it costs, and its
+// requests of the last minutes as a strip of beats drifting left.
 func (a *App) deckFront(c *ui.Context, pal palette, s activeSession, moving bool) {
 	key := sessionKey(s.row.Harness, s.row.SessionID)
-	ui.Row(c).Gap(16).AlignItems(ui.Center).Grow(1).Children(func() {
-		orb := ui.Box(c.Key("orb")).Size(92, 92).Shrink(0)
-		// How lively the orb is follows how busy the session is: its
-		// requests in the last ten minutes, which the logs record.
-		e := orb.AnimateTo("e", float32(min(float64(s.requests)/30, 1)), gentle)
-		orb.Draw(func(p *ui.Painter, r ui.Rect) { drawOrb(p, r, e, moving, pal) })
-		ui.Column(c).Gap(10).Grow(1).Basis(0).MinWidth(0).Children(func() {
-			ui.Column(c).Gap(3).Children(func() {
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					toolBadge(c, s.row.Harness, 20)
-					ui.Text(c, sessionTitle(s.row)).FontSize(15).FontWeight(650).TextColor(pal.ink).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0)
-				})
-				sub := s.model
-				if p := projectName(s.row.Project); p != "" {
-					sub = p + " · " + sub
-				}
-				sub += " · " + fmtAgo(a.now(), s.last)
-				ui.Text(c, sub).FontSize(12).TextColor(pal.muted).SingleLine().Ellipsis("…")
-			})
-			ui.Row(c).Gap(20).AlignItems(ui.Start).Children(func() {
-				ui.Column(c).Gap(2).Shrink(0).Children(func() {
-					ui.Text(c, tr("thisSession")).FontSize(11.5).TextColor(pal.muted).NoWrap().Padding(0, 0, 2, 0)
-					a.num(c, "cost-"+key, s.row.CostUSD, fmtUSD, func(e ui.Element) ui.Element {
-						return e.Font(display).FontSize(26).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum").LetterSpacing(-0.5).NoWrap()
-					})
-				})
-				deckStat(c, pal, tr("perHourLabel"), fmtUSD(s.perHour))
-				deckStat(c, pal, tr("hitRate"), fmtPct(s.hit))
-				deckStat(c, pal, tr("requests10m"), itoaN(s.requests))
+	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+		a.beacon(c, pal, s, moving)
+		ui.Column(c).Gap(3).Grow(1).Basis(0).MinWidth(0).Children(func() {
+			ui.Text(c, sessionTitle(s.row)).FontSize(14.5).FontWeight(650).TextColor(pal.ink).SingleLine().Ellipsis("…")
+			sub := s.model
+			if p := projectName(s.row.Project); p != "" {
+				sub = p + " · " + sub
+			}
+			sub += " · " + fmtAgo(a.now(), s.last)
+			ui.Text(c, sub).FontSize(12).TextColor(pal.muted).SingleLine().Ellipsis("…")
+		})
+	})
+	ui.Row(c).Gap(18).AlignItems(ui.Start).Children(func() {
+		ui.Column(c).Gap(2).Shrink(0).Children(func() {
+			ui.Text(c, tr("thisSession")).FontSize(11.5).TextColor(pal.muted).NoWrap().Padding(0, 0, 2, 0)
+			a.num(c, "cost-"+key, s.row.CostUSD, fmtUSD, func(e ui.Element) ui.Element {
+				return e.Font(display).FontSize(24).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum").LetterSpacing(-0.5).NoWrap()
 			})
 		})
+		deckStat(c, pal, tr("perHourLabel"), fmtUSD(s.perHour))
+		deckStat(c, pal, tr("hitRate"), fmtPct(s.hit))
+		deckStat(c, pal, tr("requests10m"), itoaN(s.requests))
+	})
+	beats(c, pal, s, a.now(), moving)
+}
+
+// beacon is the session's tool mark with rings rippling out of it, the
+// faster the busier the session (its requests in the last ten minutes).
+func (a *App) beacon(c *ui.Context, pal palette, s activeSession, moving bool) {
+	col := harnessColor(s.row.Harness)
+	box := ui.Box(c.Key("beacon")).Size(46, 46).Shrink(0).AlignItems(ui.Center).Justify(ui.Center)
+	busy := box.AnimateTo("busy", float32(min(float64(s.requests)/30, 1)), gentle)
+	box.Draw(func(p *ui.Painter, r ui.Rect) {
+		cx, cy := r.X+r.W/2, r.Y+r.H/2
+		p.FillPath((&ui.Path{}).Circle(cx, cy, 15), col.Alpha(0.16))
+		if !moving {
+			p.StrokePath(ringPath(cx, cy, 19), 1.5, col.Alpha(0.35))
+			return
+		}
+		period := 2600 - 1400*float64(busy)
+		t := float64(p.Now().UnixMilli())
+		for k := range 2 {
+			f := float32(math.Mod(t/period+float64(k)/2, 1))
+			rad := 15 + 8*f
+			p.StrokePath(ringPath(cx, cy, rad), 1.6*(1-f)+0.4, col.Alpha(0.55*(1-f)*(1-f)))
+		}
+		p.After(liveFrame)
+	}).Children(func() {
+		toolBadge(c, s.row.Harness, 22)
+	})
+}
+
+// beats is the session's requests over the running window, one tick each,
+// as tall as what it cost; they drift left as time passes and the newest
+// glows.
+func beats(c *ui.Context, pal palette, s activeSession, now time.Time, moving bool) {
+	col := harnessColor(s.row.Harness)
+	faint, line := pal.faint, pal.line
+	peak := 0.0
+	for _, b := range s.pulses {
+		peak = max(peak, b.cost)
+	}
+	box := ui.Box(c.Key("beats")).FillWidth().Height(44)
+	in := box.AnimateTo("in", 1, ui.Animation{Duration: 700 * time.Millisecond, Ease: easeOut})
+	built := time.Now()
+	box.Draw(func(p *ui.Painter, r ui.Rect) {
+		// Drift with the frame clock from the moment the view was built.
+		t := now
+		if d := p.Now().Sub(built); moving && d > 0 && d < 10*time.Minute {
+			t = now.Add(d)
+		}
+		const label = 13
+		h := r.H - label
+		base := r.Y + h
+		p.Fill(ui.Rect{X: r.X, Y: base, W: r.W, H: 1}, line, 0)
+		win := float32(activeWindow)
+		for i, b := range s.pulses {
+			age := float32(t.Sub(b.at))
+			if age < 0 {
+				age = 0
+			}
+			if age > win {
+				continue
+			}
+			x := r.X + r.W*(1-age/win)
+			v := float32(0.25)
+			if peak > 0 {
+				v = 0.18 + 0.82*float32(math.Sqrt(b.cost/peak))
+			}
+			bh := max((h-4)*v*in, 2)
+			a := 0.35 + 0.55*(1-age/win)
+			p.Fill(ui.Rect{X: x - 1.5, Y: base - bh, W: 3, H: bh}, col.Alpha(a), 1.5)
+			if i == len(s.pulses)-1 && moving {
+				k := float32(p.Now().UnixMilli()%1800) / 1800
+				rad := 3 + 5*k
+				p.FillPath((&ui.Path{}).Circle(x, base-bh, rad), col.Alpha(0.3*(1-k)))
+				p.FillPath((&ui.Path{}).Circle(x, base-bh, 2.5), col)
+			}
+		}
+		left := trf("minutesAgo", int(activeWindow/time.Minute))
+		p.Text(r.X, base+2, left, 10, faint)
+		w, _ := p.MeasureText(0, ui.Span{Text: tr("now"), Size: 10})
+		p.Text(r.X+r.W-w, base+2, tr("now"), 10, faint)
+		if moving {
+			p.After(liveFrame)
+		}
 	})
 }
 
@@ -263,16 +331,15 @@ func deckStat(c *ui.Context, pal palette, label, value string) {
 	})
 }
 
-// idleBody is the deck's place when nothing runs: a quiet disc.
+// idleBody is the deck's place when nothing runs: a quiet ring.
 func idleBody(c *ui.Context, pal palette) {
 	ui.Row(c).Gap(16).AlignItems(ui.Center).Grow(1).Children(func() {
 		well, faint := pal.well, pal.faint
-		ui.Box(c).Size(92, 92).Shrink(0).Opacity(0.9).Draw(func(p *ui.Painter, r ui.Rect) {
+		ui.Box(c).Size(46, 46).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
 			cx, cy := r.X+r.W/2, r.Y+r.H/2
-			rad := min(r.W, r.H)/2 - 6
-			p.Fill(ui.Rect{X: cx - rad, Y: cy - rad, W: rad * 2, H: rad * 2}, well, rad)
-			p.StrokePath(ringPath(cx, cy, rad-8), 2, faint.Alpha(0.5))
-			p.Fill(ui.Rect{X: cx - 4, Y: cy - 4, W: 8, H: 8}, faint, 4)
+			p.FillPath((&ui.Path{}).Circle(cx, cy, 15), well)
+			p.StrokePath(ringPath(cx, cy, 19), 1.5, faint.Alpha(0.4))
+			p.FillPath((&ui.Path{}).Circle(cx, cy, 3.5), faint)
 		})
 		ui.Column(c).Gap(3).MinWidth(0).Grow(1).Children(func() {
 			ui.Text(c, tr("noActiveTitle")).FontSize(15).FontWeight(650).TextColor(pal.ink)

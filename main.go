@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"time"
 	// The IANA database travels with the binary: a budget period is resolved
 	// in a named zone the user typed, and a shipped build cannot rely on the
@@ -185,6 +186,7 @@ func main() {
 		return path, err == nil && path != ""
 	}
 	deps.Login = login{}
+	deps.SetLocale = setAppLocale
 	deps.Updates = updates{enabled: mygo.Updater.Enabled()}
 	deps.SetTrayTitle = func(title string) {
 		if tray != nil {
@@ -361,9 +363,35 @@ func versionLabel() string { return cli.Version }
 // setLangFromSystem localizes the GUI from the OS locale, unless MYTOKEN_LANG
 // overrides it. Both the normal startup path and the startup-failure window use
 // it, so the failure window speaks the user's language too.
+//
+// Since MyGo 0.5, App.Locale is the app's language among those it says it
+// is written in (English alone unless told), so the app declares its two
+// and picks from the user's own languages; MyGo's controls, menus and the
+// updater window follow too.
 func setLangFromSystem() {
-	gui.SetSystemLang(mygo.App.Locale())
+	mygo.App.SetLanguages("en", "zh-Hans")
+	loc := ""
+	for _, t := range mygo.App.PreferredLanguages() {
+		if l := strings.ToLower(t); strings.HasPrefix(l, "zh") || strings.HasPrefix(l, "en") {
+			loc = l
+			break
+		}
+	}
+	gui.SetSystemLang(loc)
 	gui.SetLang("")
+}
+
+// setAppLocale makes MyGo's own texts (controls, menus, the updater) speak
+// the language picked in settings: "zh", "en" or "" for the system's.
+func setAppLocale(l string) {
+	switch l {
+	case "zh":
+		mygo.App.SetLocale("zh-Hans")
+	case "en":
+		mygo.App.SetLocale("en")
+	default:
+		mygo.App.SetLocale("")
+	}
 }
 
 // showStartupFailure reports a fatal startup error in a window instead of

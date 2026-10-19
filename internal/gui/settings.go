@@ -25,9 +25,9 @@ type settingsState struct {
 	custom   []CustomPrice
 	db       DBInfo
 
-	showMissing bool
-	fxRate      float64 // the rate field under a non-USD currency
-	login       bool    // the launch-at-login switch
+	addTool string  // the undetected tool picked to add a folder for
+	fxRate  float64 // the rate field under a non-USD currency
+	login   bool    // the launch-at-login switch
 
 	// The alias being added and the custom price being added.
 	aliasFrom, aliasTo string
@@ -120,7 +120,7 @@ func (a *App) settingsPage(c *ui.Context, pal palette) {
 			}).Grow(1).Background(pal.bg).Padding(0, 0).Label(tr("settings"))
 		})
 		ui.Scroll(c.Key("set-" + st.group)).Grow(1).Basis(0).FillHeight().Children(func() {
-			ui.Column(c).Padding(44, 28, 28, 12).Gap(16).MaxWidth(820).FillWidth().Children(func() {
+			ui.Column(c).Padding(44, 28, 28, 12).Gap(16).MaxWidth(960).FillWidth().AlignSelf(ui.Center).Children(func() {
 				if st.err != "" {
 					errorLine(c, pal, st.err)
 				}
@@ -207,6 +207,9 @@ func (a *App) generalSettings(c *ui.Context, pal palette) {
 			if k, ok := choice(c, tr("language"), []string{"", "zh", "en"}, func(k string) string { return tr("lang_" + k) }, get(PrefLang)); ok {
 				a.setPref(PrefLang, k)
 				setLang(k)
+				if a.d.SetLocale != nil {
+					a.d.SetLocale(k)
+				}
 			}
 		})
 		ui.Divider(c)
@@ -316,7 +319,8 @@ func (a *App) sourcesSettings(c *ui.Context, pal palette) {
 	}
 	var found, missing []Source
 	for _, s := range st.sources {
-		if s.Detected || s.Override != "" || s.Requests > 0 || s.Problem != "" {
+		// Only tools whose folder is there (found, or chosen) are listed.
+		if s.Detected || s.Override != "" {
 			found = append(found, s)
 		} else {
 			missing = append(missing, s)
@@ -339,22 +343,9 @@ func (a *App) sourcesSettings(c *ui.Context, pal palette) {
 			a.sourceRow(c.Key(string(s.Harness)), pal, s)
 		}
 	})
+	// The tools not found here: how to get them, or where they are.
 	if len(missing) > 0 {
-		card(c, pal).Gap(6).Children(func() {
-			cardTitle(c, pal, trf("sourcesMissing", len(missing)), func() {
-				ui.Switch(c, &st.showMissing).Label(tr("show"))
-			})
-			caption(c, pal, tr("sourcesMissingHint"))
-			if !st.showMissing {
-				return
-			}
-			for i, s := range missing {
-				if i > 0 {
-					ui.Divider(c)
-				}
-				a.sourceRow(c.Key(string(s.Harness)), pal, s)
-			}
-		})
+		a.installCard(c, pal, missing)
 	}
 }
 

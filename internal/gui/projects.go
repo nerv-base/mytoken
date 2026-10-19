@@ -83,7 +83,7 @@ func (a *App) projectPane(c *ui.Context, pal palette) {
 		return
 	}
 	ui.Scroll(c.Key("pj-" + a.pjSel)).Grow(1).Basis(0).FillWidth().Children(func() {
-		ui.Column(c).Padding(0, 28, 28, 24).Gap(16).MaxWidth(1000).FillWidth().Children(func() {
+		ui.Column(c).Padding(0, 28, 28, 24).Gap(16).MaxWidth(1240).FillWidth().AlignSelf(ui.Center).Children(func() {
 			ui.Column(c).Gap(3).Children(func() {
 				name := projectName(a.pjSel)
 				if a.pjSel == "" || name == "" {

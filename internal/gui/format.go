@@ -207,6 +207,6 @@ func fmtBytes(n int64) string {
 	return fmt.Sprintf("%d B", n)
 }
 
-// shown is the headline token count: everything except cache reads, which
-// would otherwise dwarf the work actually done (PLAN-0.5: 主数字不含缓存读取).
-func shown(t model.Tokens) int64 { return t.Total() - t.CacheRead }
+// shown is the token count the app shows: every token, cache reads
+// included, as the logs count them.
+func shown(t model.Tokens) int64 { return t.Total() }

@@ -3,6 +3,33 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## 0.5.2
+
+- **In your language again.** 0.5.0 and 0.5.1 showed English on Chinese
+  systems; the app now follows the system's languages again, and picking a
+  language in Settings also switches the toolkit's own texts (menus, the
+  update window).
+- **Token usage on the overview.** Today, this month, the last 7/30/90 days
+  and the daily average, over daily bars by input, output, cache write and
+  cache read, above the spend card. Token counts everywhere now include
+  cache reads.
+- **Running now, calmer.** The running-sessions card sits in the page like
+  the other cards: each session's tool mark ripples while it works, and a
+  strip shows its requests of the last 15 minutes, each as tall as what it
+  cost, drifting left as time passes.
+- **Running sessions are marked** in the session list and on the session's
+  page.
+- **Today's dial** keeps its hour labels outside, clear of the total.
+- **Data sources list only the tools found here.** The others are under
+  "Install other agents", with the install command (click to copy), the
+  website, and a way to choose a folder if one is installed after all.
+- Icons for Z Code, MiniMax Code, MiMo Code and Step Code.
+- **The yearly heatmap breathes.** Square cells that fill the card, come in
+  as a wave, a slow swell of light across the busy days, today's cell
+  pulsing, and a hover card per day.
+- **Wide screens.** Pages grow wider and stay centred instead of leaving a
+  big gap on the right.
+
 ## 0.5.1
 
 - **Check for Updates is back.** Settings → General → About has the button

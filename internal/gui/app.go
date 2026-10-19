@@ -26,6 +26,8 @@ type App struct {
 	chartRange int
 	// spendTab is the spend card's view: 0 = this month, 1 = today's clock.
 	spendTab int
+	// tokRange is the token card's range (index of chartDays).
+	tokRange int
 	// quotaAll shows every quota account instead of the first rows.
 	quotaAll bool
 	// deck is the running-sessions card deck: which session is in front,
@@ -74,7 +76,7 @@ var rangeDays = []int{7, 30, 90, 0}
 
 // New returns the interface over d. Call Start to begin loading.
 func New(d Deps) *App {
-	a := &App{d: d, page: "overview", ssSel: -1, rangeSel: 1, chartRange: 1}
+	a := &App{d: d, page: "overview", ssSel: -1, rangeSel: 1, chartRange: 1, tokRange: 1}
 	a.ctx, a.cancel = context.WithCancel(context.Background())
 	if d.Prefs != nil {
 		setLang(d.Prefs.Pref(PrefLang))
@@ -86,6 +88,9 @@ func New(d Deps) *App {
 // Start loads the first data and follows the index. It must be called on
 // the UI thread.
 func (a *App) Start() {
+	if a.d.SetLocale != nil {
+		a.d.SetLocale(a.pref(PrefLang))
+	}
 	a.reloadAll()
 	if a.d.Query == nil {
 		return

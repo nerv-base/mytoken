@@ -39,7 +39,7 @@ contacted.
   tokens would cost at list price. Add your own per-model prices when a plan or gateway differs;
   there are no provider multipliers or inferred discounts.
 - **Spend first** — today's cost in big type, the month so far with a forecast, daily spend stacked
-  by tool, and rankings by cost. Token counts leave cache reads out of the headline number.
+  by tool, and rankings by cost. Token usage is counted in full, day by day, by input, output, cache write and cache read.
 - **Plan quotas** — Codex, Claude, Cursor, Copilot and GLM windows as rings, with reset times,
   detected automatically.
 - **Menu bar** — today's spend (or spend per hour, cache hit rate, quota) beside the icon; the panel
