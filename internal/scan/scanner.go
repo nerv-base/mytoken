@@ -245,6 +245,141 @@ const (
 	scanPoll
 )
 
+// settleParserVersions re-ingests, once, every harness whose parser generation
+// changed since its rows were written. The current code would not produce those
+// rows, so the scan that called this reads every source again.
+//
+// The reset is scoped, not a purge: sources that still exist on disk are
+// discovered here, their sessions are collected from the parser, and only those
+// rows and cursors are removed. A source the harness rotated away — Claude Code
+// deletes transcripts after cleanupPeriodDays, for example — keeps its events,
+// because the re-read cannot replace them and the database is their only copy.
+// Its cursor stays too, so a file that reappears is still read from where the
+// old parser stopped. A database that predates parser versions has no marker;
+// its rows were written by InitialParserVersion, so an initial parser adopts the
+// marker and keeps them.
+//
+// The marker and the scoped deletes are one store transaction. A crash before
+// the commit leaves the old marker and the old rows; a crash after it leaves the
+// new marker with the existing sources' cursors gone, and the next scan — even a
+// quick one — reads those sources from the beginning because it has no cursor
+// and no parse stamp for them.
+func (s *Scanner) settleParserVersions(ctx context.Context) error {
+	// ResetHarness is harness-wide, but a harness may have several instances
+	// with disjoint roots. Scope must therefore cover every instance of the
+	// harness, not only the one that happened to be visited first.
+	groups := make(map[model.Harness][]Instance, len(s.instances))
+	order := make([]model.Harness, 0, len(s.instances))
+	for _, inst := range s.instances {
+		h := inst.Parser.Harness()
+		if _, ok := groups[h]; !ok {
+			order = append(order, h)
+		}
+		groups[h] = append(groups[h], inst)
+	}
+	for _, h := range order {
+		insts := groups[h]
+		want := harness.ParserVersion(insts[0].Parser)
+		have, err := s.st.HarnessParserVersion(ctx, h)
+		if err != nil {
+			return fmt.Errorf("parser version %s: %w", h, err)
+		}
+		if have == 0 {
+			// No marker: the rows predate parser versions and were written by
+			// the initial parser. Adopting the initial generation keeps them;
+			// only a later generation invalidates what is stored.
+			if want == harness.InitialParserVersion {
+				if err := s.st.RecordHarnessParserVersion(ctx, h, want); err != nil {
+					return fmt.Errorf("record parser version %s v%d: %w", h, want, err)
+				}
+				continue
+			}
+			have = harness.InitialParserVersion
+		}
+		if have == want {
+			continue
+		}
+		scope, err := s.resetScope(ctx, h, want, insts)
+		if err != nil {
+			return err
+		}
+		if err := s.st.ResetHarness(ctx, h, want, scope); err != nil {
+			return fmt.Errorf("re-ingest %s for parser v%d (was v%d): %w", h, want, have, err)
+		}
+		s.forgetHarness(h)
+	}
+	return nil
+}
+
+// resetScope discovers the sources of every instance of h that still exist and
+// asks the parser which sessions their events can use. Those paths and sessions
+// are exactly what the following scan is going to re-read and replace; anything
+// else belongs to a source the harness has already deleted and must survive.
+func (s *Scanner) resetScope(ctx context.Context, h model.Harness, version int, insts []Instance) (store.ResetScope, error) {
+	var scope store.ResetScope
+	paths := make(map[string]bool)
+	sessions := make(map[string]bool)
+	for _, inst := range insts {
+		scoper, ok := inst.Parser.(harness.SourceSessions)
+		if !ok {
+			// Refusing is the safe half of the choice: purging would destroy
+			// history the log rotation already took, and leaving every row
+			// would record a generation that did not write them. An
+			// implementation is one method away.
+			return store.ResetScope{}, fmt.Errorf("re-ingest %s for parser v%d: the parser does not implement harness.SourceSessions, so its current rows cannot be separated from history whose source files are gone", h, version)
+		}
+		srcs, err := inst.Parser.Discover(ctx)
+		if err != nil {
+			return store.ResetScope{}, fmt.Errorf("discover %s to scope parser v%d: %w", h, version, err)
+		}
+		for _, src := range srcs {
+			if err := ctx.Err(); err != nil {
+				return store.ResetScope{}, err
+			}
+			ids, err := scoper.SourceSessions(ctx, src)
+			if err != nil {
+				if os.IsNotExist(err) {
+					// Vanished between discovery and the read: no re-read will
+					// replace it, so leave its rows and cursor alone.
+					continue
+				}
+				return store.ResetScope{}, fmt.Errorf("collect sessions of %s for %s parser v%d: %w", src.Path, h, version, err)
+			}
+			if _, err := os.Stat(src.Path); err != nil {
+				continue
+			}
+			if !paths[src.Path] {
+				paths[src.Path] = true
+				scope.Paths = append(scope.Paths, src.Path)
+			}
+			for _, id := range ids {
+				if id != "" && !sessions[id] {
+					sessions[id] = true
+					scope.Sessions = append(scope.Sessions, id)
+				}
+			}
+		}
+	}
+	// Deterministic order keeps tests and diagnostics stable; the SQL does not
+	// care.
+	sort.Strings(scope.Paths)
+	sort.Strings(scope.Sessions)
+	return scope, nil
+}
+
+// forgetHarness drops the in-memory parse stamps of one harness so a quick scan
+// does not skip a source whose cursor the reset just removed.
+func (s *Scanner) forgetHarness(h model.Harness) {
+	prefix := string(h) + "\x00"
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key := range s.seen {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.seen, key)
+		}
+	}
+}
+
 // scanMode is the one scan path. hints are the paths a watching Run saw
 // change; scanWatched uses them to decide which parsers to discover.
 func (s *Scanner) scanMode(ctx context.Context, mode scanMode, hints []string) (err error) {
@@ -256,6 +391,17 @@ func (s *Scanner) scanMode(ctx context.Context, mode scanMode, hints []string) (
 		s.lastError = err
 		s.mu.Unlock()
 	}()
+	// A parser upgrade changes what a source yields, and scanning is
+	// incremental: without this, a database written by an older parser would
+	// keep its rows forever. Only the scans that visit every harness may reset
+	// one, because they can also re-read it in the same pass; a watched or poll
+	// scan sees a subset and would leave the harness empty until the next full
+	// scan. The reset is transactional in the store, so a crash re-triggers it.
+	if mode == scanFull || mode == scanQuickAll {
+		if e := s.settleParserVersions(ctx); e != nil {
+			return e
+		}
+	}
 	// Attribution config (cc-switch, harness configs) changes rarely; the
 	// scans that walk the trees reload it, the cheap poll and watched scans
 	// reuse it.

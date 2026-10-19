@@ -138,6 +138,11 @@ const (
 	kindJSONL = "jsonl"
 )
 
+// parserVersion 2 parses cacheWrite1h from the shared sessionlog usage block
+// into Tokens.CacheWrite1h. A database ingested by an earlier release holds the
+// cache write without the 1-hour split, so it re-reads this harness once.
+const parserVersion = 2
+
 // Parser reads Step Code session logs. It holds no mutable state and is safe for
 // concurrent use.
 type Parser struct {
@@ -230,6 +235,37 @@ func (p *Parser) RootProvenance() ([]harness.Root, error) {
 
 // Harness implements harness.Parser.
 func (p *Parser) Harness() model.Harness { return HarnessID }
+
+// ParserVersion implements harness.Versioned.
+func (p *Parser) ParserVersion() int { return parserVersion }
+
+var _ harness.SourceSessions = (*Parser)(nil)
+
+// SourceSessions implements harness.SourceSessions. Every event of a session log
+// uses the id the header names, or the fallback newSession derives from the path
+// when the header is absent. Both are reported; a log whose header names another
+// id than its name would otherwise leak the fallback's rows.
+func (p *Parser) SourceSessions(ctx context.Context, src harness.Source) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	add(newSession(sessionlog.RootFor(p.roots, src.Path), src.Path).id)
+	if line, ok := sessionlog.FirstLine(src.Path); ok {
+		var r stepRecord
+		if err := json.Unmarshal(line, &r); err == nil && r.Type == "session" {
+			add(r.ID)
+		}
+	}
+	return out, nil
+}
 
 // WithRoots implements harness.Rooted. It returns a fresh parser over exactly
 // the given roots; an explicit empty list stays empty instead of falling back to

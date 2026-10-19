@@ -42,6 +42,11 @@ const (
 	configDirName = ".claude"
 )
 
+// parserVersion 2 parses cache_creation.ephemeral_1h_input_tokens into
+// Tokens.CacheWrite1h. A database ingested by an earlier release holds the
+// cache write without the 1-hour split, so it re-reads this harness once.
+const parserVersion = 2
+
 // Parser implements harness.Parser for Claude Code.
 type Parser struct {
 	roots []string
@@ -103,6 +108,55 @@ func (p *Parser) RootProvenance() ([]harness.Root, error) {
 
 // Harness implements harness.Parser.
 func (p *Parser) Harness() model.Harness { return model.ClaudeCode }
+
+// ParserVersion implements harness.Versioned.
+func (p *Parser) ParserVersion() int { return parserVersion }
+
+var _ harness.SourceSessions = (*Parser)(nil)
+
+// SourceSessions implements harness.SourceSessions. A transcript names its
+// session in the file name, but sidechain and subagent records carry an agent id
+// that replaces it, so the body is read and every id it mentions is reported.
+// Over-reporting only widens the reset's delete scope; missing an id would leave
+// a row the new parser no longer writes.
+func (p *Parser) SourceSessions(ctx context.Context, src harness.Source) ([]string, error) {
+	f, err := os.Open(src.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	add(strings.TrimSuffix(filepath.Base(src.Path), filepath.Ext(src.Path)))
+	br := bufio.NewReaderSize(f, 1<<20)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		line, rerr := br.ReadBytes('\n')
+		if rerr != nil {
+			break // trailing bytes without '\n' are not consumed
+		}
+		line = trimEOL(line)
+		if len(line) == 0 {
+			continue
+		}
+		rl, ok := decodeLine(line)
+		if !ok {
+			continue // tolerate unknown/partial records
+		}
+		add(rl.SessionID)
+		add(rl.AgentID)
+	}
+	sort.Strings(out)
+	return out, nil
+}
 
 // WithRoots implements harness.Rooted. It returns a fresh parser over exactly
 // the given roots; an explicit empty list stays empty instead of falling back

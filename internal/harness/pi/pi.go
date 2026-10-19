@@ -100,6 +100,7 @@
 package pi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -127,6 +128,11 @@ const (
 	readBuffer       = sessionlog.ReadBuffer
 	headerLimit      = sessionlog.FenceLimit
 )
+
+// parserVersion 2 parses cacheWrite1h from the shared sessionlog usage block
+// into Tokens.CacheWrite1h. A database ingested by an earlier release holds the
+// cache write without the 1-hour split, so it re-reads this harness once.
+const parserVersion = 2
 
 // Parser reads Pi session logs. It holds no mutable state and is safe for
 // concurrent use.
@@ -449,6 +455,58 @@ func (p *Parser) RootProvenance() ([]harness.Root, error) {
 
 func (p *Parser) Harness() model.Harness { return model.Pi }
 
+// ParserVersion implements harness.Versioned.
+func (p *Parser) ParserVersion() int { return parserVersion }
+
+// SourceSessions implements harness.SourceSessions. A Pi log's session id comes
+// from its header, from an async transcript's run id, or from the path fallback
+// newSession uses when no header has been written yet. All of them are reported:
+// an async transcript's run id cannot be derived from its name, so a fallback
+// alone would miss the rows that matter. The whole file is read because an async
+// record can switch the session to its run id anywhere in the log, not only in
+// the first line.
+func (p *Parser) SourceSessions(ctx context.Context, src harness.Source) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	add(newSession(sessionlog.RootFor(p.roots, src.Path), src.Path).id)
+	f, err := os.Open(src.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	br := bufio.NewReaderSize(f, 1<<20)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		line, rerr := br.ReadBytes('\n')
+		if len(line) > 0 {
+			var r piRecord
+			if json.Unmarshal(bytes.TrimSpace(line), &r) == nil {
+				if r.Type == "session" {
+					add(r.ID)
+				}
+				if r.RecordType == "message" && r.Source == "async" {
+					add(r.RunID)
+				}
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	return out, nil
+}
+
 // WithRoots implements harness.Rooted. It returns a fresh parser over exactly
 // the given roots; an explicit empty list stays empty instead of falling back
 // to this harness's default roots.
@@ -465,6 +523,7 @@ func (p *Parser) WithRoots(roots ...string) harness.Parser {
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }
 
 var _ harness.Parser = (*Parser)(nil)
+var _ harness.SourceSessions = (*Parser)(nil)
 
 func init() { harness.Register(New()) }
 
