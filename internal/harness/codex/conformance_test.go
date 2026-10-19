@@ -8,7 +8,7 @@ import (
 	"github.com/zzstar101/mytoken/internal/model"
 )
 
-// TestConformance runs the shared conformance suite (docs/HARNESS.md) against
+// TestConformance runs the shared conformance suite (docs/ARCHITECTURE.md#conformance-suite) against
 // the checked-in fixture in testdata/conformance/codex.
 func TestConformance(t *testing.T) {
 	harnesstest.Run(t, conformanceCase())

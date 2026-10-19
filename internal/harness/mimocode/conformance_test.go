@@ -16,7 +16,7 @@ import (
 // direct child is mimocode.db, which is exactly what Discover reads.
 const conformanceFixture = "testdata/conformance/mimocode"
 
-// TestConformance runs the shared conformance suite (docs/HARNESS.md) against
+// TestConformance runs the shared conformance suite (docs/ARCHITECTURE.md#conformance-suite) against
 // the checked-in fixture in testdata/conformance/mimocode.
 //
 // MiMo Code is sqlite, so the fixture is not a set of files to copy: Case.Grow

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// PriceRule adjusts computed costs (docs/SPEC.md §7). Rules never touch a
+// PriceRule adjusts computed costs (docs/ARCHITECTURE.md#pricing). Rules never touch a
 // cost the log itself reported.
 //
 //   - Model != "": a custom per-1M-token price for that model (optionally only

@@ -17,7 +17,7 @@ import (
 // direct child is opencode.db, which is exactly what Discover reads.
 const conformanceFixture = "testdata/conformance/opencode"
 
-// TestConformance runs the shared conformance suite (docs/HARNESS.md) against
+// TestConformance runs the shared conformance suite (docs/ARCHITECTURE.md#conformance-suite) against
 // the checked-in fixture in testdata/conformance/opencode.
 //
 // Unlike the append-only log formats, OpenCode is sqlite, so the fixture is not

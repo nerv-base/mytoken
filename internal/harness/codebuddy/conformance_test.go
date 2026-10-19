@@ -8,7 +8,7 @@ import (
 	"github.com/zzstar101/mytoken/internal/model"
 )
 
-// TestConformance runs the shared conformance suite (docs/HARNESS.md) against
+// TestConformance runs the shared conformance suite (docs/ARCHITECTURE.md#conformance-suite) against
 // the checked-in fixture in testdata/conformance/codebuddy. The fixture is
 // synthetic: see the package doc for the "unverified against real data" caveat.
 func TestConformance(t *testing.T) {

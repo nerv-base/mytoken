@@ -1,4 +1,4 @@
-// Package harness defines the parser contract (docs/SPEC.md §4) and a registry.
+// Package harness defines the parser contract (docs/ARCHITECTURE.md#parser-contract) and a registry.
 package harness
 
 import (

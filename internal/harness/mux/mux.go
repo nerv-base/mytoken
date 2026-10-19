@@ -11,7 +11,7 @@
 // else $MUX_ROOT, else ~/.mux plus the ~/.mux-dev and ~/.cmux directories the
 // upstream docs list.
 //
-// Mapping (docs/HARNESS.md §4, docs/SPEC.md §4):
+// Mapping (docs/ARCHITECTURE.md#token-normalization, docs/ARCHITECTURE.md#parser-contract):
 //
 //   - SessionID is the workspace id for a workspace transcript and the child
 //     task id for a subagent transcript, whose ParentID is that workspace.

@@ -26,7 +26,7 @@ const (
 	conformanceP2    = "01b00000-0000-7000-8000-000000000002"
 )
 
-// TestConformance runs the shared conformance suite (docs/HARNESS.md) against
+// TestConformance runs the shared conformance suite (docs/ARCHITECTURE.md#conformance-suite) against
 // the checked-in fixture in testdata/conformance/dsh.
 func TestConformance(t *testing.T) {
 	harnesstest.Run(t, conformanceCase())

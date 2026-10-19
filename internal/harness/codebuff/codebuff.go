@@ -15,7 +15,7 @@
 // re-derives the whole chat whenever the file's size, mtime or 4KB fingerprint
 // changes and relies on stable DedupKeys; an unchanged file yields no events.
 //
-// Mapping (docs/HARNESS.md §4, docs/SPEC.md §4):
+// Mapping (docs/ARCHITECTURE.md#token-normalization, docs/ARCHITECTURE.md#parser-contract):
 //
 //   - SessionID is the channel-qualified chat id, because chat ids are ISO
 //     timestamps that legitimately repeat across channels. Project is

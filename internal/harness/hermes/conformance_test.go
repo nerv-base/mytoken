@@ -17,7 +17,7 @@ import (
 // is state.db, which is exactly what Discover reads.
 const conformanceFixture = "testdata/conformance/hermes"
 
-// TestConformance runs the shared conformance suite (docs/HARNESS.md) against
+// TestConformance runs the shared conformance suite (docs/ARCHITECTURE.md#conformance-suite) against
 // the checked-in fixture in testdata/conformance/hermes.
 //
 // Hermes is sqlite, so the fixture is not a set of files to copy: Case.Grow

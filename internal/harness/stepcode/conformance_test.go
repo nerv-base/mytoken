@@ -7,7 +7,7 @@ import (
 	"github.com/zzstar101/mytoken/internal/harness/harnesstest"
 )
 
-// TestConformance runs the shared conformance suite (docs/HARNESS.md) against
+// TestConformance runs the shared conformance suite (docs/ARCHITECTURE.md#conformance-suite) against
 // the synthetic fixture in testdata/conformance/step-code. The fixture root is
 // the sessions layer itself (~/.stepcode/agent/sessions): two session logs in
 // one project directory, one of them a fork whose header names the other as its

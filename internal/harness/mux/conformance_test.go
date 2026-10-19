@@ -20,7 +20,7 @@ func BenchmarkConformance(b *testing.B) {
 
 // conformanceCase needs no Grow: chat.jsonl is append-only, so the suite's
 // default growth publishes a longer line prefix at every step
-// (docs/HARNESS.md §6). config.json and the session-usage.json decoy are single
+// (docs/ARCHITECTURE.md#conformance-suite). config.json and the session-usage.json decoy are single
 // line files and are therefore complete from step 0 on.
 func conformanceCase() harnesstest.Case {
 	return harnesstest.Case{

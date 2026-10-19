@@ -1,5 +1,5 @@
 // Package model holds the shared, frozen types of MyToken!!!!!.
-// Changing any exported signature here requires lead approval (docs/SPEC.md §3).
+// Changing any exported signature here requires lead approval (docs/ARCHITECTURE.md#data-model).
 package model
 
 import "time"

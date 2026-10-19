@@ -1,5 +1,5 @@
 // Package harnesstest is the conformance suite every harness parser must pass
-// (see docs/HARNESS.md). It runs a parser against a small, redacted fixture and
+// (see docs/ARCHITECTURE.md#conformance-suite). It runs a parser against a small, redacted fixture and
 // checks the properties the scanner depends on:
 //
 //   - golden: Discover+Parse output matches a checked-in golden JSON file

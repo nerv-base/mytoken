@@ -8,7 +8,7 @@ import (
 	"github.com/zzstar101/mytoken/internal/model"
 )
 
-// TestConformance runs the shared conformance suite (docs/HARNESS.md) against
+// TestConformance runs the shared conformance suite (docs/ARCHITECTURE.md#conformance-suite) against
 // the checked-in fixture in testdata/conformance/pi. The fixture root is the
 // sessions layer itself (PI_HOME/agent/sessions): a top-level session log and
 // the async subagent run log stored under its session directory.

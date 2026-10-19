@@ -10,7 +10,7 @@
 // message of a session is kept (as the session title); no other conversation
 // content is read out of the log.
 //
-// Token normalization (docs/HARNESS.md §4): promptTokenCount includes
+// Token normalization (docs/ARCHITECTURE.md#token-normalization): promptTokenCount includes
 // cachedContentTokenCount, so the cached count is split out into CacheRead and
 // subtracted from Input when totalTokenCount confirms that accounting. The
 // project is the entry's cwd when present, else the project directory name.

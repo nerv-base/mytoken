@@ -7,8 +7,8 @@ Copyright (c) 2026 zzstar101).
 This file lists third-party projects whose code has been ported, adapted or
 vendored into this repository, together with the copyright notice and license
 text each one requires. Adding an entry here is mandatory whenever code (not
-just a log format) is copied or adapted from another project — see
-docs/HARNESS.md §7.
+just a log format) is copied or adapted from another project; the header of
+the ported file must name its source project and license.
 
 Entries are kept in the order they were added. The first real entry (codeburn,
 below) was added in 0.2, when the qwen, kimi, openclaude and claudedesktop

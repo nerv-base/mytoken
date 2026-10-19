@@ -15,7 +15,7 @@
 // Roots: $MYTOKEN_OPENCLAUDE_DIRS when set, else $CODEBURN_OPENCLAUDE_DIR
 // (the `<root>/projects` layer), else ~/.openclaude/projects.
 //
-// Token normalization (docs/HARNESS.md §4): Claude-family usage reports
+// Token normalization (docs/ARCHITECTURE.md#token-normalization): Claude-family usage reports
 // input_tokens excluding cache hits, cache_creation_input_tokens as CacheWrite,
 // cache_read_input_tokens as CacheRead, and output_tokens already including
 // thinking tokens, so thinking tokens are split out into Reasoning instead of

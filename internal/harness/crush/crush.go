@@ -41,7 +41,7 @@
 // of emitting negative usage. prompt_tokens is Crush's full prompt count and is
 // mapped to Tokens.Input; Crush stores no cache split, so CacheRead/CacheWrite
 // stay 0. Model and provider are taken from the session's most recent message
-// that recorded them — never invented (docs/SPEC.md).
+// that recorded them — never invented (docs/ARCHITECTURE.md#deduplication-and-privacy).
 //
 // A cost-only update (the cumulative cost grew while both token counters stood
 // still) gets a key of its own,

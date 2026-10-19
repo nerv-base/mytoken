@@ -42,7 +42,7 @@
 // uncached remainder. A missing cache column stays 0, a bucket larger than
 // input_tokens is clamped to it, and the three classes always sum to the
 // recorded input_tokens. ZCode stores no per-request cost and no base URL here,
-// so CostUSD stays nil and BaseURL stays "" (docs/SPEC.md: never invent).
+// so CostUSD stays nil and BaseURL stays "" (docs/ARCHITECTURE.md#cost-semantics).
 //
 // Incrementality. SQLite rewrites its header (change counter) on every commit,
 // so the first-4KB fingerprint changes whenever anything is written; the cursor

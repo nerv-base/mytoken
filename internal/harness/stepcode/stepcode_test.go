@@ -15,7 +15,7 @@ import (
 )
 
 // Synthetic Step Code session records. They are hand-written to the shape
-// documented in docs/harness-verification/step-code.md (packages/coding-agent
+// documented in docs/ARCHITECTURE.md#harness-coverage-status (packages/coding-agent
 // src/core/session-manager.ts of the official source) and are no one's real
 // log: no field here was copied from a user's machine.
 const (

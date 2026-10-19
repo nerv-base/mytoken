@@ -1,4 +1,4 @@
-// Package query is the read API shared by the UI and the CLI (docs/SPEC.md §5).
+// Package query is the read API shared by the UI and the CLI (docs/ARCHITECTURE.md#query).
 // Service includes cost provenance and additive 0.4.x endpoint identity queries.
 // NewService implements the API on top of internal/store.
 package query

@@ -22,7 +22,7 @@
 // log states its working directory in config.update.cwd, of which only the
 // final path component is kept.
 //
-// Token normalization (docs/HARNESS.md §4): a legacy `StatusUpdate` envelope
+// Token normalization (docs/ARCHITECTURE.md#token-normalization): a legacy `StatusUpdate` envelope
 // carries token_usage/usage with input_cache_read (CacheRead) and
 // input_cache_creation (CacheWrite) reported separately from the fresh input.
 // When the log reports only the combined `input`, the cache counts are

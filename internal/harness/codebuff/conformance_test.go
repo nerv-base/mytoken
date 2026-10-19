@@ -24,7 +24,7 @@ var conformanceChats = []conformanceChat{
 	{seed: "chat-b.json", messages: map[int]int{1: 1, 2: 3}},
 }
 
-// conformanceSteps is the number of growth steps (docs/HARNESS.md §6).
+// conformanceSteps is the number of growth steps (docs/ARCHITECTURE.md#conformance-suite).
 const conformanceSteps = 3
 
 type conformanceChat struct {

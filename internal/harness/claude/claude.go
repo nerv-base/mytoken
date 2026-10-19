@@ -10,7 +10,7 @@
 // Only the first real user message of a session is kept (as the session
 // title); no other conversation content is read out of the log.
 //
-// Token normalization (docs/SPEC.md §4): the log's usage.input_tokens already
+// Token normalization (docs/ARCHITECTURE.md#token-normalization): the log's usage.input_tokens already
 // excludes cache traffic, so Input is used as-is; cache_creation_input_tokens
 // is reported as CacheWrite and cache_read_input_tokens as CacheRead.
 // usage.output_tokens already contains usage.output_tokens_details.thinking_tokens,

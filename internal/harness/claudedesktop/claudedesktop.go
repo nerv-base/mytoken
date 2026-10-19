@@ -1165,7 +1165,7 @@ func coworkWorkspaceDir(path string) string {
 // coworkProject resolves the project name of a Cowork session: the workspace
 // spaces.json entry for the session's spaceId, else the first user-selected
 // folder or working directory, else a product default. Session titles are
-// deliberately not used: docs/HARNESS.md §5 allows no free text beyond the
+// deliberately not used: docs/ARCHITECTURE.md#deduplication-and-privacy allows no free text beyond the
 // first user message.
 func coworkProject(path, sessionID, surface string) string {
 	workspaceDir := coworkWorkspaceDir(path)

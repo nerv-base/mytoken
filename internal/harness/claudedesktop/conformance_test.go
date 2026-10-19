@@ -10,7 +10,7 @@ import (
 	"github.com/zzstar101/mytoken/internal/model"
 )
 
-// TestConformance runs the shared conformance suite (docs/HARNESS.md) against
+// TestConformance runs the shared conformance suite (docs/ARCHITECTURE.md#conformance-suite) against
 // the checked-in fixture in testdata/conformance/claudedesktop.
 func TestConformance(t *testing.T) {
 	harnesstest.Run(t, conformanceCase())
@@ -33,7 +33,7 @@ func conformanceCase() harnesstest.Case {
 // observed in real Claude Desktop installs: the ledger lives at
 // <app>/<workspace>/usage-ledger/*.ndjson and the session metadata is written
 // beside it as <workspace>/local_<id>.json. Session titles must never leak into
-// the project name (docs/HARNESS.md §5).
+// the project name (docs/ARCHITECTURE.md#deduplication-and-privacy).
 func TestCoworkProjectLayout(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, "usage-ledger"), 0o755); err != nil {

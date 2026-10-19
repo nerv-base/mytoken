@@ -34,7 +34,7 @@
 //
 // Model and provider come from modelID/providerID (or the nested
 // model{id,providerID}) and are never inferred: an absent provider stays empty
-// (docs/SPEC.md). Cost is only reported when the log carries a finite, positive
+// (docs/ARCHITECTURE.md#cost-semantics). Cost is only reported when the log carries a finite, positive
 // `cost` (opencode writes 0 for "unknown").
 //
 // Dedup. Every event is keyed "opencode:<message id>", which is stable across

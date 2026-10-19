@@ -1,7 +1,7 @@
 -- Growth step 2: an older session continues with an explicit cost_usd 0 (the
 -- official writer stores 0 only when the provider reported a finite zero, so the
 -- adapter keeps it as a trustworthy $0 rather than "unknown"; see the parser doc
--- and docs/harness-verification/minimax-code.md), and a reasoning-only turn.
+-- and docs/ARCHITECTURE.md#harness-coverage-status), and a reasoning-only turn.
 INSERT INTO local_runtime_token_usage
   (session_id, agent_name, framework_type, turn_id, model, ts,
    input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,

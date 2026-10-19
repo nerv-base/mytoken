@@ -25,7 +25,7 @@ CREATE INDEX idx_local_runtime_token_usage_model_ts
 
 -- An unrelated table stands in for the runtime's conversation storage. The
 -- parser must never read it: only local_runtime_token_usage is queried, and
--- nothing outside the usage columns may reach an event (docs/HARNESS.md §5).
+-- nothing outside the usage columns may reach an event (docs/ARCHITECTURE.md#deduplication-and-privacy).
 CREATE TABLE runtime_message_text (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL,

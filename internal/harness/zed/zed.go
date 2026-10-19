@@ -11,9 +11,9 @@
 // thread keeps its per-request token usage in request_token_usage and the whole
 // thread's total in cumulative_token_usage. Only the model, that usage and the
 // thread summary are read — message bodies are never parsed, and the request keys
-// (user-message ids) are hashed before they enter a dedup key (docs/HARNESS.md §5).
+// (user-message ids) are hashed before they enter a dedup key (docs/ARCHITECTURE.md#deduplication-and-privacy).
 //
-// Token normalization (docs/HARNESS.md §4): Zed records Anthropic-shaped usage
+// Token normalization (docs/ARCHITECTURE.md#token-normalization): Zed records Anthropic-shaped usage
 // where input_tokens excludes cache hits, cache_creation_input_tokens is the
 // cache write and cache_read_input_tokens the cache read. There is no reasoning
 // field, so Reasoning stays 0 and no class is double counted.
