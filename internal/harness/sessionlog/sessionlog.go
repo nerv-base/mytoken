@@ -415,7 +415,7 @@ type Usage struct {
 	CacheWrite   Num   `json:"cacheWrite"`
 	TotalTokens  Num   `json:"totalTokens"`
 	Reasoning    Num   `json:"reasoning"`
-	CacheWrite1h Num   `json:"cacheWrite1h"` // Pi: a subset of cacheWrite, ignored
+	CacheWrite1h Num   `json:"cacheWrite1h"` // Pi: 1h cache tier, a subset of cacheWrite
 	Cost         *Cost `json:"cost"`
 }
 
@@ -445,12 +445,18 @@ func (u *Usage) Tokens(mode ReasoningMode) model.Tokens {
 		}
 		out -= reasoning
 	}
+	write := Clamp(u.CacheWrite)
+	write1h := Clamp(u.CacheWrite1h)
+	if write1h > write {
+		write1h = write
+	}
 	return model.Tokens{
-		Input:      Clamp(u.Input),
-		Output:     out,
-		CacheRead:  Clamp(u.CacheRead),
-		CacheWrite: Clamp(u.CacheWrite),
-		Reasoning:  reasoning,
+		Input:        Clamp(u.Input),
+		Output:       out,
+		CacheRead:    Clamp(u.CacheRead),
+		CacheWrite:   write,
+		CacheWrite1h: write1h,
+		Reasoning:    reasoning,
 	}
 }
 

@@ -495,3 +495,25 @@ func TestDecodeLineTolerant(t *testing.T) {
 		t.Fatalf("lenient decode = %+v (ok=%v)", rl2, ok)
 	}
 }
+
+// The 1h cache tier is reported inside cache_creation as a subset of the total
+// cache-write tokens, and must survive the duplicate-request merge.
+func TestCacheWrite1h(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sess-1h.jsonl")
+	lines := []string{
+		`{"type":"user","timestamp":"2026-10-03T10:00:00Z","sessionId":"sess-1h","uuid":"u-0","message":{"role":"user","content":"hi"}}`,
+		`{"type":"assistant","timestamp":"2026-10-03T10:00:01Z","sessionId":"sess-1h","uuid":"u-1","requestId":"req-1","message":{"id":"msg_1","model":"claude-sonnet-4-5","role":"assistant","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":100,"cache_creation":{"ephemeral_1h_input_tokens":40,"ephemeral_5m_input_tokens":60}},"content":[{"type":"text","text":"ok"}]}}`,
+		// The same request reported again with a larger 1h tier: max-merge.
+		`{"type":"assistant","timestamp":"2026-10-03T10:00:02Z","sessionId":"sess-1h","uuid":"u-1","requestId":"req-1","message":{"id":"msg_1","model":"claude-sonnet-4-5","role":"assistant","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":100,"cache_creation":{"ephemeral_1h_input_tokens":70,"ephemeral_5m_input_tokens":30}},"content":[{"type":"text","text":"ok"}]}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := parseFile(t, New(), path, harness.Cursor{})
+	if len(b.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(b.Events))
+	}
+	if got := b.Events[0].Tokens; got.CacheWrite != 100 || got.CacheWrite1h != 70 {
+		t.Fatalf("tokens = %+v, want CacheWrite 100 and CacheWrite1h 70", got)
+	}
+}

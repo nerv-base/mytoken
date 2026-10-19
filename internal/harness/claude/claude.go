@@ -226,10 +226,11 @@ type rawMessage struct {
 }
 
 type rawUsage struct {
-	InputTokens         int64 `json:"input_tokens"`
-	OutputTokens        int64 `json:"output_tokens"`
-	CacheCreationTokens int64 `json:"cache_creation_input_tokens"`
-	CacheReadTokens     int64 `json:"cache_read_input_tokens"`
+	InputTokens         int64                  `json:"input_tokens"`
+	OutputTokens        int64                  `json:"output_tokens"`
+	CacheCreationTokens int64                  `json:"cache_creation_input_tokens"`
+	CacheCreation       *harness.CacheCreation `json:"cache_creation"`
+	CacheReadTokens     int64                  `json:"cache_read_input_tokens"`
 	OutputTokensDetails *struct {
 		ThinkingTokens int64 `json:"thinking_tokens"`
 	} `json:"output_tokens_details"`
@@ -481,11 +482,12 @@ func (p *Parser) handleAssistant(b *harness.Batch, rl *rawLine, sid, pid string,
 		reasoning = u.OutputTokens
 	}
 	tk := model.Tokens{
-		Input:      u.InputTokens,
-		Output:     u.OutputTokens - reasoning,
-		CacheRead:  u.CacheReadTokens,
-		CacheWrite: u.CacheCreationTokens,
-		Reasoning:  reasoning,
+		Input:        u.InputTokens,
+		Output:       u.OutputTokens - reasoning,
+		CacheRead:    u.CacheReadTokens,
+		CacheWrite:   u.CacheCreationTokens,
+		CacheWrite1h: u.CacheCreation.Write1h(u.CacheCreationTokens),
+		Reasoning:    reasoning,
 	}
 	if tk.IsZero() {
 		return
@@ -796,6 +798,9 @@ func maxTokens(a, b model.Tokens) model.Tokens {
 	}
 	if b.CacheWrite > a.CacheWrite {
 		a.CacheWrite = b.CacheWrite
+	}
+	if b.CacheWrite1h > a.CacheWrite1h {
+		a.CacheWrite1h = b.CacheWrite1h
 	}
 	if b.Reasoning > a.Reasoning {
 		a.Reasoning = b.Reasoning
