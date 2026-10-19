@@ -1,6 +1,5 @@
 // Package snapshot builds the versioned read-only snapshot envelope shared by
-// the CLI statusline, the tray and future MCP consumers (docs/ROADMAP.md §200,
-// docs/superpowers/plans/2026-10-13-v040-readonly-snapshot.md §2).
+// the CLI statusline, the tray and future MCP consumers.
 //
 // The default path is exactly: paths.ResolveDBPath + store.OpenReadOnly. It
 // never opens the read-write store, never scans, never touches the network and

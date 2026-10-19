@@ -57,7 +57,6 @@ import (
 // discloses the sidecar effects instead of refusing ordinary cross-process
 // reads.
 //
-// See docs/verification/v040-readonly-store.md.
 
 // readOnlyBusyTimeoutMS bounds how long a read-only open waits on a lock before
 // it gives up with a typed error, so contention can never hang a UI or a

@@ -1,5 +1,5 @@
 // Package harness_test holds the registry-level rooted-parser conformance
-// suite (docs/superpowers/plans/2026-10-13-v040-multi-instance.md, V2).
+// suite.
 //
 // Every registered harness parser must be constructible for an explicit root
 // list through harness.NewRooted without touching the singleton that

@@ -18,7 +18,7 @@ import (
 	"github.com/zzstar101/mytoken/internal/store"
 )
 
-// Stable provider identity CLI tests (docs/verification/v040-provider-cli.md).
+// Stable provider identity CLI tests.
 //
 // The fixture below pins every endpoint shape the identity layer cares about:
 //

@@ -5,14 +5,13 @@
 写入范围：仅 `internal/harness/pi/pi.go`、`internal/harness/pi/pi_test.go`、新增 `internal/harness/pi/root_test.go` 与本文件。未改动 `model` / `registry` / `UI` / `store`，未新建 harness，未提交：
 
 ```console
-$ git status --porcelain -- internal/harness/pi docs/verification/omp-pi.md
+$ git status --porcelain -- internal/harness/pi docs/harness-verification/omp-pi.md
  M internal/harness/pi/pi.go
  M internal/harness/pi/pi_test.go
 ?? internal/harness/pi/root_test.go
-?? docs/verification/omp-pi.md
+?? docs/harness-verification/omp-pi.md
 ```
 
-工作区里其余 `M`/`??`（`internal/harness/kimi/**`、`findings.md`、`progress.md`、`task_plan.md`、`docs/MYGO_UPDATE_RESEARCH.md`、`docs/superpowers/`）是其它工作流的既有改动，本次没有触碰。`internal/harness/pi/` 已纳入 git 跟踪，因此 `pi.go`/`pi_test.go` 有 diff 基线；`root_test.go` 与 `docs/verification/` 是新增未跟踪文件。全文行号均指本轮修改后的文件。
 
 ## 结论与范围
 

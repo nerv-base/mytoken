@@ -5,14 +5,13 @@
 写入范围：仅 `internal/harness/pi/pi.go`、`internal/harness/pi/pi_test.go`、`internal/harness/pi/root_test.go` 与本文件。未改动 `sessionlog` / `stepcode` / `model` / `app` / `README` / `ROADMAP` / 规划文件，未提交：
 
 ```console
-$ git status --porcelain -- internal/harness/pi docs/verification/omo-senpi.md
+$ git status --porcelain -- internal/harness/pi docs/harness-verification/omo-senpi.md
  M internal/harness/pi/pi.go
  M internal/harness/pi/pi_test.go
 ?? internal/harness/pi/root_test.go
-?? docs/verification/omo-senpi.md
+?? docs/harness-verification/omo-senpi.md
 ```
 
-工作区里其余 `M`/`??`（`internal/app/app.go`、`internal/harness/kimi/**`、`opencode/**`、`provenance_test.go`、`rooted_*_test.go`、`model/model.go`、`docs/superpowers/`、`findings.md`、`progress.md`、`task_plan.md`）是其它工作流的既有改动，本次没有触碰。本轮保留上一轮交付的 Step `sessionlog` 抽取与既有 OMP roots：`rootProvenance()` 的前两档（`MYTOKEN_PI_DIRS`、`PI_HOME`）与 OMP 分支的判定顺序一个字节都没改，只在 OMP 之后追加了 OMO/senpi 一档，并把两处重复的"agent 目录 → sessions root"拼接抽成一个助手。全文行号均指本轮修改后的文件；`omp-pi.md` 内的行号因 `pi.go` 前移而变旧，但该文件不在本轮允许修改的清单内，故未同步。
 
 ## 结论与范围
 

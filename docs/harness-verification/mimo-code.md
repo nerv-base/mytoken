@@ -12,7 +12,7 @@ $ git status --porcelain internal/harness/opencode internal/harness/mimocode
 ?? internal/harness/opencode/sqlitecore/
 ```
 
-未改动 `internal/model`、`internal/app`、`README`、`ROADMAP`、规划文件，也未改动并发工作流正在写的 `internal/harness/kimi/**`、`internal/harness/pi/**`、`internal/harness/zcode/**`、`internal/harness/stepcode/**`、`rooted_test.go`、`provenance_test.go`、`docs/verification/*`（除本文件）。
+未改动 `internal/model`、`internal/app`、`README`、`ROADMAP`、规划文件，也未改动并发工作流正在写的 `internal/harness/kimi/**`、`internal/harness/pi/**`、`internal/harness/zcode/**`、`internal/harness/stepcode/**`、`rooted_test.go`、`provenance_test.go`、`docs/harness-verification/*`（除本文件）。
 
 ## 结论与范围
 
@@ -275,7 +275,7 @@ $ git status --porcelain internal/harness/opencode internal/harness/mimocode
 
 ## 第二轮：五项审查修正（同日，RED→GREEN→REFACTOR）
 
-只改 `internal/harness/mimocode/**`、`internal/harness/opencode/**`、`docs/verification/mimo-code.md`；未提交（HEAD 仍 `a9684c7`）。每条都先独立核对上游源码，再让测试（或新增直接测试）以旧实现 RED。
+只改 `internal/harness/mimocode/**`、`internal/harness/opencode/**`、`docs/harness-verification/mimo-code.md`；未提交（HEAD 仍 `a9684c7`）。每条都先独立核对上游源码，再让测试（或新增直接测试）以旧实现 RED。
 
 ### 1（Critical）默认数据目录：macOS 也是 XDG，不是 `~/Library/Application Support`
 
@@ -341,7 +341,7 @@ FIX（`internal/harness/opencode/sqlitecore/sqlitecore.go`）：新增 `Spec.req
 
 ## 第三轮：容错投影——一个错类型的可选字段不再吃掉整行（同日，RED→GREEN→REFACTOR）
 
-只改 `internal/harness/opencode/**`、`internal/harness/mimocode/**`、`docs/verification/mimo-code.md`；HEAD 仍 `a9684c7`，未提交，无新依赖。原文的证据来自上游源码阅读与合成 fixture，未读任何真实用户日志或凭据。
+只改 `internal/harness/opencode/**`、`internal/harness/mimocode/**`、`docs/harness-verification/mimo-code.md`；HEAD 仍 `a9684c7`，未提交，无新依赖。原文的证据来自上游源码阅读与合成 fixture，未读任何真实用户日志或凭据。
 
 ### 1 缺陷：严格解码 + 水位线推进 = 永久漏计
 
@@ -605,7 +605,7 @@ $ go test -count=1 ./...                           # 全仓库：无 FAIL / 构�
 
 第四轮的规则是「`sqlitecore.Messages` 里 `rows.Scan` 失败一律 fail-closed」。同一天对 OpenCode 的最终只读复审在合成库上
 复现了 `id` 为 NULL 的 `TEXT PRIMARY KEY` 行，这暴露了该规则的一个真实例外；完整过程、RED 原文与测试清单见
-[`docs/verification/opencode-sqlitecore.md`](opencode-sqlitecore.md)。本节只做两条文档之间的对齐说明，mimocode 本身未改。
+[`docs/harness-verification/opencode-sqlitecore.md`](opencode-sqlitecore.md)。本节只做两条文档之间的对齐说明，mimocode 本身未改。
 
 | | 第四轮 `time_updated` TEXT | 第五轮 `id` 为 NULL |
 | --- | --- | --- |
@@ -618,11 +618,11 @@ $ go test -count=1 ./...                           # 全仓库：无 FAIL / 构�
 边界仍然清晰——`internal/harness/opencode/sqlitecore/sqlitecore.go:423` 只把 `id` 换成 `sql.NullString`，
 `time_updated`/`data`/`kind` 的 Scan 错误仍在同一处 `return before`，第四轮的
 `TestMessagesHoldsTheWatermarkWhenARowCannotBeScanned` 与 `TestMessagesKeepsTheCallersWatermarkWhenTheScanIsInterrupted`
-原样通过（`docs/verification/opencode-sqlitecore.md` §4）。mimocode 与 opencode 共享这个深模块，因此本轮同时重跑了
+原样通过（`docs/harness-verification/opencode-sqlitecore.md` §4）。mimocode 与 opencode 共享这个深模块，因此本轮同时重跑了
 `./internal/harness/mimocode/...`（含 `-race`）：20 条测试全过，无契约漂移。
 
 第五轮另有两处只影响「不写坏数据」的收紧，同样不改合法输入的语义：`Num.UnmarshalJSON` 不再把
 1e30/Inf/超 int64 饱和成 `MaxInt64`（否则两条事件的 `SUM(input)` 会 `SQL logic error: integer overflow`），
 `EpochMS` 不再把畸形时间解释成公元数亿年（超出可信窗口即 zero，调用点回落到行自身的 `time_updated`）。
-细节、RED 原文与 5 条残留风险见 [`docs/verification/opencode-sqlitecore.md`](opencode-sqlitecore.md)。
+细节、RED 原文与 5 条残留风险见 [`docs/harness-verification/opencode-sqlitecore.md`](opencode-sqlitecore.md)。
 

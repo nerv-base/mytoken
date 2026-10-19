@@ -95,7 +95,7 @@ MyToken!!!!! 读取每个 harness 本来就保留的日志，只读、不回写�
 
 ZCode、MiniMax Code、MiMo Code、Step Code 已按上游源码与合成 fixture 做协议和一致性验证；Kimi Code
 及 OMP/OMO 兼容路径同属这一证据等级。本批没有可提交的脱敏真实安装 fixture，因此明确保留“真实日志未验证”
-门槛，详见 [`docs/verification/v04x-harness-matrix.md`](docs/verification/v04x-harness-matrix.md)。
+门槛，详见 [`docs/harness-verification/v04x-harness-matrix.md`](docs/harness-verification/v04x-harness-matrix.md)。
 
 Amp、Kiro、Zed、Antigravity、Codebuff、Mux、Hermes、OpenClaw 同样有一致性覆盖，但仍没有仓库内可审计的
 脱敏真实日志 fixture。

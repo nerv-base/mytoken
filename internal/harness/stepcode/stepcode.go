@@ -104,7 +104,7 @@ import (
 // HarnessID is this parser's harness id. It is deliberately not one of the
 // built-in model.Harness constants: internal/model is a shared file this change
 // is not allowed to touch, so the id is declared here and must be published
-// (model.Known) by the application wiring. See docs/verification/step-code.md.
+// (model.Known) by the application wiring. See docs/harness-verification/step-code.md.
 const HarnessID = model.Harness("step-code")
 
 // dedupPrefix namespaces every usage event this parser emits. Step Code is a new

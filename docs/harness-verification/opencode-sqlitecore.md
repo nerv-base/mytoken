@@ -1,7 +1,7 @@
 # OpenCode 只读复审缺陷修复验证（internal/harness/opencode + sqlitecore）
 
 本文记录最终只读复审在 OpenCode/sqlitecore 上**实际复现**的三个缺陷的修复过程与证据。修复范围只含
-`internal/harness/opencode/**`（含共享深模块 `internal/harness/opencode/sqlitecore`）与本文档 + `docs/verification/mimo-code.md`
+`internal/harness/opencode/**`（含共享深模块 `internal/harness/opencode/sqlitecore`）与本文档 + `docs/harness-verification/mimo-code.md`
 的交叉引用段；`internal/scan`、`internal/store`、其他 harness 一行未动，未提交、未推送，全部数据为合成 fixture（`t.TempDir`），
 未读取任何真实用户数据。
 
@@ -103,7 +103,7 @@ if err := rows.Scan(&row.ID, &session, &row.Data, &row.Updated, &row.Kind); err 
 }
 ```
 
-fail-closed 本身是第四轮刻意选择的语义（见 `docs/verification/mimo-code.md` 第四轮 §1/§3），它保住的是
+fail-closed 本身是第四轮刻意选择的语义（见 `docs/harness-verification/mimo-code.md` 第四轮 §1/§3），它保住的是
 「可恢复的续读点」。但 `id` 与 `time_updated` 不同：`id` 既是 keyset 的续读位置，又是事件的稳定键（dedup key）。
 NULL id **不可物化**：`Accumulator.Emit` 在 `messageID == ""` 时直接 return，永远不会有可入账事件，所以为它
 fail-closed 保住的不是「一条可恢复的行」，而是「整张表永久停滞」。

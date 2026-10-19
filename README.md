@@ -103,7 +103,7 @@ first user message).
 ZCode, MiniMax Code, MiMo Code and Step Code are protocol-validated against upstream source and
 synthetic conformance fixtures; Kimi Code and the OMP/OMO compatibility paths have the same evidence
 level. No anonymized real-install fixture was available for this batch, so they remain explicitly
-unverified against real-world logs. See [`docs/verification/v04x-harness-matrix.md`](docs/verification/v04x-harness-matrix.md).
+unverified against real-world logs. See [`docs/harness-verification/v04x-harness-matrix.md`](docs/harness-verification/v04x-harness-matrix.md).
 
 Amp, Kiro, Zed, Antigravity, Codebuff, Mux, Hermes and OpenClaw likewise have conformance coverage but
 no committed anonymized real-world fixture yet.

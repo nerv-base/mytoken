@@ -5,9 +5,9 @@
 写入范围（严格限制）：仅 `internal/harness/minimax/**` 与本文件。**未改动** `internal/model/model.go`、`internal/app/app.go`、`internal/harness/rooted_test.go`、`internal/harness/provenance_test.go`、`internal/gui/**`、`internal/store`、`internal/query`、其他 harness（`kimi/**`、`pi/**`、`zcode/**`、`mimocode/**`、`stepcode/**`）及任何共享规划文件（`task_plan.md`、`findings.md`、`progress.md`、`docs/ROADMAP.md`）。注册接线由 Lead 完成（已完成，见文末「Lead 集成更新」；`internal/harness/minimax` 现已被 blank import，注册数 32）。
 
 ```console
-$ git status --porcelain -- internal/harness/minimax docs/verification/minimax-code.md
+$ git status --porcelain -- internal/harness/minimax docs/harness-verification/minimax-code.md
 ?? internal/harness/minimax/
-?? docs/verification/minimax-code.md
+?? docs/harness-verification/minimax-code.md
 ```
 
 ## 结论与范围
@@ -214,7 +214,7 @@ minimax_test.go:377: CostUSD = <nil>, want a pointer to 0 for an explicit zero c
 
 ### 验证（第二轮，全部在 `internal/harness/minimax` 与本文件写域内）
 
-`gofmt -l internal/harness/minimax/` 空；`go vet ./internal/harness/minimax/` 空；`go test ./internal/harness/minimax/ -count=1 -v` 24 个顶层测试全 PASS（含 4 个新测试），`ok ... 5.467s`；`-race` `ok ... 7.317s`；bench `259973 ns/op  7.000 events/op  31087 B/op  450 allocs/op`；coverage `90.9%`；`go test ./internal/harness/... -count=1` 全绿。`git status --porcelain` 复核：本轮的改动只在 `internal/harness/minimax/` 与 `docs/verification/minimax-code.md`，未提交。
+`gofmt -l internal/harness/minimax/` 空；`go vet ./internal/harness/minimax/` 空；`go test ./internal/harness/minimax/ -count=1 -v` 24 个顶层测试全 PASS（含 4 个新测试），`ok ... 5.467s`；`-race` `ok ... 7.317s`；bench `259973 ns/op  7.000 events/op  31087 B/op  450 allocs/op`；coverage `90.9%`；`go test ./internal/harness/... -count=1` 全绿。`git status --porcelain` 复核：本轮的改动只在 `internal/harness/minimax/` 与 `docs/harness-verification/minimax-code.md`，未提交。
 
 ## 未解决的 schema 风险
 

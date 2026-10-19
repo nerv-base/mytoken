@@ -5,7 +5,7 @@
 写入范围（初版）：`internal/model/model.go`、`internal/app/app.go`、`internal/harness/rooted_test.go`、`internal/harness/rooted_internal_test.go`、`internal/harness/provenance_test.go`、新增 `internal/harness/zcode/**` 与本文件。未改动 `internal/harness/kimi/**`、`internal/harness/pi/**`、`internal/gui/**`、`internal/store`、`internal/query` 及任何共享规划文件。**复审轮写入范围**只有 `internal/harness/zcode/zcode.go`、新增 `internal/harness/zcode/zcode_regression_test.go` 与本文件（见文末）。
 
 ```console
-$ git status --porcelain -- internal/model internal/app internal/harness docs/verification/zcode.md
+$ git status --porcelain -- internal/model internal/app internal/harness docs/harness-verification/zcode.md
  M internal/app/app.go
  M internal/harness/kimi/kimi.go            # 其它工作流
  M internal/harness/pi/pi.go                # 其它工作流

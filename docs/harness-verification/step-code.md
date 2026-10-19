@@ -5,13 +5,13 @@
 写入范围（只此三处）：
 
 ```console
-$ git status --porcelain -- internal/harness/pi/pi.go internal/harness/sessionlog internal/harness/stepcode docs/verification/step-code.md
+$ git status --porcelain -- internal/harness/pi/pi.go internal/harness/sessionlog internal/harness/stepcode docs/harness-verification/step-code.md
  M internal/harness/pi/pi.go
 ?? internal/harness/sessionlog/
 ?? internal/harness/stepcode/
 ```
 
-未改动 `internal/model`、`internal/app`、`README`、`ROADMAP`、规划文件（`task_plan.md`/`findings.md`/`progress.md`）以及并发工作流正在写的 `internal/harness/kimi/**`、`internal/harness/mimocode/**`、`internal/harness/minimax/**`、`internal/harness/zcode/**`、`internal/harness/opencode/**`、`rooted_test.go`、`provenance_test.go`、其他 `docs/verification/*`。
+未改动 `internal/model`、`internal/app`、`README`、`ROADMAP`、规划文件（`task_plan.md`/`findings.md`/`progress.md`）以及并发工作流正在写的 `internal/harness/kimi/**`、`internal/harness/mimocode/**`、`internal/harness/minimax/**`、`internal/harness/zcode/**`、`internal/harness/opencode/**`、`rooted_test.go`、`provenance_test.go`、其他 `docs/harness-verification/*`。
 
 `internal/harness/pi/pi.go` 的 `git diff` 同时包含**本轮之前就存在的 OMP 改动**（同一工作区的并行工作）与本轮的抽取重构，两者都完整保留：`internal/harness/pi/root_test.go` 的全部 OMP 用例本轮仍全绿（见 GREEN）。
 

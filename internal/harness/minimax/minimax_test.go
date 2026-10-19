@@ -115,7 +115,7 @@ func TestHarnessIdentity(t *testing.T) {
 		t.Errorf("Parser.Harness() = %q, want %q", got, Harness)
 	}
 	if !Harness.Known() {
-		t.Log("model.Harness has no MiniMax Code constant yet; the registry wiring adds it (see docs/verification/minimax-code.md)")
+		t.Log("model.Harness has no MiniMax Code constant yet; the registry wiring adds it (see docs/harness-verification/minimax-code.md)")
 	}
 }
 

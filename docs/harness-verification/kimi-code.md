@@ -59,4 +59,4 @@ Kimi Code `usage.record.usage` 映射如下：
 - 时间戳重复折叠与无时间戳同形请求区分；
 - 不计 `subagent.completed.usage` 与非权威 step usage。
 
-最终验收命令由 `docs/verification/v04x-harness-matrix.md` 统一记录；该矩阵同时保留匿名化真实日志门槛。
+最终验收命令由 `docs/harness-verification/v04x-harness-matrix.md` 统一记录；该矩阵同时保留匿名化真实日志门槛。
