@@ -136,6 +136,65 @@ func TestSnapshotValidate(t *testing.T) {
 	}
 }
 
+func TestDecodeSnapshotRoundTripsFetchedAt(t *testing.T) {
+	fetched := time.Date(2026, 10, 19, 16, 44, 4, 123456789, time.UTC)
+	expires := time.Date(2026, 10, 31, 23, 59, 59, 0, time.FixedZone("CST", 8*60*60))
+	in := Snapshot{
+		Provider:  "trae-cn",
+		Plan:      "credits",
+		Source:    SourceAPI,
+		FetchedAt: fetched,
+		Windows: []Window{{
+			Name:      "Credits",
+			Used:      20.29,
+			Limit:     4700,
+			Remaining: 4679.71,
+			Unit:      "credits",
+			Balance:   true,
+			ExpiresAt: expires,
+		}},
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"fetched_at"`) {
+		t.Fatalf("persisted encoding has no fetched_at: %s", raw)
+	}
+	out, err := DecodeSnapshot(raw)
+	if err != nil {
+		t.Fatalf("DecodeSnapshot: %v", err)
+	}
+	if !out.FetchedAt.Equal(fetched) {
+		t.Fatalf("FetchedAt = %v, want %v", out.FetchedAt, fetched)
+	}
+	if len(out.Windows) != 1 {
+		t.Fatalf("windows = %+v", out.Windows)
+	}
+	w := out.Windows[0]
+	if w.Remaining != 4679.71 || w.Limit != 4700 || w.Used != 20.29 || w.Unit != "credits" ||
+		!w.Balance || !w.ExpiresAt.Equal(expires) {
+		t.Fatalf("window changed in round trip: %+v", w)
+	}
+
+	// A row written before fetched_at existed still decodes; the missing time
+	// stays zero instead of being invented.
+	old := []byte(`{"provider":"codex","source":"api","windows":[{"name":"week","used_percent":9}]}`)
+	got, err := DecodeSnapshot(old)
+	if err != nil {
+		t.Fatalf("old row: %v", err)
+	}
+	if !got.FetchedAt.IsZero() {
+		t.Fatalf("old row FetchedAt = %v, want zero", got.FetchedAt)
+	}
+
+	// The plan service rejects a cached snapshot that did not come from a server.
+	bad := []byte(`{"provider":"codex","source":"local-log","windows":[{"name":"week","used_percent":9}]}`)
+	if _, err := DecodeSnapshot(bad); err == nil {
+		t.Fatal("local-log snapshot accepted")
+	}
+}
+
 func TestDoJSONStatusMapping(t *testing.T) {
 	statuses := []struct {
 		code int
@@ -241,6 +300,10 @@ func TestServiceFetchPersistsAndNotifies(t *testing.T) {
 	restored, ok := svc2.Snapshot("alpha")
 	if !ok || restored.Provider != "alpha" {
 		t.Fatalf("restored = %+v, %v", restored, ok)
+	}
+	wantFetched := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+	if !restored.FetchedAt.Equal(wantFetched) {
+		t.Fatalf("restored FetchedAt = %v, want %v", restored.FetchedAt, wantFetched)
 	}
 }
 

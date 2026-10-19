@@ -220,17 +220,30 @@ func TestQuota(t *testing.T) {
 		t.Errorf("plans = %d, want 0", len(empty))
 	}
 
-	// Seed a server-fetched snapshot the way the plan service stores one, then
-	// check the table, JSON and CSV views read it.
+	// Seed server-fetched snapshots the way the plan service stores them: a
+	// percentage window, a money balance and a capped credit allowance. Also
+	// leave a stale local-log row behind; the reader must skip it even though the
+	// read-write migration that prunes it has not run against this index.
 	st, err := store.Open(f.dbPath)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	raw := `{"provider":"codex","plan":"plus","source":"api","fetched_at":"2026-10-20T00:00:00Z",` +
-		`"windows":[{"name":"5h","used_percent":42.5},{"name":"week","used_percent":12,"resets_at":"2026-10-27T00:00:00Z"}]}`
-	if err := st.SetSetting(t.Context(), "quota.plan.codex", raw); err != nil {
-		st.Close()
-		t.Fatalf("SetSetting: %v", err)
+	seed := map[string]string{
+		"quota.plan.codex": `{"provider":"codex","plan":"plus","source":"api","fetched_at":"2026-10-20T00:00:00Z",` +
+			`"windows":[{"name":"5h","used_percent":42.5},{"name":"week","used_percent":12,"resets_at":"2026-10-27T00:00:00Z"}]}`,
+		"quota.plan.deepseek": `{"provider":"deepseek","source":"api","fetched_at":"2026-10-19T16:44:04Z",` +
+			`"windows":[{"name":"balance","balance":true,"remaining":36.55,"unit":"cny"}]}`,
+		"quota.plan.workbuddy": `{"provider":"workbuddy","plan":"self_serve_business_prolite","source":"api","fetched_at":"2026-10-19T16:44:04Z",` +
+			`"windows":[{"name":"Credits","used_percent":54.9,"used":5581.34,"limit":10177,"remaining":4595.66,` +
+			`"unit":"credits","expires_at":"2026-10-31T23:59:59+08:00"}]}`,
+		"quota.plan.trae-cn": `{"provider":"trae-cn","plan":"Credits","source":"local-log","fetched_at":"2026-09-23T08:03:54Z",` +
+			`"windows":[{"name":"Credits","used_percent":0}]}`,
+	}
+	for key, value := range seed {
+		if err := st.SetSetting(t.Context(), key, value); err != nil {
+			st.Close()
+			t.Fatalf("SetSetting(%q): %v", key, err)
+		}
 	}
 	if err := st.Close(); err != nil {
 		t.Fatalf("close: %v", err)
@@ -240,32 +253,80 @@ func TestQuota(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("seeded exit = %d, stderr = %s", code, errOut)
 	}
-	mustContain(t, out, "PROVIDER", "codex", "plus", "api", "5h 42.5%", "week 12.0%")
+	mustContain(t, out, "PROVIDER", "codex", "Plus", "api", "5h 42.5%", "week 12.0%",
+		"Business Prolite", "balance ¥36.55", "Credits 5,581.34/10,177 (54.9%)",
+		"expires 2026-10-31")
+	if strings.Contains(out, "trae-cn") {
+		t.Errorf("stale local-log snapshot printed:\n%s", out)
+	}
+	if strings.Contains(out, "0001-01-01") {
+		t.Errorf("zero fetch time printed:\n%s", out)
+	}
 
 	js, errOut, code = runCLI(t, "quota", "plan", "--json", "--db", f.dbPath)
 	if code != 0 {
 		t.Fatalf("seeded json exit = %d, stderr = %s", code, errOut)
 	}
+	type quotaWindowJSON struct {
+		Name        string    `json:"name"`
+		UsedPercent float64   `json:"usedPercent"`
+		Remaining   float64   `json:"remaining"`
+		Used        float64   `json:"used"`
+		Limit       float64   `json:"limit"`
+		Unit        string    `json:"unit"`
+		Balance     bool      `json:"balance"`
+		ExpiresAt   time.Time `json:"expiresAt"`
+	}
 	var plans []struct {
-		Provider string `json:"provider"`
-		Plan     string `json:"plan"`
-		Source   string `json:"source"`
-		Windows  []struct {
-			Name        string  `json:"name"`
-			UsedPercent float64 `json:"usedPercent"`
-		} `json:"windows"`
+		Provider  string            `json:"provider"`
+		Plan      string            `json:"plan"`
+		Source    string            `json:"source"`
+		FetchedAt time.Time         `json:"fetchedAt"`
+		Windows   []quotaWindowJSON `json:"windows"`
 	}
 	jsonInto(t, js, &plans)
-	if len(plans) != 1 || plans[0].Provider != "codex" || plans[0].Plan != "plus" ||
-		plans[0].Source != "api" || len(plans[0].Windows) != 2 || plans[0].Windows[0].Name != "5h" {
-		t.Fatalf("plans = %+v", plans)
+	if len(plans) != 3 {
+		t.Fatalf("plans = %d, want 3 (stale row skipped): %+v", len(plans), plans)
+	}
+	byProvider := map[string]int{}
+	for i, p := range plans {
+		byProvider[p.Provider] = i
+		if p.Source != "api" || p.FetchedAt.IsZero() {
+			t.Errorf("plan %q has source %q fetchedAt %v", p.Provider, p.Source, p.FetchedAt)
+		}
+	}
+	deepseek, ok := byProvider["deepseek"]
+	if !ok || len(plans[deepseek].Windows) != 1 {
+		t.Fatalf("deepseek plans = %+v", plans)
+	}
+	if w := plans[deepseek].Windows[0]; !w.Balance || w.Unit != "cny" || w.Remaining != 36.55 {
+		t.Errorf("deepseek balance window = %+v", w)
+	}
+	workbuddy, ok := byProvider["workbuddy"]
+	if !ok || len(plans[workbuddy].Windows) != 1 {
+		t.Fatalf("workbuddy plans = %+v", plans)
+	}
+	if plans[workbuddy].Plan != "self_serve_business_prolite" {
+		t.Errorf("json plan = %q, want raw id", plans[workbuddy].Plan)
+	}
+	if w := plans[workbuddy].Windows[0]; w.Used != 5581.34 || w.Limit != 10177 || w.Unit != "credits" ||
+		w.Remaining != 4595.66 || w.ExpiresAt.Format("2006-01-02") != "2026-10-31" {
+		t.Errorf("workbuddy credit window = %+v", w)
 	}
 
 	csv, errOut, code := runCLI(t, "quota", "--format", "csv", "--db", f.dbPath)
 	if code != 0 {
 		t.Fatalf("csv exit = %d, stderr = %s", code, errOut)
 	}
-	mustContain(t, csv, "provider,plan,source,fetched_at,window,used_percent,resets_at", "codex,plus,api")
+	mustContain(t, csv,
+		"provider,plan,source,fetched_at,window,used_percent,remaining,used,limit,unit,balance,resets_at,expires_at",
+		"codex,plus,api",
+		"deepseek,,api",
+		",balance,0,36.55,0,0,cny,true,,",
+		",Credits,54.9,4595.66,5581.34,10177,credits,false,")
+	if strings.Contains(csv, "local-log") {
+		t.Errorf("stale local-log row written to csv:\n%s", csv)
+	}
 
 	// list/status read local usage logs and were removed with that path.
 	_, errOut, code = runCLI(t, "quota", "bogus", "--db", f.dbPath)

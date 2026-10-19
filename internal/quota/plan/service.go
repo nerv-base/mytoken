@@ -205,14 +205,11 @@ func (s *Service) load() {
 		if err != nil || strings.TrimSpace(raw) == "" || len(raw) > maxSnapshotBytes {
 			continue
 		}
-		var snap Snapshot
-		if err := json.Unmarshal([]byte(raw), &snap); err != nil {
+		snap, err := DecodeSnapshot([]byte(raw))
+		if err != nil {
 			continue
 		}
 		if snap.Provider != p.ID() {
-			continue
-		}
-		if err := snap.validate(s.now()); err != nil {
 			continue
 		}
 		s.snaps[p.ID()] = snap

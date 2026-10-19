@@ -14,10 +14,15 @@ func TestMigrationDeletesLocalLogQuotaSettings(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	for key, value := range map[string]string{
-		"quota.codex.default": `{"status":"ok"}`,
-		"quota.codex.alpha":   `{"status":"ok"}`,
-		"quota.plan.codex":    `{"provider":"codex"}`,
-		"unrelated":           "keep",
+		"quota.codex.default":    `{"status":"ok"}`,
+		"quota.codex.alpha":      `{"status":"ok"}`,
+		"quota.plan.codex":       `{"provider":"codex"}`,
+		"quota.plan.trae-cn":     `{"provider":"trae-cn","source":"local-log","windows":[]}`,
+		"quota.plan.workbuddy":   `not json`,
+		"quota.plan.api":         `{"provider":"deepseek","source":"api","fetched_at":"2026-10-19T16:44:04Z"}`,
+		"quota.plan.api.history": `[{"at":"2026-10-19T16:44:04Z"}]`,
+		"quota.plan.deepseek":    `{"provider":"deepseek","source":"api"}`,
+		"unrelated":              "keep",
 	} {
 		if err = st.SetSetting(ctx, key, value); err != nil {
 			st.Close()
@@ -28,23 +33,35 @@ func TestMigrationDeletesLocalLogQuotaSettings(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	reopened, err := Open(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
+	want := map[string]string{
+		"quota.codex.default":    "",
+		"quota.codex.alpha":      "",
+		"quota.plan.codex":       "",
+		"quota.plan.trae-cn":     "",
+		"quota.plan.workbuddy":   "",
+		"quota.plan.api":         `{"provider":"deepseek","source":"api","fetched_at":"2026-10-19T16:44:04Z"}`,
+		"quota.plan.api.history": `[{"at":"2026-10-19T16:44:04Z"}]`,
+		"quota.plan.deepseek":    `{"provider":"deepseek","source":"api"}`,
+		"unrelated":              "keep",
 	}
-	defer reopened.Close()
-	for key, want := range map[string]string{
-		"quota.codex.default": "",
-		"quota.codex.alpha":   "",
-		"quota.plan.codex":    `{"provider":"codex"}`,
-		"unrelated":           "keep",
-	} {
-		got, err := reopened.Setting(ctx, key)
+	// Every read-write open prunes; the second open must change nothing.
+	for round := 1; round <= 2; round++ {
+		reopened, err := Open(path)
 		if err != nil {
-			t.Fatalf("Setting(%q): %v", key, err)
+			t.Fatalf("reopen %d: %v", round, err)
 		}
-		if got != want {
-			t.Errorf("Setting(%q) = %q, want %q", key, got, want)
+		for key, wantValue := range want {
+			got, err := reopened.Setting(ctx, key)
+			if err != nil {
+				reopened.Close()
+				t.Fatalf("reopen %d Setting(%q): %v", round, key, err)
+			}
+			if got != wantValue {
+				t.Errorf("reopen %d: Setting(%q) = %q, want %q", round, key, got, wantValue)
+			}
+		}
+		if err = reopened.Close(); err != nil {
+			t.Fatalf("reopen %d close: %v", round, err)
 		}
 	}
 }

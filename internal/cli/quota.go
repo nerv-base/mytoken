@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zzstar101/mytoken/internal/quota/plan"
 	"github.com/zzstar101/mytoken/internal/snapshot"
 )
 
@@ -104,17 +105,19 @@ func writeQuotaText(out io.Writer, plans []snapshot.PlanQuota) {
 	fmt.Fprintln(t, "PROVIDER\tPLAN\tSOURCE\tFETCHED\tWINDOWS")
 	for _, p := range plans {
 		fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\n", p.Provider, planText(p.Plan), sourceText(p.Source),
-			p.FetchedAt.Local().Format("2006-01-02 15:04"), planWindowsText(p.Windows))
+			fetchedText(p.FetchedAt), planWindowsText(p.Windows))
 	}
 	t.Flush()
 	fmt.Fprintln(out, "source api means the value came from the provider's server; a window or reset is shown only when the server sent one")
 }
 
-func planText(plan string) string {
-	if plan == "" {
-		return "-"
+// planText renders a plan id the way the GUI names it. An empty result means
+// the provider stated no tier worth showing.
+func planText(raw string) string {
+	if label := plan.PlanLabel(raw); label != "" {
+		return label
 	}
-	return plan
+	return "-"
 }
 
 func sourceText(src string) string {
@@ -124,47 +127,162 @@ func sourceText(src string) string {
 	return src
 }
 
+// fetchedText shows when the server actually answered, never the zero time.
+func fetchedText(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return t.Local().Format("2006-01-02 15:04")
+}
+
 func planWindowsText(windows []snapshot.PlanWindow) string {
 	if len(windows) == 0 {
 		return "-"
 	}
 	parts := make([]string, 0, len(windows))
 	for _, w := range windows {
-		part := fmt.Sprintf("%s %.1f%%", w.Name, w.UsedPercent)
-		if !w.ResetsAt.IsZero() {
-			part += " resets " + w.ResetsAt.Local().Format("2006-01-02 15:04")
-		}
-		parts = append(parts, part)
+		parts = append(parts, planWindowText(w))
 	}
 	return strings.Join(parts, "  ")
 }
 
+// planWindowText renders one window in the form that matches what it measures:
+// a percentage, a remaining credit/money balance, or a used/limit allowance.
+// One input is one output cell, so the windows of a provider stay aligned.
+func planWindowText(w snapshot.PlanWindow) string {
+	name := strings.TrimSpace(w.Name)
+	if name == "" {
+		name = "window"
+	}
+	unit := strings.ToLower(strings.TrimSpace(w.Unit))
+	var part string
+	switch {
+	case w.Balance:
+		part = balanceWindowText(name, unit, w)
+	case w.Limit > 0 && unit != "" && unit != "%":
+		part = fmt.Sprintf("%s %s/%s (%.1f%%)", name, formatAmount(w.Used), formatAmount(w.Limit), w.UsedPercent)
+	default:
+		part = fmt.Sprintf("%s %.1f%%", name, w.UsedPercent)
+	}
+	if !w.ExpiresAt.IsZero() {
+		part += ", expires " + w.ExpiresAt.Local().Format("2006-01-02")
+	}
+	if !w.ResetsAt.IsZero() {
+		part += " resets " + w.ResetsAt.Local().Format("2006-01-02 15:04")
+	}
+	return part
+}
+
+// balanceWindowText prints what is left rather than a meaningless percentage.
+// A balance amount of zero is real for money (an empty wallet) but "unstated"
+// for credits with no limit (an unlimited pack).
+func balanceWindowText(name, unit string, w snapshot.PlanWindow) string {
+	switch unit {
+	case "credits", "credit":
+		if w.Remaining == 0 && w.Limit == 0 && w.Used == 0 {
+			return name + " -"
+		}
+		return name + " " + formatAmount(w.Remaining) + " credits left"
+	}
+	if symbol := currencySymbol(unit); symbol != "" {
+		return name + " " + symbol + formatMoney(w.Remaining)
+	}
+	amount := formatAmount(w.Remaining)
+	if unit != "" {
+		amount += " " + unit
+	}
+	return name + " " + amount + " left"
+}
+
+// currencySymbol maps a provider's unit code to its symbol.
+func currencySymbol(unit string) string {
+	switch unit {
+	case "cny", "rmb":
+		return "¥"
+	case "usd":
+		return "$"
+	case "eur":
+		return "€"
+	case "gbp":
+		return "£"
+	}
+	return ""
+}
+
+// formatAmount renders a quota amount with up to two decimals and thousands
+// separators: 4679.71 stays "4,679.71" and 10177 becomes "10,177".
+func formatAmount(v float64) string {
+	s := strconv.FormatFloat(v, 'f', 2, 64)
+	if strings.Contains(s, ".") {
+		s = strings.TrimRight(strings.TrimRight(s, "0"), ".")
+	}
+	return groupNumber(s)
+}
+
+// formatMoney renders an amount of money with exactly two decimals.
+func formatMoney(v float64) string {
+	return groupNumber(strconv.FormatFloat(v, 'f', 2, 64))
+}
+
+// groupNumber inserts thousands separators into the integer part of s.
+func groupNumber(s string) string {
+	sign := ""
+	if strings.HasPrefix(s, "-") {
+		sign, s = "-", s[1:]
+	}
+	intPart, frac, hasFrac := strings.Cut(s, ".")
+	var b strings.Builder
+	b.WriteString(sign)
+	for i := 0; i < len(intPart); i++ {
+		if i > 0 && (len(intPart)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte(intPart[i])
+	}
+	if hasFrac {
+		b.WriteByte('.')
+		b.WriteString(frac)
+	}
+	return b.String()
+}
+
 func writeQuotaCSV(out io.Writer, plans []snapshot.PlanQuota) error {
 	w := csv.NewWriter(out)
-	if err := w.Write([]string{"provider", "plan", "source", "fetched_at", "window", "used_percent", "resets_at"}); err != nil {
+	header := []string{"provider", "plan", "source", "fetched_at", "window", "used_percent",
+		"remaining", "used", "limit", "unit", "balance", "resets_at", "expires_at"}
+	if err := w.Write(header); err != nil {
 		return err
 	}
 	for _, p := range plans {
 		if len(p.Windows) == 0 {
-			if err := w.Write([]string{p.Provider, p.Plan, p.Source, csvTime(p.FetchedAt), "", "", ""}); err != nil {
+			if err := w.Write(quotaCSVRow(p, nil)); err != nil {
 				return err
 			}
 			continue
 		}
-		for _, win := range p.Windows {
-			reset := ""
-			if !win.ResetsAt.IsZero() {
-				reset = win.ResetsAt.Format(time.RFC3339)
-			}
-			row := []string{p.Provider, p.Plan, p.Source, csvTime(p.FetchedAt),
-				win.Name, strconv.FormatFloat(win.UsedPercent, 'f', -1, 64), reset}
-			if err := w.Write(row); err != nil {
+		for i := range p.Windows {
+			if err := w.Write(quotaCSVRow(p, &p.Windows[i])); err != nil {
 				return err
 			}
 		}
 	}
 	w.Flush()
 	return w.Error()
+}
+
+// quotaCSVRow is one CSV record; win is nil for a provider with no windows.
+func quotaCSVRow(p snapshot.PlanQuota, win *snapshot.PlanWindow) []string {
+	row := []string{p.Provider, p.Plan, p.Source, csvTime(p.FetchedAt)}
+	if win == nil {
+		return append(row, "", "", "", "", "", "", "", "", "")
+	}
+	return append(row,
+		win.Name, strconv.FormatFloat(win.UsedPercent, 'f', -1, 64),
+		strconv.FormatFloat(win.Remaining, 'f', -1, 64),
+		strconv.FormatFloat(win.Used, 'f', -1, 64),
+		strconv.FormatFloat(win.Limit, 'f', -1, 64),
+		win.Unit, strconv.FormatBool(win.Balance),
+		csvTime(win.ResetsAt), csvTime(win.ExpiresAt))
 }
 
 func csvTime(t time.Time) string {

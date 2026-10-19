@@ -17,6 +17,7 @@ import (
 
 	"github.com/zzstar101/mytoken/internal/paths"
 	"github.com/zzstar101/mytoken/internal/query"
+	"github.com/zzstar101/mytoken/internal/quota/plan"
 	"github.com/zzstar101/mytoken/internal/scan"
 	"github.com/zzstar101/mytoken/internal/store"
 )
@@ -107,11 +108,19 @@ type PlanQuota struct {
 	FetchedAt time.Time    `json:"fetchedAt"`
 }
 
-// PlanWindow is one usage window of a plan.
+// PlanWindow is one usage window of a plan. Used, Limit, Unit, Balance,
+// Remaining and ExpiresAt describe a credit balance or a capped allowance; they
+// are zero for a percentage-only window.
 type PlanWindow struct {
 	Name        string    `json:"name"`
 	UsedPercent float64   `json:"usedPercent"`
-	ResetsAt    time.Time `json:"resetsAt,omitempty"`
+	Used        float64   `json:"used"`
+	Limit       float64   `json:"limit"`
+	Remaining   float64   `json:"remaining"`
+	Unit        string    `json:"unit"`
+	Balance     bool      `json:"balance"`
+	ResetsAt    time.Time `json:"resetsAt,omitzero"`
+	ExpiresAt   time.Time `json:"expiresAt,omitzero"`
 }
 
 // TokRate is the live-ingestion signal a scanner persisted.
@@ -256,7 +265,12 @@ func Build(ctx context.Context, opts Options) *Snapshot {
 	return s
 }
 
-// readPlans decodes the plan service's cached snapshots.
+// readPlans decodes the plan service's cached snapshots. It uses the service's
+// own decoder, so a stored value passes exactly the validation the service
+// applies: a snapshot whose source is not "api" (for example a local usage log
+// an older build cached) is skipped, and the fetch time is read from the same
+// fetched_at field the service wrote. Unreadable rows and the separate
+// balance-history rows are skipped too.
 func readPlans(ctx context.Context, ro *store.Store) ([]PlanQuota, Status) {
 	rows, err := ro.DB().QueryContext(ctx, `SELECT value FROM settings WHERE key LIKE 'quota.plan.%'`)
 	if err != nil {
@@ -269,24 +283,28 @@ func readPlans(ctx context.Context, ro *store.Store) ([]PlanQuota, Status) {
 		if err := rows.Scan(&raw); err != nil {
 			return out, Status{Reason: ReasonQuotaUnavailable, Detail: err.Error()}
 		}
-		var p PlanQuota
-		var wire struct {
-			Provider  string    `json:"provider"`
-			Plan      string    `json:"plan"`
-			Source    string    `json:"source"`
-			FetchedAt time.Time `json:"fetchedAt"`
-			Windows   []struct {
-				Name        string    `json:"name"`
-				UsedPercent float64   `json:"used_percent"`
-				ResetsAt    time.Time `json:"resets_at"`
-			} `json:"windows"`
-		}
-		if json.Unmarshal([]byte(raw), &wire) != nil || wire.Provider == "" {
+		snap, err := plan.DecodeSnapshot([]byte(raw))
+		if err != nil {
 			continue
 		}
-		p.Provider, p.Plan, p.Source, p.FetchedAt = wire.Provider, wire.Plan, wire.Source, wire.FetchedAt
-		for _, w := range wire.Windows {
-			p.Windows = append(p.Windows, PlanWindow{Name: w.Name, UsedPercent: w.UsedPercent, ResetsAt: w.ResetsAt})
+		p := PlanQuota{
+			Provider:  snap.Provider,
+			Plan:      snap.Plan,
+			Source:    snap.Source,
+			FetchedAt: snap.FetchedAt,
+		}
+		for _, w := range snap.Windows {
+			p.Windows = append(p.Windows, PlanWindow{
+				Name:        w.Name,
+				UsedPercent: w.UsedPercent,
+				Used:        w.Used,
+				Limit:       w.Limit,
+				Remaining:   w.Remaining,
+				Unit:        w.Unit,
+				Balance:     w.Balance,
+				ResetsAt:    w.ResetsAt,
+				ExpiresAt:   w.ExpiresAt,
+			})
 		}
 		out = append(out, p)
 	}

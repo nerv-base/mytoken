@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 func (s *Store) migrate() error {
@@ -191,6 +194,13 @@ func (s *Store) migrate() error {
 	if _, err = tx.Exec(`DELETE FROM settings WHERE key LIKE 'quota.codex.%'`); err != nil {
 		return err
 	}
+	// The same cache can hold plan snapshots fetched from a local source before
+	// quotas became server-only. Those rows are unreadable to the current plan
+	// service and to the CLI, so they are pruned too. This runs on every open and
+	// is idempotent: it deletes exactly the rows that are already unusable.
+	if err = pruneStalePlanQuotas(context.Background(), tx); err != nil {
+		return err
+	}
 	if identityMigration || rollupMigration || instanceMigration {
 		after, err := historyDigest(tx)
 		if err != nil {
@@ -213,4 +223,44 @@ func (s *Store) migrate() error {
 		return err
 	}
 	return s.NormalizeProjects(context.Background())
+}
+
+// pruneStalePlanQuotas deletes cached plan snapshots that cannot have come from
+// a provider's server: a quota.plan.<id> row whose stored source is not "api",
+// or whose value does not decode as a snapshot at all. The plan service keeps
+// its history under quota.plan.<id>.history, which has no source field, so
+// those rows are left alone.
+func pruneStalePlanQuotas(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `SELECT key, value FROM settings WHERE key LIKE 'quota.plan.%'`)
+	if err != nil {
+		return err
+	}
+	var stale []string
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			rows.Close()
+			return err
+		}
+		if strings.HasSuffix(key, ".history") {
+			continue
+		}
+		var snap struct {
+			Source string `json:"source"`
+		}
+		if json.Unmarshal([]byte(value), &snap) != nil || snap.Source != "api" {
+			stale = append(stale, key)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, key := range stale {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key); err != nil {
+			return err
+		}
+	}
+	return nil
 }

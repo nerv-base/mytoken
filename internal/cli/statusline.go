@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/zzstar101/mytoken/internal/quota/plan"
 	"github.com/zzstar101/mytoken/internal/snapshot"
 )
 
@@ -130,15 +131,39 @@ func planQuotaText(st snapshot.Status, plans []snapshot.PlanQuota) string {
 	parts := make([]string, 0, len(plans))
 	for _, p := range plans {
 		part := p.Provider
-		if p.Plan != "" {
-			part = p.Provider + " " + p.Plan
+		if label := plan.PlanLabel(p.Plan); label != "" {
+			part += " " + label
 		}
 		for _, w := range p.Windows {
-			part += fmt.Sprintf(" %s=%.0f%%", w.Name, w.UsedPercent)
+			part += " " + compactPlanWindow(w)
 		}
 		parts = append(parts, part)
 	}
 	return strings.Join(parts, "; ")
+}
+
+// compactPlanWindow renders one window for the one-line status: a percentage,
+// a remaining balance, or a used/limit allowance.
+func compactPlanWindow(w snapshot.PlanWindow) string {
+	unit := strings.ToLower(strings.TrimSpace(w.Unit))
+	switch {
+	case w.Balance:
+		if symbol := currencySymbol(unit); symbol != "" {
+			return fmt.Sprintf("%s=%s%s", w.Name, symbol, formatMoney(w.Remaining))
+		}
+		if w.Remaining == 0 && w.Limit == 0 && w.Used == 0 {
+			return w.Name + "=-"
+		}
+		suffix := " left"
+		if unit != "" {
+			suffix = " " + unit + " left"
+		}
+		return w.Name + "=" + formatAmount(w.Remaining) + suffix
+	case w.Limit > 0 && unit != "" && unit != "%":
+		return fmt.Sprintf("%s=%s/%s", w.Name, formatAmount(w.Used), formatAmount(w.Limit))
+	default:
+		return fmt.Sprintf("%s=%.0f%%", w.Name, w.UsedPercent)
+	}
 }
 
 func statusTokRateText(st snapshot.Status, tr *snapshot.TokRate) string {

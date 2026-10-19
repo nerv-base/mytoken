@@ -58,7 +58,7 @@ func quotas(s *plan.Service) []gui.Quota {
 	now := time.Now()
 	for _, snap := range s.Detected() {
 		q := gui.Quota{
-			ID: snap.Provider, Name: quotaName(snap.Provider), Plan: planLabel(snap.Plan),
+			ID: snap.Provider, Name: quotaName(snap.Provider), Plan: plan.PlanLabel(snap.Plan),
 			Source: snap.Source, FetchedAt: snap.FetchedAt, Err: problems[snap.Provider],
 			SignIn: signIn[snap.Provider],
 		}
@@ -122,27 +122,6 @@ func quotaName(id string) string {
 		return id
 	}
 	return strings.ToUpper(id[:1]) + id[1:]
-}
-
-// planLabel turns a plan id such as "self_serve_business_prolite" into
-// "Business Prolite".
-func planLabel(p string) string {
-	p = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(p)), "self_serve_")
-	if p == "credits" {
-		return "" // says nothing the tile does not
-	}
-	words := strings.FieldsFunc(p, func(r rune) bool { return r == '_' || r == '-' || r == ' ' })
-	for i, w := range words {
-		if len(w) <= 2 && strings.ContainsAny(w, "0123456789") {
-			continue // "5x", "20x"
-		}
-		// Title-case Latin words only; "体验版" stays as it is (slicing its
-		// first byte would cut a character in half).
-		if c := w[0]; c >= 'a' && c <= 'z' {
-			words[i] = string(c-'a'+'A') + w[1:]
-		}
-	}
-	return strings.Join(words, " ")
 }
 
 type sources struct{ a *app.App }

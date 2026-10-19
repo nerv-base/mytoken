@@ -2,6 +2,7 @@ package plan
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -171,8 +172,11 @@ func normalizeDaily(in []DayUse) []DayUse {
 	return out
 }
 
-// validate normalizes and checks a snapshot a provider returned.
-func (s *Snapshot) validate(now time.Time) error {
+// Validate normalizes a snapshot and checks its invariants. It is what a
+// snapshot read back from the settings store must pass before it is treated as
+// a quota. A missing fetch time is preserved: reading a stored snapshot must
+// not invent a time it did not record.
+func (s *Snapshot) Validate() error {
 	s.Provider = strings.TrimSpace(s.Provider)
 	if s.Provider == "" {
 		return fmt.Errorf("plan: provider returned a snapshot without an id")
@@ -193,9 +197,6 @@ func (s *Snapshot) validate(now time.Time) error {
 		return &Error{Reason: ReasonNoWindows}
 	}
 	s.Daily = normalizeDaily(s.Daily)
-	if s.FetchedAt.IsZero() {
-		s.FetchedAt = now.UTC()
-	}
 	if s.Source != "" && s.Source != SourceAPI {
 		// A snapshot that names any other origin (a local usage log, a cache)
 		// is not a quota: the numbers must have come from the provider.
@@ -203,6 +204,34 @@ func (s *Snapshot) validate(now time.Time) error {
 	}
 	s.Source = SourceAPI
 	return nil
+}
+
+// validate normalizes and checks a snapshot a provider just returned, stamping
+// the fetch time when the provider did not state one.
+func (s *Snapshot) validate(now time.Time) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	if s.FetchedAt.IsZero() {
+		s.FetchedAt = now.UTC()
+	}
+	return nil
+}
+
+// DecodeSnapshot decodes a snapshot persisted under SnapshotKey and applies the
+// same validation as a snapshot returned by a provider. The stored encoding is
+// Snapshot's own JSON (snake_case fields, including fetched_at), so a value the
+// Service wrote is read back with its fetch time intact. A snapshot that names
+// a non-API source is rejected instead of being shown as a quota.
+func DecodeSnapshot(raw []byte) (Snapshot, error) {
+	var s Snapshot
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return Snapshot{}, err
+	}
+	if err := s.Validate(); err != nil {
+		return Snapshot{}, err
+	}
+	return s, nil
 }
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
