@@ -92,7 +92,11 @@ type Scanner struct {
 	// read, so an unchanged file is not read again. Guarded by scanMu, like
 	// tailOutcomes, which is what the last scan's bounded tail read did: one
 	// entry per Codex instance, with the reason nothing was published.
-	tailSeen     map[string]fileStamp
+	tailSeen map[string]fileStamp
+	// tailHit marks the rollouts in tailSeen whose tail published a report:
+	// while the newest such file is unchanged there is nothing newer to find,
+	// so the older ones need not be read at all.
+	tailHit      map[string]bool
 	tailOutcomes []QuotaTailOutcome
 }
 
@@ -799,6 +803,11 @@ func (s *Scanner) Run(ctx context.Context) error {
 		case ev, ok := <-watcher.Events:
 			if !ok {
 				return nil
+			}
+			// A SQLite reader, this scanner included, writes its read mark into
+			// the -shm sidecar: reacting to it would rescan after every read.
+			if strings.HasSuffix(ev.Name, "-shm") {
+				continue
 			}
 			if ev.Has(fsnotify.Create) {
 				watchNew(ev.Name)

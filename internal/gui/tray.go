@@ -234,8 +234,16 @@ func trayItems(v string) []string {
 	return out
 }
 
+// updateTray sets the menu-bar text only when it changed: the status item
+// re-lays itself out on every set, and refreshes mostly change nothing.
 func (a *App) updateTray() {
-	if a.d.SetTrayTitle != nil {
-		a.d.SetTrayTitle(a.TrayTitle())
+	if a.d.SetTrayTitle == nil {
+		return
 	}
+	t := a.TrayTitle()
+	if a.trayTitleSet && t == a.trayTitle {
+		return
+	}
+	a.trayTitle, a.trayTitleSet = t, true
+	a.d.SetTrayTitle(t)
 }

@@ -17,6 +17,9 @@ type App struct {
 
 	ov    overview
 	ovJob job
+	// trayTitle is the menu-bar text last set.
+	trayTitle    string
+	trayTitleSet bool
 	// recent caches running sessions' last hour of requests.
 	recent recentEvents
 	// chartRange is the overview chart's range: 0 = 7, 1 = 30, 2 = 90 days.
