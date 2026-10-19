@@ -237,6 +237,7 @@ func (p *prefs) SetPref(k, v string) error {
 func (p *prefs) applyZone(name string) error {
 	if name == "" {
 		time.Local = p.sys
+		p.rebucket()
 		return nil
 	}
 	loc, err := time.LoadLocation(name)
@@ -244,7 +245,21 @@ func (p *prefs) applyZone(name string) error {
 		return fmt.Errorf("unknown timezone %q", name)
 	}
 	time.Local = loc
+	p.rebucket()
 	return nil
+}
+
+// rebucket rebuilds the daily rollups for the zone now in time.Local, in the
+// background: until it lands, queries read the facts directly (correct, only
+// slower), and the store's change signal reloads the interface afterwards.
+func (p *prefs) rebucket() {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := p.a.Store.EnsureLocalDays(ctx); err != nil {
+			logErr("timezone rollup", err)
+		}
+	}()
 }
 
 // exporter writes every session as one CSV row.

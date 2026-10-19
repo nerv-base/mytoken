@@ -285,7 +285,7 @@ func (a *App) parserSet(ctx context.Context) ([]harness.Parser, map[model.Harnes
 
 // ListSources reports every compiled harness with its settings and usage.
 func (a *App) ListSources(ctx context.Context) ([]Source, error) {
-	rows, err := a.Store.ReadDB().QueryContext(ctx, `SELECT harness, count(*), max(timestamp) FROM event_data GROUP BY harness`)
+	rows, err := a.Store.ReadDB().QueryContext(ctx, `SELECT u.harness, u.n, coalesce((SELECT max(updated_at) FROM sessions s WHERE s.harness=u.harness),0) FROM (SELECT harness, sum(requests) AS n FROM daily_usage GROUP BY harness) u`)
 	if err != nil {
 		return nil, err
 	}
@@ -540,7 +540,7 @@ func (a *App) Info(ctx context.Context) (DBInfo, error) {
 	if fi, err := osStat(a.Path); err == nil {
 		out.Bytes = fi
 	}
-	row := a.Store.ReadDB().QueryRowContext(ctx, `SELECT count(*), coalesce(min(timestamp),0), coalesce(max(timestamp),0) FROM event_data`)
+	row := a.Store.ReadDB().QueryRowContext(ctx, `SELECT (SELECT coalesce(sum(requests),0) FROM daily_usage), coalesce((SELECT min(timestamp) FROM event_data),0), coalesce((SELECT max(timestamp) FROM event_data),0)`)
 	var oldest, newest int64
 	if err := row.Scan(&out.Events, &oldest, &newest); err != nil {
 		return out, err

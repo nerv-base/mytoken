@@ -17,6 +17,7 @@ type Query interface {
 	ByModel(ctx context.Context, f query.Filter) ([]query.Bucket, error)
 	ByProvider(ctx context.Context, f query.Filter) ([]query.Bucket, error)
 	ByProject(ctx context.Context, f query.Filter) ([]query.Bucket, error)
+	Usage(ctx context.Context, f query.Filter) ([]query.UsageRow, error)
 	Sessions(ctx context.Context, f query.Filter, sort string, limit, offset int) ([]query.SessionRow, int, error)
 	Session(ctx context.Context, h model.Harness, id string) (query.SessionRow, []query.SessionRow, []query.AttributedEvent, error)
 	// Subscribe notifies (throttled) whenever new data is committed.

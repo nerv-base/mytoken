@@ -56,7 +56,7 @@ type Totals struct {
 	Tokens   model.Tokens `json:"tokens"`
 	CostUSD  float64      `json:"costUsd"`
 	Requests int64        `json:"requests"`
-	Sessions        int64        `json:"sessions"`
+	Sessions int64        `json:"sessions"`
 	// Unpriced counts requests with neither a log cost nor a known price;
 	// CostUSD excludes them. The UI shows "—" when Unpriced == Requests.
 	Unpriced int64 `json:"unpriced"`
@@ -74,13 +74,13 @@ type Point struct {
 
 // Bucket is one row of a ranking. Key is the stable id, Label the display name.
 type Bucket struct {
-	Key             string       `json:"key"`
-	Label           string       `json:"label"`
+	Key      string       `json:"key"`
+	Label    string       `json:"label"`
 	Tokens   model.Tokens `json:"tokens"`
 	CostUSD  float64      `json:"costUsd"`
 	Requests int64        `json:"requests"`
-	Sessions        int64        `json:"sessions"`
-	Unpriced        int64        `json:"unpriced"` // see Totals.Unpriced
+	Sessions int64        `json:"sessions"`
+	Unpriced int64        `json:"unpriced"` // see Totals.Unpriced
 }
 
 // BranchKey builds the grouping key for the branch dimension. A branch is only
@@ -136,9 +136,9 @@ type SessionRow struct {
 type CostSource string
 
 const (
-	CostSourceLog       CostSource = "log"
-	CostSourceEstimate  CostSource = "estimate"
-	CostSourceUnpriced  CostSource = "unpriced"
+	CostSourceLog      CostSource = "log"
+	CostSourceEstimate CostSource = "estimate"
+	CostSourceUnpriced CostSource = "unpriced"
 )
 
 // AttributedEvent is a usage event with its resolved provider and cost.
@@ -175,13 +175,13 @@ type Service interface {
 	ByModel(ctx context.Context, f Filter) ([]Bucket, error)
 	ByProject(ctx context.Context, f Filter) ([]Bucket, error)
 	ByHarness(ctx context.Context, f Filter) ([]Bucket, error)
+	// Usage is the range grouped by local day, tool, model and provider.
+	Usage(ctx context.Context, f Filter) ([]UsageRow, error)
 	Sessions(ctx context.Context, f Filter, sort string, limit, offset int) (rows []SessionRow, total int, err error)
 	// Session returns the session, its children, and its own events (not children's), time-ordered.
 	Session(ctx context.Context, h model.Harness, id string) (SessionRow, []SessionRow, []AttributedEvent, error)
 	// Subscribe notifies (throttled to ≤1/s) whenever new data is committed.
 	Subscribe() (<-chan struct{}, func())
-
-
 }
 
 // ErrAmbiguousInstance reports that a session id exists in more than one

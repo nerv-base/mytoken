@@ -282,6 +282,10 @@ func (s *Store) EnsureLocalDays(ctx context.Context) error {
 	}
 	if err = tx.Commit(); err == nil {
 		s.aggregateZone = key
+		if old != key {
+			// Days moved: every reader's totals changed.
+			s.notify()
+		}
 	}
 	return err
 }

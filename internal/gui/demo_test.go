@@ -241,6 +241,33 @@ func (d *demo) Daily(_ context.Context, f query.Filter) ([]query.Point, error) {
 	return out, nil
 }
 
+func (d *demo) Usage(_ context.Context, f query.Filter) ([]query.UsageRow, error) {
+	type key struct {
+		day      time.Time
+		h        model.Harness
+		model, p string
+	}
+	m := map[key]*query.UsageRow{}
+	d.each(f, func(_ *demoSession, e query.AttributedEvent) {
+		ts := e.Timestamp.In(time.Local)
+		day := time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, time.Local)
+		k := key{day, e.Harness, e.Model, e.ResolvedProvider}
+		r := m[k]
+		if r == nil {
+			r = &query.UsageRow{Day: day, Harness: e.Harness, Model: e.Model, Provider: e.ResolvedProvider}
+			m[k] = r
+		}
+		r.Tokens = r.Tokens.Add(e.Tokens)
+		r.CostUSD += e.Cost
+		r.Requests++
+	})
+	out := make([]query.UsageRow, 0, len(m))
+	for _, r := range m {
+		out = append(out, *r)
+	}
+	return out, nil
+}
+
 func (d *demo) group(f query.Filter, key func(s *demoSession, e query.AttributedEvent) (string, string)) []query.Bucket {
 	m := map[string]*query.Bucket{}
 	ss := map[string]map[string]bool{}

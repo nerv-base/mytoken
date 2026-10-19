@@ -2,8 +2,10 @@ package gui
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -89,92 +91,146 @@ func computeOverview(ctx context.Context, q Query, now time.Time) (overview, err
 	ov.day = today
 	tomorrow := today.AddDate(0, 0, 1)
 	mon := monthStart(now)
-	var err error
-	tot := func(from, to time.Time) query.Totals {
-		if err != nil {
-			return query.Totals{}
-		}
-		var t query.Totals
-		t, err = q.Totals(ctx, query.Filter{Range: query.Range{From: from, To: to}})
-		return t
+	lastMon := mon.AddDate(0, -1, 0)
+	from90 := today.AddDate(0, 0, -89)
+	from := from90
+	if lastMon.Before(from) {
+		from = lastMon
 	}
-	ov.today = tot(today, tomorrow)
-	ov.yesterday = tot(today.AddDate(0, 0, -1), today)
-	ov.month = tot(mon, mon.AddDate(0, 1, 0))
-	ov.lastMonth = tot(mon.AddDate(0, -1, 0), mon)
-	if err != nil {
+
+	// One grouped read feeds every total, series and ranking on the page;
+	// today's session count (which needs session identity) and the running
+	// sessions are read alongside it.
+	var (
+		wg               sync.WaitGroup
+		rows             []query.UsageRow
+		errU, errT, errA error
+	)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		rows, errU = q.Usage(ctx, query.Filter{Range: query.Range{From: from, To: tomorrow}})
+	}()
+	go func() {
+		defer wg.Done()
+		ov.today, errT = q.Totals(ctx, query.Filter{Range: query.Range{From: today, To: tomorrow}})
+	}()
+	go func() {
+		defer wg.Done()
+		ov.active, errA = activeSessions(ctx, q, now)
+	}()
+	wg.Wait()
+	if err := errors.Join(errU, errT, errA); err != nil {
 		return ov, err
 	}
 
-	from := today.AddDate(0, 0, -89)
-	r90 := query.Filter{Range: query.Range{From: from, To: tomorrow}}
-	total, err := q.Daily(ctx, r90)
-	if err != nil {
-		return ov, err
-	}
-	tools, err := q.ByHarness(ctx, r90)
-	if err != nil {
-		return ov, err
-	}
-	sort.SliceStable(tools, func(i, j int) bool { return tools[i].CostUSD > tools[j].CostUSD })
-	for _, b := range tools {
-		if len(ov.tools) == topTools {
-			break
-		}
-		if b.CostUSD > 0 {
-			ov.tools = append(ov.tools, model.Harness(b.Key))
-		}
-	}
-	index := map[time.Time]int{}
-	for i, p := range total {
-		ov.days = append(ov.days, dayCost{day: p.Day, cost: p.CostUSD, tools: make([]float64, len(ov.tools)), other: p.CostUSD})
-		index[p.Day] = i
-	}
-	for k, h := range ov.tools {
-		f := r90
-		f.Harnesses = []model.Harness{h}
-		pts, err := q.Daily(ctx, f)
-		if err != nil {
-			return ov, err
-		}
-		for _, p := range pts {
-			if i, ok := index[p.Day]; ok {
-				ov.days[i].tools[k] = p.CostUSD
-				ov.days[i].other -= p.CostUSD
+	sum := func(from, to time.Time) query.Totals {
+		var t query.Totals
+		for _, r := range rows {
+			if !r.Day.Before(from) && r.Day.Before(to) {
+				t.Tokens = t.Tokens.Add(r.Tokens)
+				t.CostUSD += r.CostUSD
+				t.Requests += r.Requests
+				t.Unpriced += r.Unpriced
 			}
 		}
+		t.CacheHit = t.Tokens.HitRate()
+		return t
 	}
-	for i := range ov.days {
-		ov.days[i].other = max(ov.days[i].other, 0)
+	ov.yesterday = sum(today.AddDate(0, 0, -1), today)
+	ov.month = sum(mon, mon.AddDate(0, 1, 0))
+	ov.lastMonth = sum(lastMon, mon)
+
+	// The top tools of the last 90 days by cost.
+	toolCost := map[model.Harness]float64{}
+	for _, r := range rows {
+		if !r.Day.Before(from90) {
+			toolCost[r.Harness] += r.CostUSD
+		}
+	}
+	for h, c := range toolCost {
+		if c > 0 {
+			ov.tools = append(ov.tools, h)
+		}
+	}
+	sort.Slice(ov.tools, func(i, j int) bool {
+		a, b := toolCost[ov.tools[i]], toolCost[ov.tools[j]]
+		if a != b {
+			return a > b
+		}
+		return ov.tools[i] < ov.tools[j]
+	})
+	if len(ov.tools) > topTools {
+		ov.tools = ov.tools[:topTools]
+	}
+	slot := map[model.Harness]int{}
+	for i, h := range ov.tools {
+		slot[h] = i
+	}
+
+	// 90 dense days, oldest first.
+	index := map[int64]int{}
+	for d := from90; d.Before(tomorrow); d = d.AddDate(0, 0, 1) {
+		index[d.UnixNano()] = len(ov.days)
+		ov.days = append(ov.days, dayCost{day: d, tools: make([]float64, len(ov.tools))})
+	}
+	for _, r := range rows {
+		i, ok := index[r.Day.UnixNano()]
+		if !ok {
+			continue
+		}
+		d := &ov.days[i]
+		d.cost += r.CostUSD
+		if k, ok := slot[r.Harness]; ok {
+			d.tools[k] += r.CostUSD
+		} else {
+			d.other += r.CostUSD
+		}
 	}
 
 	// The forecast: a week's average for each day left after today.
-	var week float64
-	for _, d := range ov.days {
-		if !d.day.Before(today.AddDate(0, 0, -7)) && d.day.Before(today) {
-			week += d.cost
-		}
-	}
+	week := sum(today.AddDate(0, 0, -7), today).CostUSD
 	left := mon.AddDate(0, 1, 0).Sub(tomorrow).Hours() / 24
 	ov.forecast = ov.month.CostUSD + week/7*max(left, 0)
 
 	for k, n := range chartDays {
-		f := query.Filter{Range: query.Range{From: today.AddDate(0, 0, 1-n), To: tomorrow}}
-		if ov.totals[k], err = q.Totals(ctx, f); err != nil {
-			return ov, err
+		start := today.AddDate(0, 0, 1-n)
+		ov.totals[k] = sum(start, tomorrow)
+		tools := map[string]*query.Bucket{}
+		models := map[string]*query.Bucket{}
+		add := func(m map[string]*query.Bucket, key, label string, r query.UsageRow) {
+			b := m[key]
+			if b == nil {
+				b = &query.Bucket{Key: key, Label: label}
+				m[key] = b
+			}
+			b.Tokens = b.Tokens.Add(r.Tokens)
+			b.CostUSD += r.CostUSD
+			b.Requests += r.Requests
+			b.Unpriced += r.Unpriced
 		}
-		if ov.byTool[k], err = q.ByHarness(ctx, f); err != nil {
-			return ov, err
+		for _, r := range rows {
+			if r.Day.Before(start) || !r.Day.Before(tomorrow) {
+				continue
+			}
+			add(tools, string(r.Harness), r.Harness.DisplayName(), r)
+			add(models, r.Model, r.Model, r)
 		}
-		if ov.byModel[k], err = q.ByModel(ctx, f); err != nil {
-			return ov, err
-		}
+		ov.byTool[k] = flatten(tools)
+		ov.byModel[k] = flatten(models)
 		byCost(ov.byTool[k])
 		byCost(ov.byModel[k])
 	}
+	return ov, nil
+}
 
-	ov.active, err = activeSessions(ctx, q, now)
-	return ov, err
+func flatten(m map[string]*query.Bucket) []query.Bucket {
+	out := make([]query.Bucket, 0, len(m))
+	for _, b := range m {
+		out = append(out, *b)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 func byCost(b []query.Bucket) {
@@ -280,29 +336,8 @@ func (a *App) loadRanking() {
 	}
 	r, f, now := a.rangeSel, a.rangeFilter(a.rangeSel), a.now()
 	a.run(&a.rkJob, func(ctx context.Context) func() {
-		rk := ranking{ready: true, forRange: r}
-		var err error
-		for k, by := range []func(context.Context, query.Filter) ([]query.Bucket, error){q.ByHarness, q.ByModel, q.ByProvider} {
-			if rk.dims[k], err = by(ctx, f); err != nil {
-				break
-			}
-			byCost(rk.dims[k])
-		}
-		for _, b := range rk.dims[0] {
-			rk.totalCost += b.CostUSD
-		}
-		if err == nil {
-			today := dayStart(now)
-			// A year of whole weeks, so that the heat map starts on a Monday.
-			from := today.AddDate(0, 0, -364)
-			for from.Weekday() != time.Monday {
-				from = from.AddDate(0, 0, -1)
-			}
-			var pts []query.Point
-			pts, err = q.Daily(ctx, query.Filter{Range: query.Range{From: from, To: today.AddDate(0, 0, 1)}})
-			rk.year = dense(from, today, pts)
-			rk.streak, rk.best, rk.activeDays, rk.topDay = streaks(rk.year)
-		}
+		rk, err := computeRanking(ctx, q, f, now)
+		rk.forRange = r
 		return func() {
 			if err != nil {
 				a.rk.err = err.Error()
@@ -311,6 +346,71 @@ func (a *App) loadRanking() {
 			a.rk = rk
 		}
 	})
+}
+
+// computeRanking reads the chosen range and a year of whole weeks in one
+// grouped read when the range fits inside that year (all ranges but "all").
+func computeRanking(ctx context.Context, q Query, f query.Filter, now time.Time) (ranking, error) {
+	rk := ranking{ready: true}
+	today := dayStart(now)
+	tomorrow := today.AddDate(0, 0, 1)
+	// A year of whole weeks, so that the heat map starts on a Monday.
+	from := today.AddDate(0, 0, -364)
+	for from.Weekday() != time.Monday {
+		from = from.AddDate(0, 0, -1)
+	}
+	read := query.Filter{Range: query.Range{From: from, To: tomorrow}}
+	if f.Range.From.IsZero() || f.Range.From.Before(from) {
+		read.Range.From = f.Range.From
+	}
+	rows, err := q.Usage(ctx, read)
+	if err != nil {
+		return rk, err
+	}
+	var dims [3]map[string]*query.Bucket
+	for k := range dims {
+		dims[k] = map[string]*query.Bucket{}
+	}
+	add := func(m map[string]*query.Bucket, key, label string, r query.UsageRow) {
+		b := m[key]
+		if b == nil {
+			b = &query.Bucket{Key: key, Label: label}
+			m[key] = b
+		}
+		b.Tokens = b.Tokens.Add(r.Tokens)
+		b.CostUSD += r.CostUSD
+		b.Requests += r.Requests
+		b.Unpriced += r.Unpriced
+	}
+	var pts []query.Point
+	byDay := map[int64]int{}
+	for _, r := range rows {
+		inRange := (f.Range.From.IsZero() || !r.Day.Before(f.Range.From)) && (f.Range.To.IsZero() || r.Day.Before(f.Range.To))
+		if inRange {
+			add(dims[0], string(r.Harness), r.Harness.DisplayName(), r)
+			add(dims[1], r.Model, r.Model, r)
+			add(dims[2], r.Provider, r.Provider, r)
+			rk.totalCost += r.CostUSD
+		}
+		if r.Day.Before(from) {
+			continue
+		}
+		i, ok := byDay[r.Day.UnixNano()]
+		if !ok {
+			i = len(pts)
+			byDay[r.Day.UnixNano()] = i
+			pts = append(pts, query.Point{Day: r.Day})
+		}
+		pts[i].Tokens = pts[i].Tokens.Add(r.Tokens)
+		pts[i].CostUSD += r.CostUSD
+	}
+	for k := range dims {
+		rk.dims[k] = flatten(dims[k])
+		byCost(rk.dims[k])
+	}
+	rk.year = dense(from, today, pts)
+	rk.streak, rk.best, rk.activeDays, rk.topDay = streaks(rk.year)
+	return rk, nil
 }
 
 // streaks returns the current run of days with usage (today may still be
@@ -424,23 +524,19 @@ func (a *App) loadProjectDetail() {
 	all.Project = key
 	a.run(&a.pjdJob, func(ctx context.Context) func() {
 		d := projectDetail{key: key, ready: true}
-		var err error
-		d.days, err = q.Daily(ctx, f)
-		if err == nil {
-			d.total, err = q.Totals(ctx, all)
-		}
-		if err == nil {
-			d.byModel, err = q.ByModel(ctx, all)
-			byCost(d.byModel)
-		}
-		if err == nil {
-			d.byTool, err = q.ByHarness(ctx, all)
-			byCost(d.byTool)
-		}
-		if err == nil {
-			d.sessions, _, err = q.Sessions(ctx, all, query.SortCost, 50, 0)
-		}
-		if err != nil {
+		// Independent reads; the read pool runs them side by side.
+		errs := make([]error, 5)
+		var wg sync.WaitGroup
+		wg.Add(5)
+		go func() { defer wg.Done(); d.days, errs[0] = q.Daily(ctx, f) }()
+		go func() { defer wg.Done(); d.total, errs[1] = q.Totals(ctx, all) }()
+		go func() { defer wg.Done(); d.byModel, errs[2] = q.ByModel(ctx, all) }()
+		go func() { defer wg.Done(); d.byTool, errs[3] = q.ByHarness(ctx, all) }()
+		go func() { defer wg.Done(); d.sessions, _, errs[4] = q.Sessions(ctx, all, query.SortCost, 50, 0) }()
+		wg.Wait()
+		byCost(d.byModel)
+		byCost(d.byTool)
+		if err := errors.Join(errs...); err != nil {
 			d.err = err.Error()
 		}
 		return func() {
