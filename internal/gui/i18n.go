@@ -82,7 +82,6 @@ var strs = map[string][2]string{
 	"sessionsLive":  {"%d running", "%d 个进行中"},
 	"noActiveTitle": {"Nothing running", "当前没有进行中的会话"},
 	"noActiveHint":  {"Sessions with a request in the last 15 minutes show here.", "最近 15 分钟有请求的会话会显示在这里。"},
-	"outputSpeed":   {"output speed", "输出速度"},
 	"moreSessions":  {"+%d more", "还有 %d 个"},
 	"spend":         {"Spend", "花费"},
 	"burnup":        {"This month", "本月累计"},
@@ -132,7 +131,6 @@ var strs = map[string][2]string{
 	"resetsInHM": {"resets in %dh %dm", "%d 小时 %d 分后重置"},
 	"resetsInD":  {"resets in %dd", "%d 天后重置"},
 	"daysN":      {"%d days", "%d 天"},
-	"rateFmt":    {"~%s tok/s", "约 %s tok/s"},
 
 	// Ranges
 	"range":    {"Range", "范围"},
@@ -226,13 +224,15 @@ var strs = map[string][2]string{
 	"topSessions":   {"Most expensive sessions", "花费最多的会话"},
 
 	// Tray
-	"activeNow":     {"Running now", "正在进行"},
-	"rateEstimated": {"output speed, estimated", "输出速度为估算"},
-	"noActive":      {"Nothing running in the last 15 minutes.", "最近 15 分钟没有进行中的会话。"},
-	"monthSoFar":    {"This month %s", "本月 %s"},
-	"perHour":       {"%s/h", "%s/小时"},
-	"openMain":      {"Open MyToken", "打开 MyToken"},
-	"quit":          {"Quit", "退出"},
+	"activeNow":    {"Running now", "正在进行"},
+	"noActive":     {"Nothing running in the last 15 minutes.", "最近 15 分钟没有进行中的会话。"},
+	"monthSoFar":   {"This month %s", "本月 %s"},
+	"perHour":      {"%s/h", "%s/小时"},
+	"thisSession":  {"This session", "本次会话"},
+	"perHourLabel": {"Per hour", "每小时"},
+	"requests10m":  {"Requests · 10 min", "近 10 分钟请求"},
+	"openMain":     {"Open MyToken", "打开 MyToken"},
+	"quit":         {"Quit", "退出"},
 
 	// Settings
 	"set_general":        {"General", "通用"},
@@ -250,7 +250,7 @@ var strs = map[string][2]string{
 	"trayTitle":          {"Menu bar text", "菜单栏文字"},
 	"trayTitleHint":      {"What shows beside the menu bar icon.", "菜单栏图标旁显示的内容。"},
 	"tray_cost":          {"Today's spend", "今日花费"},
-	"tray_rate":          {"Output speed", "输出速度"},
+	"tray_rate":          {"Spend per hour now", "当前每小时花费"},
 	"tray_hit":           {"Cache hit rate", "缓存命中率"},
 	"tray_quota":         {"Quota used", "额度用量"},
 	"tray_none":          {"Icon only", "仅图标"},

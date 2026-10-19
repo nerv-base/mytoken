@@ -195,14 +195,8 @@ func (a *App) sidebarFooter(c *ui.Context, pal palette) {
 			caption(c, pal, tr("idle")).FontSize(11.5)
 			return
 		}
-		rate := 0.0
-		for _, s := range act {
-			rate += s.rate
-		}
 		liveDot(c, pal)
-		caption(c, pal, trf("sessionsLive", len(act))).FontSize(11.5)
-		ui.Spacer(c)
-		ui.Text(c, fmtRate(rate)).FontSize(11.5).FontWeight(600).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
+		caption(c, pal, trf("sessionsLive", len(act))).FontSize(11.5).SingleLine()
 	})
 }
 

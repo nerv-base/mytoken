@@ -124,75 +124,77 @@ func seriesAt(i int) ui.Color { return series[((i%len(series))+len(series))%len(
 // otherColor colors the "everything else" bucket.
 var otherColor = ui.Hex("#8E8E99")
 
-// harnessColor gives each tool a stable color close to its brand.
+// harnessColor gives each tool a stable color: a hue near its brand's, at
+// one shared lightness and softness, so that tools side by side in a bar or
+// a legend read as one family instead of a row of loud logos.
 func harnessColor(h model.Harness) ui.Color {
 	switch h {
 	case model.ClaudeCode:
-		return ui.Hex("#D97757")
+		return ui.Hex("#D98B6F")
 	case model.ClaudeDesktop:
-		return ui.Hex("#C9925E")
+		return ui.Hex("#C9A27C")
 	case model.Codex:
-		return ui.Hex("#10A37F")
+		return ui.Hex("#5AB497")
 	case model.DSH:
-		return ui.Hex("#4D6BFE")
+		return ui.Hex("#7F98EC")
 	case model.Pi:
-		return ui.Hex("#2FB8A6")
+		return ui.Hex("#56B2B8")
 	case model.Gemini:
-		return ui.Hex("#3E8FE8")
+		return ui.Hex("#6AA5DD")
 	case model.OpenCode:
-		return ui.Hex("#5F54B3")
+		return ui.Hex("#9B8BD8")
 	case model.Crush:
-		return ui.Hex("#E25C79")
+		return ui.Hex("#D985A0")
 	case model.Cline:
-		return ui.Hex("#7A7A86")
+		return ui.Hex("#8E96A8")
 	case model.Roo:
-		return ui.Hex("#E0577A")
+		return ui.Hex("#CF8FB5")
 	case model.Kilo:
-		return ui.Hex("#D99A2B")
+		return ui.Hex("#D3AE62")
 	case model.OpenClaude:
-		return ui.Hex("#4EBA65")
+		return ui.Hex("#8FBA74")
 	case model.Qwen:
-		return ui.Hex("#615CED")
+		return ui.Hex("#8A8FE0")
 	case model.Kimi:
-		return ui.Hex("#3B82F6")
+		return ui.Hex("#6E9FE6")
 	case model.Grok:
-		return ui.Hex("#6B7280")
+		return ui.Hex("#9097A3")
 	case model.OpenClaw:
-		return ui.Hex("#E5484D")
+		return ui.Hex("#DE8A84")
 	case model.Goose:
-		return ui.Hex("#4F7A5A")
+		return ui.Hex("#7FA88A")
 	case model.Droid:
-		return ui.Hex("#EE6018")
+		return ui.Hex("#E09A6A")
 	case model.Forge:
-		return ui.Hex("#B5651D")
+		return ui.Hex("#BF9676")
 	case model.WorkBuddy:
-		return ui.Hex("#00C885")
+		return ui.Hex("#5FBB9D")
 	case model.CodeBuddy:
-		return ui.Hex("#6C5CE7")
+		return ui.Hex("#9A8FDF")
 	case model.Hermes:
-		return ui.Hex("#C9A227")
+		return ui.Hex("#C9B16A")
 	case model.Amp:
-		return ui.Hex("#F34E3F")
+		return ui.Hex("#E0907F")
 	case model.Kiro:
-		return ui.Hex("#9046FF")
+		return ui.Hex("#A98BE0")
 	case model.Zed:
-		return ui.Hex("#1F6FEB")
+		return ui.Hex("#7095E0")
 	case model.Antigravity:
-		return ui.Hex("#4285F4")
+		return ui.Hex("#73A0E8")
 	case model.Codebuff:
-		return ui.Hex("#10B981")
+		return ui.Hex("#67BFA0")
 	case model.Mux:
-		return ui.Hex("#64748B")
+		return ui.Hex("#8A95A6")
 	case model.ZCode:
-		return ui.Hex("#6D5EF5")
+		return ui.Hex("#8D88E6")
 	case model.MiniMaxCode:
-		return ui.Hex("#F97316")
+		return ui.Hex("#E29B6E")
 	case model.MiMoCode:
-		return ui.Hex("#FF6900")
+		return ui.Hex("#E5A877")
 	case model.StepCode:
-		return ui.Hex("#2563EB")
+		return ui.Hex("#6F92E3")
 	}
-	return ui.Hex("#8E8E9A")
+	return ui.Hex("#9297A3")
 }
 
 // Tool marks are the tools' own logos (the MIT-licensed @lobehub/icons set

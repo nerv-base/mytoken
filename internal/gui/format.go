@@ -100,15 +100,6 @@ func fmtPct(f float64) string {
 	return strconv.FormatFloat(f*100, 'f', 0, 64) + "%"
 }
 
-// fmtRate formats tokens per second.
-func fmtRate(tps float64) string {
-	n := strconv.FormatFloat(tps, 'f', 0, 64)
-	if tps < 10 {
-		n = strconv.FormatFloat(tps, 'f', 1, 64)
-	}
-	return fmt.Sprintf(tr("rateFmt"), n)
-}
-
 // fmtAgo is a short relative time.
 func fmtAgo(now, t time.Time) string {
 	d := now.Sub(t)

@@ -83,8 +83,6 @@ func (a *App) panelLive(c *ui.Context, pal palette) {
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			liveDot(c, pal)
 			ui.Text(c, trf("sessionsLive", len(act))).FontSize(12).FontWeight(650).TextColor(pal.ink)
-			ui.Spacer(c)
-			caption(c, pal, tr("rateEstimated")).FontSize(10.5)
 		})
 		for i, s := range act {
 			if i == 3 {
@@ -156,9 +154,10 @@ func panelBox(c *ui.Context, pal palette) ui.Element {
 // faster tokens are being spent, and rests when nothing is running.
 func (a *App) panelHeader(c *ui.Context, pal palette) {
 	ov := &a.ov
-	var rate float64
+	var rate, perHour float64
 	for _, s := range ov.active {
 		rate += s.rate
+		perHour += s.perHour
 	}
 	accent := pal.accent
 	box := panelBox(c, pal).Gap(4).Clip()
@@ -198,8 +197,8 @@ func (a *App) panelHeader(c *ui.Context, pal palette) {
 		ui.Row(c).Gap(14).Children(func() {
 			caption(c, pal, trf("tokensN", fmtTokens(shown(ov.today.Tokens)))).FontSize(11.5)
 			caption(c, pal, tr("hitRate")+" "+fmtPct(ov.today.Tokens.HitRate())).FontSize(11.5)
-			if rate > 0 {
-				caption(c, pal, fmtRate(rate)).FontSize(11.5).TextColor(accent)
+			if len(ov.active) > 0 {
+				caption(c, pal, trf("perHour", fmtUSD(perHour))).FontSize(11.5).TextColor(accent)
 			}
 		})
 	})
@@ -217,11 +216,7 @@ func (a *App) panelSession(c *ui.Context, pal palette, s activeSession) {
 			caption(c, pal, sub).FontSize(10.5).SingleLine().Ellipsis("…")
 		})
 		ui.Column(c).Gap(2).AlignItems(ui.End).Shrink(0).Children(func() {
-			rate := "—"
-			if s.rate > 0 {
-				rate = fmtRate(s.rate)
-			}
-			ui.Text(c, rate).FontSize(12).FontWeight(650).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
+			ui.Text(c, fmtUSD(s.row.CostUSD)).FontSize(12).FontWeight(650).TextColor(pal.ink).FontFeatures("tnum").NoWrap()
 			caption(c, pal, trf("perHour", fmtUSD(s.perHour))+" · "+fmtPct(s.hit)).FontSize(10.5).FontFeatures("tnum").NoWrap()
 		})
 	})
@@ -239,12 +234,14 @@ func (a *App) TrayTitle() string {
 		case "cost":
 			parts = append(parts, fmtUSD(ov.today.CostUSD))
 		case "rate":
-			var rate float64
+			// Spend per hour of what runs now. (It once was output speed,
+			// which the logs cannot measure; the key stays for old settings.)
+			var perHour float64
 			for _, s := range ov.active {
-				rate += s.rate
+				perHour += s.perHour
 			}
-			if rate > 0 {
-				parts = append(parts, fmtRate(rate))
+			if len(ov.active) > 0 {
+				parts = append(parts, trf("perHour", fmtUSDShort(perHour)))
 			}
 		case "hit":
 			if ov.today.Tokens.Total() > 0 {

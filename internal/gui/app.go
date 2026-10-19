@@ -28,6 +28,9 @@ type App struct {
 	spendTab int
 	// quotaAll shows every quota account instead of the first rows.
 	quotaAll bool
+	// deck is the running-sessions card deck: which session is in front,
+	// which way the last switch went, and its auto-advance.
+	deck deckState
 	// mo is the motion state: which cards revealed, where markers were.
 	mo motion
 
