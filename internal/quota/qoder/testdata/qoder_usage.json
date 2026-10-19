@@ -1,0 +1,25 @@
+{
+  "displayMode": "qoder",
+  "qoderUsage": {
+    "userId": "fixture",
+    "userType": "personal_professional_trial",
+    "usageType": "credits",
+    "totalUsagePercentage": 0,
+    "isQuotaExceeded": false,
+    "expiresAt": 1793318400000,
+    "userQuota": {
+      "total": 300,
+      "used": 0,
+      "remaining": 300,
+      "percentage": 0,
+      "unit": "credits"
+    },
+    "addOnQuota": {
+      "cap": 100,
+      "used": 0,
+      "remaining": 100,
+      "percentage": 0,
+      "unit": "credits"
+    }
+  }
+}

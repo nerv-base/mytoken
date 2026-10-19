@@ -269,8 +269,6 @@ func TestProviderIDsPreserveModelAliases(t *testing.T) {
 	}
 }
 
-
-
 // TestCacheTimezoneOverrideReadsFacts guards the events-based cache rollup,
 // which an ID filter always uses and which a display-timezone override also
 // selects. Its columns must match cache_daily (day,cause,requests,...) or the

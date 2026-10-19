@@ -13,6 +13,9 @@ import (
 	"github.com/zzstar101/mytoken/internal/quota/cursor"
 	"github.com/zzstar101/mytoken/internal/quota/glm"
 	"github.com/zzstar101/mytoken/internal/quota/plan"
+	"github.com/zzstar101/mytoken/internal/quota/qoder"
+	"github.com/zzstar101/mytoken/internal/quota/trae"
+	"github.com/zzstar101/mytoken/internal/quota/workbuddy"
 )
 
 // Options configures the provider set.
@@ -30,7 +33,7 @@ func All(opts Options) []plan.Provider {
 	if instance == "" {
 		instance = quota.DefaultInstance
 	}
-	out := make([]plan.Provider, 0, 5)
+	out := make([]plan.Provider, 0, 10)
 	if opts.Store != nil {
 		out = append(out, codex.New(codex.Options{Store: opts.Store, Instance: instance}))
 	}
@@ -39,6 +42,11 @@ func All(opts Options) []plan.Provider {
 		cursor.New(cursor.Options{}),
 		copilot.New(copilot.Options{}),
 		glm.New(glm.Options{}),
+		trae.New(trae.Options{}),
+		trae.NewGlobal(trae.Options{}),
+		workbuddy.New(workbuddy.Options{}),
+		workbuddy.NewAI(workbuddy.Options{}),
+		qoder.New(qoder.Options{}),
 	)
 	return out
 }

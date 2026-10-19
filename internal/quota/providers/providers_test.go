@@ -13,14 +13,14 @@ func (emptyStore) Setting(context.Context, string) (string, error) { return "", 
 
 func TestAll(t *testing.T) {
 	list := All(Options{Store: emptyStore{}})
-	if len(list) != 5 {
-		t.Fatalf("providers = %d, want 5", len(list))
+	if len(list) != 10 {
+		t.Fatalf("providers = %d, want 10", len(list))
 	}
 	registry, err := plan.NewRegistry(list...)
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}
-	ids := []string{"codex", "claude", "cursor", "copilot", "glm"}
+	ids := []string{"codex", "claude", "cursor", "copilot", "glm", "trae-cn", "trae-global", "workbuddy", "workbuddy-ai", "qoder-cn"}
 	for _, id := range ids {
 		if _, ok := registry.Lookup(id); !ok {
 			t.Errorf("missing provider %q", id)
@@ -35,8 +35,8 @@ func TestAll(t *testing.T) {
 
 func TestAllWithoutStore(t *testing.T) {
 	list := All(Options{})
-	if len(list) != 4 {
-		t.Fatalf("providers = %d, want 4", len(list))
+	if len(list) != 9 {
+		t.Fatalf("providers = %d, want 9", len(list))
 	}
 	for _, provider := range list {
 		if provider.ID() == "codex" {

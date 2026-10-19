@@ -1,0 +1,32 @@
+{
+  "code": 0,
+  "is_credits_billing": true,
+  "is_dollar_usage_billing": false,
+  "usage_summary": {
+    "consumed_amount": 20.29,
+    "consumption_ratio": 0.004317,
+    "total_amount": 4700
+  },
+  "user_entitlement_pack_list": [
+    {
+      "display_desc": "每月登录积分",
+      "group_name": "monthly_login",
+      "end_time": 1793462399,
+      "entitlement_base_info": {
+        "quota": {"credits_limit": 500},
+        "end_time": 1793462399
+      },
+      "usage": {"credits_amount": 0}
+    },
+    {
+      "display_desc": "基础积分",
+      "group_name": "plan_base",
+      "end_time": 1796140799,
+      "entitlement_base_info": {
+        "quota": {"credits_limit": 4200},
+        "end_time": 1796140799
+      },
+      "usage": {"credits_amount": 20.29}
+    }
+  ]
+}

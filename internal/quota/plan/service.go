@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +25,12 @@ const (
 	SnapshotPrefix = "quota.plan."
 	// maxSnapshotBytes bounds a persisted snapshot.
 	maxSnapshotBytes = 64 << 10
+	// maxHistoryBytes bounds a persisted credit-balance history.
+	maxHistoryBytes = 64 << 10
+	// balanceHistoryDays is how many local days of balance readings are kept.
+	balanceHistoryDays = 30
+	// dailyDays is how many local days Snapshot.Daily covers.
+	dailyDays = 14
 	// baseBackoff is the first retry delay after a failed fetch.
 	baseBackoff = time.Minute
 	// maxBackoff caps exponential retry delays.
@@ -98,6 +106,7 @@ type Service struct {
 	status  map[string]*Status
 	backoff map[string]time.Duration
 	next    map[string]time.Time
+	history map[string]*BalanceHistory
 	started bool
 	closed  bool
 
@@ -108,6 +117,26 @@ type Service struct {
 
 // SnapshotKey returns the settings key of a provider's cached snapshot.
 func SnapshotKey(id string) string { return SnapshotPrefix + id }
+
+// HistoryKey returns the settings key of a provider's credit-balance history.
+func HistoryKey(id string) string { return SnapshotPrefix + id + ".history" }
+
+// BalancePoint is one local day's first and last reading of a credit balance.
+// The first reading is what the balance was at the start of the observed day;
+// the last is the latest reading of that day.
+type BalancePoint struct {
+	Day     time.Time `json:"day"`
+	First   float64   `json:"first"`
+	Last    float64   `json:"last"`
+	FirstAt time.Time `json:"first_at,omitzero"`
+	LastAt  time.Time `json:"last_at,omitzero"`
+}
+
+// BalanceHistory is one provider's credit-balance ledger, keyed by window
+// name. It is what the Service persists under HistoryKey.
+type BalanceHistory struct {
+	Windows map[string][]BalancePoint `json:"windows,omitempty"`
+}
 
 // NewService validates the options, loads cached snapshots and returns a
 // Service. Call Start to begin polling.
@@ -143,6 +172,7 @@ func NewService(opts Options) (*Service, error) {
 		status:    make(map[string]*Status, len(opts.Providers)),
 		backoff:   make(map[string]time.Duration, len(opts.Providers)),
 		next:      make(map[string]time.Time, len(opts.Providers)),
+		history:   make(map[string]*BalanceHistory, len(opts.Providers)),
 		wake:      make(chan struct{}, 1),
 		stop:      make(chan struct{}),
 		done:      make(chan struct{}),
@@ -170,6 +200,7 @@ func (s *Service) load() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for _, p := range s.providers {
+		s.loadHistory(ctx, p.ID())
 		raw, err := s.store.Setting(ctx, SnapshotKey(p.ID()))
 		if err != nil || strings.TrimSpace(raw) == "" || len(raw) > maxSnapshotBytes {
 			continue
@@ -187,6 +218,21 @@ func (s *Service) load() {
 		s.snaps[p.ID()] = snap
 		s.status[p.ID()].FetchedAt = snap.FetchedAt
 	}
+}
+
+// loadHistory restores a provider's balance ledger. A missing or malformed
+// entry is ignored.
+func (s *Service) loadHistory(ctx context.Context, id string) {
+	raw, err := s.store.Setting(ctx, HistoryKey(id))
+	if err != nil || strings.TrimSpace(raw) == "" || len(raw) > maxHistoryBytes {
+		return
+	}
+	var h BalanceHistory
+	if err := json.Unmarshal([]byte(raw), &h); err != nil {
+		return
+	}
+	normalizeHistory(&h, s.now())
+	s.history[id] = &h
 }
 
 // Start begins the polling loop. It is idempotent.
@@ -387,6 +433,7 @@ func (s *Service) fetchOne(ctx context.Context, p Provider, force bool) {
 }
 
 func (s *Service) succeed(id string, attempted time.Time, snap Snapshot) {
+	snap = s.recordBalance(id, snap, attempted)
 	interval := s.intervalFor(id)
 	s.mu.Lock()
 	s.snaps[id] = snap
@@ -437,16 +484,147 @@ func (s *Service) fail(id string, attempted time.Time, err error) {
 // persist writes the snapshot back to the settings store; failure to persist is
 // not a fetch failure.
 func (s *Service) persist(snap Snapshot) {
-	if s.store == nil {
-		return
-	}
 	raw, err := json.Marshal(snap)
 	if err != nil || len(raw) > maxSnapshotBytes {
 		return
 	}
+	s.persistRaw(SnapshotKey(snap.Provider), raw)
+}
+
+func (s *Service) persistRaw(key string, raw []byte) {
+	if s.store == nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = s.store.SetSetting(ctx, SnapshotKey(snap.Provider), string(raw))
+	_ = s.store.SetSetting(ctx, key, string(raw))
+}
+
+// recordBalance appends the current reading of every Balance window to the
+// provider's ledger and, when the provider did not supply Snapshot.Daily,
+// derives it from the first Balance window's ledger. The updated snapshot is
+// persisted by the caller.
+func (s *Service) recordBalance(id string, snap Snapshot, attempted time.Time) Snapshot {
+	var balance []Window
+	for _, w := range snap.Windows {
+		if w.Balance {
+			balance = append(balance, w)
+		}
+	}
+	if len(balance) == 0 {
+		return snap
+	}
+	at := snap.FetchedAt
+	if at.IsZero() {
+		at = attempted
+	}
+
+	s.mu.Lock()
+	h := s.history[id]
+	if h == nil {
+		h = &BalanceHistory{}
+		s.history[id] = h
+	}
+	if h.Windows == nil {
+		h.Windows = make(map[string][]BalancePoint, len(balance))
+	}
+	for _, w := range balance {
+		h.Windows[w.Name] = recordBalancePoint(h.Windows[w.Name], at, w.Remaining)
+	}
+	if len(snap.Daily) == 0 {
+		snap.Daily = deriveDaily(h.Windows[balance[0].Name], s.now())
+	}
+	raw, err := json.Marshal(h)
+	s.mu.Unlock()
+	if err == nil && len(raw) <= maxHistoryBytes {
+		s.persistRaw(HistoryKey(id), raw)
+	}
+	return snap
+}
+
+// recordBalancePoint folds one reading into a day's first/last point. Points
+// stay sorted by Day, one per local day.
+func recordBalancePoint(points []BalancePoint, at time.Time, remaining float64) []BalancePoint {
+	day := DayStart(at)
+	i := sort.Search(len(points), func(i int) bool { return !points[i].Day.Before(day) })
+	if i < len(points) && points[i].Day.Equal(day) {
+		p := &points[i]
+		if p.FirstAt.IsZero() || at.Before(p.FirstAt) {
+			p.First, p.FirstAt = remaining, at
+		}
+		if p.LastAt.IsZero() || !at.Before(p.LastAt) {
+			p.Last, p.LastAt = remaining, at
+		}
+		return pruneBalance(points, at)
+	}
+	points = append(points, BalancePoint{})
+	copy(points[i+1:], points[i:])
+	points[i] = BalancePoint{Day: day, First: remaining, Last: remaining, FirstAt: at, LastAt: at}
+	return pruneBalance(points, at)
+}
+
+// pruneBalance keeps the most recent balanceHistoryDays local days.
+func pruneBalance(points []BalancePoint, at time.Time) []BalancePoint {
+	cutoff := DayStart(at).AddDate(0, 0, -(balanceHistoryDays - 1))
+	i := 0
+	for i < len(points) && points[i].Day.Before(cutoff) {
+		i++
+	}
+	points = points[i:]
+	if len(points) > balanceHistoryDays {
+		points = points[len(points)-balanceHistoryDays:]
+	}
+	return points
+}
+
+// deriveDaily computes the last dailyDays local days of consumption from a
+// balance ledger: the drops within a day plus the drop from the previous day's
+// last reading to this day's first, ignoring increases (top-ups).
+func deriveDaily(points []BalancePoint, now time.Time) []DayUse {
+	if len(points) == 0 {
+		return nil
+	}
+	byDay := make(map[int64]BalancePoint, len(points))
+	for _, p := range points {
+		byDay[p.Day.Unix()] = p
+	}
+	today := DayStart(now)
+	out := make([]DayUse, 0, dailyDays)
+	for i := dailyDays - 1; i >= 0; i-- {
+		day := today.AddDate(0, 0, -i)
+		p, ok := byDay[day.Unix()]
+		if !ok {
+			out = append(out, DayUse{Day: day})
+			continue
+		}
+		used := math.Max(0, p.First-p.Last)
+		if prev, ok := byDay[day.AddDate(0, 0, -1).Unix()]; ok {
+			used += math.Max(0, prev.Last-p.First)
+		}
+		out = append(out, DayUse{Day: day, Used: used, Known: true})
+	}
+	return out
+}
+
+// normalizeHistory sorts and de-duplicates a loaded ledger and drops entries
+// outside the retention window.
+func normalizeHistory(h *BalanceHistory, now time.Time) {
+	for name, points := range h.Windows {
+		sort.Slice(points, func(i, j int) bool { return points[i].Day.Before(points[j].Day) })
+		kept := points[:0]
+		for _, p := range points {
+			if p.Day.IsZero() {
+				continue
+			}
+			p.Day = DayStart(p.Day)
+			if n := len(kept); n > 0 && kept[n-1].Day.Equal(p.Day) {
+				kept[n-1] = p
+				continue
+			}
+			kept = append(kept, p)
+		}
+		h.Windows[name] = pruneBalance(kept, now)
+	}
 }
 
 // SetOnChange replaces the callback run with the latest snapshots after a

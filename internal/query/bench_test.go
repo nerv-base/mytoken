@@ -192,3 +192,19 @@ func BenchmarkSessionDetail(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkHourlyUsageOneDay measures the dashboard's "today by hour" read on
+// the 200K-request fixture. The first day is the densest: twelve sessions start
+// inside it, so the range scan and the hourly fold both do real work.
+func BenchmarkHourlyUsageOneDay(b *testing.B) {
+	q, start := benchmarkFixture(b)
+	f := Filter{Range: Range{From: start, To: start.Add(24 * time.Hour)}}
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := q.HourlyUsage(ctx, f); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

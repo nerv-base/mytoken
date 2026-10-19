@@ -1,0 +1,41 @@
+{
+  "code": 0,
+  "msg": "OK",
+  "requestId": "fixture",
+  "data": {
+    "IsPaidUser": true,
+    "IsProtectedPriceUser": false,
+    "TotalCredits": "4588.73",
+    "SubscriptionPackageName": "体验版",
+    "Packages": [
+      {
+        "PackageCode": "plan_base",
+        "CapacityUnit": "credits",
+        "CycleTotalCapacity": "10000",
+        "CycleUsedCapacity": "5500",
+        "CycleRemainCapacity": "4500",
+        "CycleFrozenCapacity": "0",
+        "TotalCount": 1
+      },
+      {
+        "PackageCode": "plan_bonus",
+        "CapacityUnit": "credits",
+        "CycleTotalCapacity": "177",
+        "CycleUsedCapacity": "88.27",
+        "CycleRemainCapacity": "88.73",
+        "CycleFrozenCapacity": "0",
+        "TotalCount": 1
+      }
+    ],
+    "CreditGroups": [
+      {
+        "Kind": "plan_base",
+        "Name": "套餐基础积分",
+        "CycleTotalCapacity": "10000",
+        "CycleUsedCapacity": "5500",
+        "CycleRemainCapacity": "4500",
+        "CapacityUnit": "credits"
+      }
+    ]
+  }
+}

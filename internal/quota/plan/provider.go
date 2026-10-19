@@ -70,10 +70,38 @@ type Window struct {
 	Unit string `json:"unit,omitempty"`
 	// ResetsAt is the stated reset instant; the zero value means unstated.
 	ResetsAt time.Time `json:"resets_at,omitzero"`
+	// Balance marks a credit balance rather than a fixed periodic allowance.
+	// Remaining is then authoritative, Limit may be zero, and UsedPercent must
+	// not be shown as a percentage.
+	Balance bool `json:"balance,omitempty"`
+	// Remaining is what is left, in Unit. It is authoritative for a Balance
+	// window and is filled in for a capped window when Limit is known
+	// (Limit-Used, clamped at zero).
+	Remaining float64 `json:"remaining,omitempty"`
+	// ExpiresAt is the soonest expiry of the remaining credits, when the
+	// provider states one. The zero value means unstated.
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
+}
+
+// DayUse is the balance consumed on one local calendar day.
+type DayUse struct {
+	// Day is the start of the local calendar day.
+	Day time.Time `json:"day"`
+	// Used is the amount consumed that day, in the balance window's unit.
+	Used float64 `json:"used,omitempty"`
+	// Known reports whether a reading exists for the day. A false value means
+	// the day had no data and Used is not meaningful (and is zero).
+	Known bool `json:"known,omitempty"`
 }
 
 // Valid reports whether the window carries a usable label.
 func (w Window) Valid() bool { return strings.TrimSpace(w.Name) != "" }
+
+// DayStart returns the start of t's local calendar day.
+func DayStart(t time.Time) time.Time {
+	y, m, d := t.In(time.Local).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.Local)
+}
 
 // Snapshot is one provider's quota at one instant. It holds quota numbers and
 // instants only — never a credential.
@@ -84,6 +112,11 @@ type Snapshot struct {
 	Plan string `json:"plan,omitempty"`
 	// Windows are the quota windows, in display order.
 	Windows []Window `json:"windows,omitempty"`
+	// Daily is the per-day consumption of the balance window for the last 14
+	// local days, oldest first. A provider may supply it; otherwise the Service
+	// derives it from the credit-balance history. Known is false for a day
+	// without data.
+	Daily []DayUse `json:"daily,omitempty"`
 	// FetchedAt is when the reading was taken (provider-stated for a local log,
 	// the request time for an API call).
 	FetchedAt time.Time `json:"fetched_at"`
@@ -97,6 +130,50 @@ func (s Snapshot) Clone() Snapshot {
 	out := s
 	if s.Windows != nil {
 		out.Windows = append([]Window(nil), s.Windows...)
+	}
+	if s.Daily != nil {
+		out.Daily = append([]DayUse(nil), s.Daily...)
+	}
+	return out
+}
+
+// normalize applies the invariants of the window: a balance window is never a
+// percentage, and a capped window with a stated limit exposes what is left.
+func (w *Window) normalize() {
+	if w.Balance {
+		w.UsedPercent = 0
+		return
+	}
+	if w.Limit > 0 {
+		remaining := w.Limit - w.Used
+		if remaining < 0 {
+			remaining = 0
+		}
+		w.Remaining = remaining
+	}
+}
+
+// normalizeDaily puts provider-supplied day usage in ascending local-day order,
+// drops duplicates and keeps the most recent 14 days.
+func normalizeDaily(in []DayUse) []DayUse {
+	if len(in) == 0 {
+		return nil
+	}
+	byDay := make(map[int64]DayUse, len(in))
+	for _, d := range in {
+		d.Day = DayStart(d.Day)
+		if !d.Known {
+			d.Used = 0
+		}
+		byDay[d.Day.Unix()] = d
+	}
+	out := make([]DayUse, 0, len(byDay))
+	for _, d := range byDay {
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Day.Before(out[j].Day) })
+	if len(out) > 14 {
+		out = out[len(out)-14:]
 	}
 	return out
 }
@@ -115,12 +192,14 @@ func (s *Snapshot) validate(now time.Time) error {
 		if !w.Valid() {
 			continue
 		}
+		w.normalize()
 		kept = append(kept, w)
 	}
 	s.Windows = kept
 	if len(s.Windows) == 0 {
 		return &Error{Reason: ReasonNoWindows}
 	}
+	s.Daily = normalizeDaily(s.Daily)
 	if s.FetchedAt.IsZero() {
 		s.FetchedAt = now.UTC()
 	}

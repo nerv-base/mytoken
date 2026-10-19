@@ -2,14 +2,17 @@ package query
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/zzstar101/mytoken/internal/model"
 )
 
 // UsageRow is one local day's usage of one tool, model and provider.
+// HourlyUsage reuses it for one local clock hour, with Day set to the start of
+// that hour.
 type UsageRow struct {
-	Day      time.Time // local midnight
+	Day      time.Time // local midnight (Usage) or local clock-hour start (HourlyUsage)
 	Harness  model.Harness
 	Model    string // after model aliases
 	Provider string // resolved provider
@@ -28,6 +31,40 @@ func (s *service) Usage(ctx context.Context, f Filter) ([]UsageRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	return usageRows(d, false), nil
+}
+
+// HourlyUsage returns the filter's usage bucketed by local clock hour, so a
+// dashboard can show today broken down within the day without the zero-filled
+// points Hourly returns. Only hours that carry usage get a row. It shares
+// Usage's pricing, attribution and filters; the hour read goes through the
+// fact aggregate because neither rollup is keyed by hour.
+func (s *service) HourlyUsage(ctx context.Context, f Filter) ([]UsageRow, error) {
+	d, err := s.load(ctx, f, loadMode{hourly: true})
+	if err != nil {
+		return nil, err
+	}
+	out := usageRows(d, true)
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if !a.Day.Equal(b.Day) {
+			return a.Day.Before(b.Day)
+		}
+		if a.Harness != b.Harness {
+			return a.Harness < b.Harness
+		}
+		if a.Model != b.Model {
+			return a.Model < b.Model
+		}
+		return a.Provider < b.Provider
+	})
+	return out, nil
+}
+
+// usageRows folds loaded events into one row per bucket. hourly selects the
+// bucket width; the rest of the aggregation is identical, so Usage and
+// HourlyUsage cannot drift apart.
+func usageRows(d data, hourly bool) []UsageRow {
 	type key struct {
 		day             int64
 		h               model.Harness
@@ -36,7 +73,7 @@ func (s *service) Usage(ctx context.Context, f Filter) ([]UsageRow, error) {
 	index := map[key]int{}
 	out := []UsageRow{}
 	for _, v := range d.events {
-		day := floor(v.Timestamp, false)
+		day := floor(v.Timestamp, hourly)
 		k := key{day.UnixNano(), v.Harness, v.Model, v.ResolvedProvider}
 		i, ok := index[k]
 		if !ok {
@@ -50,5 +87,5 @@ func (s *service) Usage(ctx context.Context, f Filter) ([]UsageRow, error) {
 		r.Requests += v.requests
 		r.Unpriced += v.unpriced
 	}
-	return out, nil
+	return out
 }

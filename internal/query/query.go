@@ -177,6 +177,9 @@ type Service interface {
 	ByHarness(ctx context.Context, f Filter) ([]Bucket, error)
 	// Usage is the range grouped by local day, tool, model and provider.
 	Usage(ctx context.Context, f Filter) ([]UsageRow, error)
+	// HourlyUsage is Usage bucketed by local hour: each row's Day is the start
+	// of a local clock hour (time.Local), grouped by harness, model and provider.
+	HourlyUsage(ctx context.Context, f Filter) ([]UsageRow, error)
 	Sessions(ctx context.Context, f Filter, sort string, limit, offset int) (rows []SessionRow, total int, err error)
 	// Session returns the session, its children, and its own events (not children's), time-ordered.
 	Session(ctx context.Context, h model.Harness, id string) (SessionRow, []SessionRow, []AttributedEvent, error)
