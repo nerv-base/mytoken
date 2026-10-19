@@ -44,7 +44,7 @@
 
 | 概览 | 会话 |
 | --- | --- |
-| ![概览：今日花费、本月预测、套餐额度、按工具的每日花费](docs/screenshots/overview.png) | ![会话：虚拟列表、单个会话的累计花费与每次请求](docs/screenshots/sessions.png) |
+| ![概览：今日花费、正在进行的会话、本月累计与上月对比及预测、套餐额度与积分余额](docs/screenshots/overview.png) | ![会话：虚拟列表、单个会话的累计花费与每次请求](docs/screenshots/sessions.png) |
 
 | 排行 | 菜单栏面板 |
 | --- | --- |

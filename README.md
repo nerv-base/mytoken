@@ -53,7 +53,7 @@ contacted.
 
 | Overview | Sessions |
 | --- | --- |
-| ![Overview: today's spend, month forecast, plan quotas, daily spend by tool](docs/screenshots/overview.png) | ![Sessions: virtual list, cumulative cost and every request of one session](docs/screenshots/sessions.png) |
+| ![Overview: today's spend, sessions running now, this month vs last month with a forecast, plan quotas and credit balances](docs/screenshots/overview.png) | ![Sessions: virtual list, cumulative cost and every request of one session](docs/screenshots/sessions.png) |
 
 | Ranking | Menu bar panel |
 | --- | --- |
