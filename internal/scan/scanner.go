@@ -170,8 +170,8 @@ func newScanner(st *store.Store, resolver *attrib.Resolver, pricer *pricing.Pric
 		// covers changes between those scans, and discoverInterval is the
 		// longest a source can stay unseen, so all three are separate.
 		interval:         10 * time.Minute,
-		discoverInterval: time.Minute,
-		pollInterval:     15 * time.Second,
+		discoverInterval: 3 * time.Minute,
+		pollInterval:     30 * time.Second,
 		debounce:         250 * time.Millisecond,
 		minGap:           750 * time.Millisecond,
 		clock:            time.Now,
@@ -252,7 +252,10 @@ func (s *Scanner) scanMode(ctx context.Context, mode scanMode, hints []string) (
 		s.lastError = err
 		s.mu.Unlock()
 	}()
-	if s.resolver != nil {
+	// Attribution config (cc-switch, harness configs) changes rarely; the
+	// scans that walk the trees reload it, the cheap poll and watched scans
+	// reuse it.
+	if s.resolver != nil && (mode == scanFull || mode == scanQuickAll) {
 		if e := s.resolver.Refresh(ctx); e != nil {
 			return e
 		}

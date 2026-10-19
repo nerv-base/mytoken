@@ -242,7 +242,20 @@ func stamp(t time.Time) int64 {
 	return t.UnixNano()
 }
 
-const sessionSQL = `INSERT INTO sessions(harness,instance_id,session_id,parent_id,title,project,started_at,updated_at,raw_project) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(harness,instance_id,session_id) DO UPDATE SET parent_id=CASE WHEN excluded.parent_id!='' THEN excluded.parent_id ELSE sessions.parent_id END,title=CASE WHEN excluded.title!='' THEN excluded.title ELSE sessions.title END,project=CASE WHEN excluded.project!='' THEN excluded.project ELSE sessions.project END,raw_project=CASE WHEN excluded.raw_project!='' THEN excluded.raw_project ELSE sessions.raw_project END,started_at=CASE WHEN sessions.started_at=0 THEN excluded.started_at WHEN excluded.started_at=0 THEN sessions.started_at ELSE min(sessions.started_at,excluded.started_at) END,updated_at=max(sessions.updated_at,excluded.updated_at)`
+// sessionSQL upserts a session. The WHERE clause skips a row the upsert would
+// leave unchanged, so RowsAffected reports a visible change and a re-read of an
+// untouched source does not wake readers.
+const sessionSQL = `INSERT INTO sessions(harness,instance_id,session_id,parent_id,title,project,started_at,updated_at,raw_project) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(harness,instance_id,session_id) DO UPDATE SET parent_id=` + sessParent + `,title=` + sessTitle + `,project=` + sessProject + `,raw_project=` + sessRaw + `,started_at=` + sessStarted + `,updated_at=` + sessUpdated +
+	` WHERE (sessions.parent_id,sessions.title,sessions.project,sessions.raw_project,sessions.started_at,sessions.updated_at) IS NOT (` + sessParent + `,` + sessTitle + `,` + sessProject + `,` + sessRaw + `,` + sessStarted + `,` + sessUpdated + `)`
+
+const (
+	sessParent  = `CASE WHEN excluded.parent_id!='' THEN excluded.parent_id ELSE sessions.parent_id END`
+	sessTitle   = `CASE WHEN excluded.title!='' THEN excluded.title ELSE sessions.title END`
+	sessProject = `CASE WHEN excluded.project!='' THEN excluded.project ELSE sessions.project END`
+	sessRaw     = `CASE WHEN excluded.raw_project!='' THEN excluded.raw_project ELSE sessions.raw_project END`
+	sessStarted = `CASE WHEN sessions.started_at=0 THEN excluded.started_at WHEN excluded.started_at=0 THEN sessions.started_at ELSE min(sessions.started_at,excluded.started_at) END`
+	sessUpdated = `max(sessions.updated_at,excluded.updated_at)`
+)
 
 // Write couples a parsed source with its resolutions and checkpoint.
 //
@@ -312,6 +325,8 @@ func (s *Store) commitMany(ctx context.Context, writes []Write, report bool, rec
 		}
 		return stmt, err
 	}
+	// changed counts the event and session rows the writes actually altered.
+	var changed int64
 	for i, w := range writes {
 		if len(w.Batch.Events) > 0 && len(w.Resolutions) == 0 {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM settings WHERE key='pricing_fingerprint'"); err != nil {
@@ -322,7 +337,7 @@ func (s *Store) commitMany(ctx context.Context, writes []Write, report bool, rec
 		if report {
 			stats = &commitCollector{recent: recent}
 		}
-		if err := s.commit(ctx, w.Harness, w.InstanceID, w.Path, w.Batch, w.Resolutions, prepare, stats); err != nil {
+		if err := s.commit(ctx, w.Harness, w.InstanceID, w.Path, w.Batch, w.Resolutions, prepare, stats, &changed); err != nil {
 			return CommitOutcome{}, err
 		}
 		if stats != nil {
@@ -336,13 +351,17 @@ func (s *Store) commitMany(ctx context.Context, writes []Write, report bool, rec
 	if err := tx.Commit(); err != nil {
 		return CommitOutcome{}, err
 	}
-	// Every committed write advances at least a cursor, so it is a data change a
-	// reader may observe; Subscribe coalesces the wakeups, so a burst of small
-	// commits still costs one refresh.
-	s.notify()
+	// Readers see usage and sessions, not cursors: a write that only moved a
+	// cursor or re-read rows it already held (a SQLite source whose file was
+	// touched without new requests) must not wake every subscriber into a
+	// full refresh. Subscribe coalesces
+	// the rest, so a burst of small commits still costs one refresh.
+	if changed > 0 {
+		s.notify()
+	}
 	return outcome, nil
 }
-func (s *Store) commit(ctx context.Context, h model.Harness, instance, path string, b harness.Batch, res []Resolution, prepare func(string) (*sql.Stmt, error), stats *commitCollector) error {
+func (s *Store) commit(ctx context.Context, h model.Harness, instance, path string, b harness.Batch, res []Resolution, prepare func(string) (*sql.Stmt, error), stats *commitCollector, changed *int64) error {
 	if len(res) != 0 && len(res) != len(b.Events) {
 		return errors.New("resolution count differs from event count")
 	}
@@ -429,7 +448,12 @@ func (s *Store) commit(ctx context.Context, h model.Harness, instance, path stri
 		query := `INSERT INTO event_data(` + factColumns + `) VALUES ` + strings.TrimSuffix(strings.Repeat(row+",", len(values)/18), ",") + suffix
 		stmt, e := prepare(query)
 		if e == nil {
-			_, e = stmt.ExecContext(ctx, values...)
+			var r sql.Result
+			if r, e = stmt.ExecContext(ctx, values...); e == nil {
+				if n, err := r.RowsAffected(); err == nil {
+					*changed += n
+				}
+			}
 		}
 		values = values[:0]
 		chunkKeys = chunkKeys[:0]
@@ -469,7 +493,12 @@ func (s *Store) commit(ctx context.Context, h model.Harness, instance, path stri
 		if m.Harness == "" {
 			m.Harness = h
 		}
-		_, e := sessions.ExecContext(ctx, m.Harness, instance, m.SessionID, m.ParentID, harness.Title(m.Title), s.projects.resolve(m.Project), stamp(m.StartedAt), stamp(m.UpdatedAt), m.Project)
+		r, e := sessions.ExecContext(ctx, m.Harness, instance, m.SessionID, m.ParentID, harness.Title(m.Title), s.projects.resolve(m.Project), stamp(m.StartedAt), stamp(m.UpdatedAt), m.Project)
+		if e == nil {
+			if n, err := r.RowsAffected(); err == nil {
+				*changed += n
+			}
+		}
 		return e
 	}
 	meta := make(map[string]model.SessionMeta)

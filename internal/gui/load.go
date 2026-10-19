@@ -70,7 +70,7 @@ func (a *App) loadOverview() {
 	now := a.now()
 	quotas := a.d.Quotas
 	a.run(&a.ovJob, func(ctx context.Context) func() {
-		ov, err := computeOverview(ctx, q, now)
+		ov, err := computeOverview(ctx, q, now, &a.recent)
 		if quotas != nil {
 			ov.quotas = quotas()
 		}
@@ -85,7 +85,7 @@ func (a *App) loadOverview() {
 	})
 }
 
-func computeOverview(ctx context.Context, q Query, now time.Time) (overview, error) {
+func computeOverview(ctx context.Context, q Query, now time.Time, recent *recentEvents) (overview, error) {
 	ov := overview{ready: true}
 	today := dayStart(now)
 	ov.day = today
@@ -117,7 +117,7 @@ func computeOverview(ctx context.Context, q Query, now time.Time) (overview, err
 	}()
 	go func() {
 		defer wg.Done()
-		ov.active, errA = activeSessions(ctx, q, now)
+		ov.active, errA = activeSessions(ctx, q, now, recent)
 	}()
 	wg.Wait()
 	if err := errors.Join(errU, errT, errA); err != nil {
@@ -246,17 +246,81 @@ func byCost(b []query.Bucket) {
 // tray to count it as running.
 const activeWindow = 15 * time.Minute
 
-func activeSessions(ctx context.Context, q Query, now time.Time) ([]activeSession, error) {
+// recentEvents keeps the last hour of each running session's requests, so
+// the refresh that runs every minute (and after every commit) reads a
+// session's whole history again only when it actually got a new request.
+type recentEvents struct {
+	mu sync.Mutex
+	m  map[string]recentEntry
+}
+
+type recentEntry struct {
+	updated time.Time
+	events  []query.AttributedEvent
+}
+
+func (c *recentEvents) get(ctx context.Context, q Query, r query.SessionRow, now time.Time) ([]query.AttributedEvent, error) {
+	key := string(r.Harness) + "\x00" + r.SessionID
+	if c != nil {
+		c.mu.Lock()
+		e, ok := c.m[key]
+		c.mu.Unlock()
+		if ok && e.updated.Equal(r.UpdatedAt) {
+			return e.events, nil
+		}
+	}
+	_, _, events, err := q.Session(ctx, r.Harness, r.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	// Only the last hour is ever looked at (rates and $/h).
+	cut := len(events)
+	for cut > 0 && now.Sub(events[cut-1].Timestamp) <= time.Hour+activeWindow {
+		cut--
+	}
+	if cut > 0 {
+		cut-- // keep one earlier request: the first gap needs it
+	}
+	events = append([]query.AttributedEvent(nil), events[cut:]...)
+	if c != nil {
+		c.mu.Lock()
+		if c.m == nil {
+			c.m = map[string]recentEntry{}
+		}
+		c.m[key] = recentEntry{updated: r.UpdatedAt, events: events}
+		c.mu.Unlock()
+	}
+	return events, nil
+}
+
+// keep drops every cached session not in live.
+func (c *recentEvents) keep(live map[string]bool) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	for k := range c.m {
+		if !live[k] {
+			delete(c.m, k)
+		}
+	}
+	c.mu.Unlock()
+}
+
+func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentEvents) ([]activeSession, error) {
 	rows, _, err := q.Sessions(ctx, query.Filter{Range: query.Range{From: now.Add(-activeWindow)}}, query.SortRecent, 4, 0)
 	if err != nil {
 		return nil, err
 	}
 	var out []activeSession
+	live := map[string]bool{}
+	defer func() { recent.keep(live) }()
 	for _, r := range rows {
 		if now.Sub(r.UpdatedAt) > activeWindow {
 			continue
 		}
-		_, _, events, err := q.Session(ctx, r.Harness, r.SessionID)
+		live[string(r.Harness)+"\x00"+r.SessionID] = true
+		events, err := recent.get(ctx, q, r, now)
 		if err != nil {
 			return nil, err
 		}

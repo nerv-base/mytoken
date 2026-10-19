@@ -185,12 +185,39 @@ func TestBatchAtomicAndNotification(t *testing.T) {
 	if n != 0 {
 		t.Fatal("partial transaction")
 	}
+	// A cursor-only write is not a change readers can see.
 	if err = st.Commit(ctx, model.Codex, "s", harness.Batch{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ch:
+		t.Fatal("cursor-only commit notified")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err = st.Commit(ctx, model.Codex, "s", harness.Batch{Events: []model.UsageEvent{{Harness: model.Codex, DedupKey: "a", SessionID: "s", Timestamp: time.Now(), Model: "m"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case <-ch:
 	case <-time.After(time.Second):
 		t.Fatal("no commit notification")
+	}
+	// Re-reading rows the index already holds changes nothing visible.
+	at := time.Unix(1_800_000_000, 0)
+	same := harness.Batch{
+		Events:   []model.UsageEvent{{Harness: model.Codex, DedupKey: "b", SessionID: "s2", Timestamp: at, Model: "m", Tokens: model.Tokens{Input: 3}}},
+		Sessions: []model.SessionMeta{{Harness: model.Codex, SessionID: "s2", Title: "t", StartedAt: at, UpdatedAt: at}},
+	}
+	if err = st.Commit(ctx, model.Codex, "s2", same, nil); err != nil {
+		t.Fatal(err)
+	}
+	<-ch
+	if err = st.Commit(ctx, model.Codex, "s2", same, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ch:
+		t.Fatal("unchanged re-commit notified")
+	case <-time.After(100 * time.Millisecond):
 	}
 }

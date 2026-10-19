@@ -50,15 +50,16 @@ func main() {
 			cli.Version = v
 		}
 	}
-	// A bare invocation is the read-only cost summary. The GUI starts with
-	// `mytoken gui`, or with --hidden when the login item launches it.
+	// A bare invocation from a terminal is the read-only cost summary; from
+	// Finder, Explorer or a desktop launcher (no terminal) it is the app. The
+	// GUI also starts with `mytoken gui`, or --hidden from the login item.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--hidden", "gui":
 		default:
 			os.Exit(cli.Run(os.Args[1:]))
 		}
-	} else {
+	} else if fromTerminal() {
 		os.Exit(cli.Run(nil))
 	}
 
@@ -83,14 +84,16 @@ func main() {
 		main.Show()
 		main.Focus()
 	}
-	if !mygo.App.RequestSingleInstanceLock() {
+	// A separate MYTOKEN_HOME is a separate index, so a development or
+	// test run beside the installed app does not hand itself over to it.
+	if os.Getenv("MYTOKEN_HOME") == "" && !mygo.App.RequestSingleInstanceLock() {
 		return
 	}
 	mygo.App.OnSecondInstance(func([]string, string) { openMain() })
 
-	// Checks github.com for a new version once a day (Settings turns it
-	// off); builds that cannot replace themselves, such as development
-	// builds and the Debian package, never check.
+	// Checks github.com for a new version once a day; builds that cannot
+	// replace themselves, such as development builds and the Debian
+	// package, never check.
 	mygo.Use(native.Plugin)
 
 	a, err := app.Open()
@@ -458,4 +461,11 @@ func trayIcon() []byte {
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, img)
 	return buf.Bytes()
+}
+
+// fromTerminal reports whether standard output is a terminal, which is how a
+// shell user's bare `mytoken` differs from opening the app bundle.
+func fromTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }

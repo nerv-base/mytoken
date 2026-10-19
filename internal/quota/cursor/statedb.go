@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -81,7 +83,54 @@ func readAccessToken(ctx context.Context, paths []string) (string, error) {
 // tokenFromDatabase copies the state database (and its write-ahead log) to a
 // temporary directory and reads the token there. Cursor may hold the database
 // open, so the original is never opened for writing and never locked.
+// tokenCache remembers the token read from each state database together with
+// the stat of the database and its WAL, so the quota service's periodic
+// Detect/Fetch copy and open Cursor's (often large) database only after Cursor
+// actually wrote to it.
+var tokenCache struct {
+	sync.Mutex
+	m map[string]cachedToken
+}
+
+type cachedToken struct {
+	stamp string
+	token string
+}
+
+func stateStamp(path string) string {
+	var b strings.Builder
+	for _, p := range []string{path, path + "-wal"} {
+		if fi, err := os.Stat(p); err == nil {
+			b.WriteString(fi.ModTime().UTC().Format(time.RFC3339Nano))
+			b.WriteByte('/')
+			b.WriteString(strconv.FormatInt(fi.Size(), 10))
+		}
+		b.WriteByte('|')
+	}
+	return b.String()
+}
+
 func tokenFromDatabase(ctx context.Context, path string) (string, error) {
+	stamp := stateStamp(path)
+	tokenCache.Lock()
+	c, ok := tokenCache.m[path]
+	tokenCache.Unlock()
+	if ok && c.stamp == stamp {
+		return c.token, nil
+	}
+	token, err := readTokenFromDatabase(ctx, path)
+	if err == nil && token != "" {
+		tokenCache.Lock()
+		if tokenCache.m == nil {
+			tokenCache.m = map[string]cachedToken{}
+		}
+		tokenCache.m[path] = cachedToken{stamp: stamp, token: token}
+		tokenCache.Unlock()
+	}
+	return token, err
+}
+
+func readTokenFromDatabase(ctx context.Context, path string) (string, error) {
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", plan.NewError(plan.ReasonSourceMissing, err)
