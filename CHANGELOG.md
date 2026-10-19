@@ -44,6 +44,9 @@ every release needs one here (`## 0.2.1`), written for the people updating.
   pulsing, and a hover card per day.
 - **Wide screens.** Pages grow wider and stay centred instead of leaving a
   big gap on the right.
+- "1 day", "1 request" and friends in English instead of "1 days".
+- A new README with fresh screenshots in English and Chinese, plus
+  CONTRIBUTING.md and docs/ARCHITECTURE.md for anyone who wants to help.
 
 ## 0.5.1
 
