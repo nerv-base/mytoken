@@ -16,6 +16,7 @@ import (
 	"image/color"
 	"image/png"
 	"log"
+	"math"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -440,24 +441,35 @@ func revealDirectory(dir string) error {
 	return cmd.Process.Release()
 }
 
-// trayIcon draws the template icon: three rising bars, like a tiny chart.
+// trayIcon draws the template icon: the app icon's mark in one color, a
+// quota ring three quarters round about a dot, anti-aliased.
 func trayIcon() []byte {
-	const n = 32
+	const n = 36
 	img := image.NewNRGBA(image.Rect(0, 0, n, n))
-	bar := func(x0, x1, top int) {
-		for y := top; y < 28; y++ {
-			for x := x0; x < x1; x++ {
-				// Round the top corners a little.
-				if y == top && (x == x0 || x == x1-1) {
-					continue
-				}
-				img.Set(x, y, color.NRGBA{A: 255})
+	c := float64(n) / 2
+	cover := func(d float64) float64 { return math.Max(0, math.Min(1, 0.5-d)) }
+	const ringR, ringW, dotR = 14.0, 3.6, 7.0
+	for y := 0; y < n; y++ {
+		for x := 0; x < n; x++ {
+			dx, dy := float64(x)+0.5-c, float64(y)+0.5-c
+			r := math.Hypot(dx, dy)
+			// The ring runs clockwise from the top for 0.72 of a turn,
+			// with round ends.
+			ang := math.Mod(math.Atan2(dy, dx)+math.Pi/2+2*math.Pi, 2*math.Pi) / (2 * math.Pi)
+			ring := 0.0
+			if ang <= 0.72 {
+				ring = cover(math.Abs(r-ringR) - ringW/2)
+			}
+			for _, a := range []float64{0, 0.72} {
+				th := a*2*math.Pi - math.Pi/2
+				ring = math.Max(ring, cover(math.Hypot(dx-math.Cos(th)*ringR, dy-math.Sin(th)*ringR)-ringW/2))
+			}
+			v := math.Max(ring, cover(r-dotR))
+			if v > 0 {
+				img.Set(x, y, color.NRGBA{A: uint8(v*255 + 0.5)})
 			}
 		}
 	}
-	bar(4, 10, 17)
-	bar(13, 19, 10)
-	bar(22, 28, 4)
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, img)
 	return buf.Bytes()

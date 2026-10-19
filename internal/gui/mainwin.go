@@ -1,6 +1,7 @@
 package gui
 
 import (
+	_ "embed"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -200,16 +201,19 @@ func (a *App) sidebarFooter(c *ui.Context, pal palette) {
 	})
 }
 
-// logo is the app's mark: a rounded square with a rising bar.
+// logo is the app's mark, the app icon without its tile's margin: the
+// live orb in a quota ring (resources/icon-src/render.py draws both).
 func logo(c *ui.Context, pal palette, size float32) ui.Element {
-	accent := pal.accent
-	return ui.Box(c).Size(size, size).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
-		p.FillGradient(r, ui.LinearGradient{From: accent.Mix(ui.RGB(255, 255, 255), 0.25), To: accent.Mix(ui.RGB(0, 0, 0), 0.1), Angle: 160, Oklab: true}, r.W*0.28)
-		w := r.W * 0.13
-		base := r.Y + r.H*0.76
-		for i, h := range []float32{0.22, 0.36, 0.52} {
-			x := r.X + r.W*0.24 + float32(i)*r.W*0.2
-			p.Fill(ui.Rect{X: x, Y: base - r.H*h, W: w, H: r.H * h}, ui.RGBA(255, 255, 255, 0.92), w/2)
-		}
-	})
+	return ui.Image(c, logoBitmap).Size(size, size).Shrink(0)
 }
+
+//go:embed logo.png
+var logoPNG []byte
+
+var logoBitmap = func() *ui.Bitmap {
+	b, err := ui.DecodeBitmap(logoPNG)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}()
