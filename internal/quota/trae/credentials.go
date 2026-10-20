@@ -46,7 +46,7 @@ type envelope struct {
 	RefreshExpiredAt json.RawMessage `json:"refreshExpiredAt"`
 	Host             string          `json:"host"`
 	UserRegion       flexRegion      `json:"userRegion"`
-	Region           string          `json:"region"`
+	Region           flexRegion      `json:"region"`
 	API              string          `json:"api"`
 }
 
@@ -54,7 +54,9 @@ type envelope struct {
 // write ("CN") or the object the current CN client writes
 // ({"region":"CN","_aiRegion":"CN"}). Declaring it a plain string makes the
 // whole envelope fail to unmarshal, which silently drops the sign-in and with
-// it the Trae quota card.
+// it the Trae quota card. A shape this provider does not recognise resolves to
+// "", never to an error: the region only picks a host later, so it must never
+// cost the sign-in again.
 type flexRegion string
 
 func (r *flexRegion) UnmarshalJSON(b []byte) error {
@@ -67,24 +69,45 @@ func (r *flexRegion) UnmarshalJSON(b []byte) error {
 	case '"':
 		var v string
 		if err := json.Unmarshal(b, &v); err != nil {
-			return err
+			*r = ""
+			return nil
 		}
-		*r = flexRegion(v)
-		return nil
+		*r = flexRegion(strings.TrimSpace(v))
 	case '{':
 		var obj struct {
-			Region   string `json:"region"`
-			AIRegion string `json:"_aiRegion"`
+			Region   json.RawMessage `json:"region"`
+			AIRegion json.RawMessage `json:"_aiRegion"`
 		}
 		if err := json.Unmarshal(b, &obj); err != nil {
-			return err
+			*r = ""
+			return nil
 		}
-		*r = flexRegion(firstNonEmpty(obj.Region, obj.AIRegion))
-		return nil
+		*r = flexRegion(firstNonEmpty(regionScalar(obj.Region), regionScalar(obj.AIRegion)))
 	default:
-		*r = flexRegion(string(b))
-		return nil
+		// A number, bool, array or anything else is not a region.
+		*r = ""
 	}
+	return nil
+}
+
+// regionScalar reads a region stated as a JSON string or number. An object,
+// array or bool is not a region and yields "".
+func regionScalar(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	if raw[0] == '"' {
+		var v string
+		if json.Unmarshal(raw, &v) != nil {
+			return ""
+		}
+		return strings.TrimSpace(v)
+	}
+	if raw[0] == '-' || (raw[0] >= '0' && raw[0] <= '9') {
+		return string(raw)
+	}
+	return ""
 }
 
 // flexString accepts a JSON string or number as text.
@@ -163,7 +186,7 @@ func (p *Provider) appCredentials() (credential, bool) {
 			machineID: "",
 			expiresAt: parseTimeValue(env.ExpiredAt),
 			host:      env.Host,
-			region:    firstNonEmpty(string(env.UserRegion), env.Region),
+			region:    firstNonEmpty(string(env.UserRegion), string(env.Region)),
 			source:    "app",
 		}, true
 	}

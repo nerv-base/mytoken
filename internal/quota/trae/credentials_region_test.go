@@ -41,6 +41,26 @@ func TestDecodeEnvelopeRegionForms(t *testing.T) {
 			raw:  `{"token":"t","userId":"1","userRegion":null}`,
 			want: "",
 		},
+		{
+			name: "region object with a numeric sub-field",
+			raw:  `{"token":"t","userId":"1","userRegion":{"region":123,"_aiRegion":"CN"}}`,
+			want: "123",
+		},
+		{
+			name: "region object with a non-scalar sub-field",
+			raw:  `{"token":"t","userId":"1","userRegion":{"region":{"nested":true},"_aiRegion":"CN"}}`,
+			want: "CN",
+		},
+		{
+			name: "region as number",
+			raw:  `{"token":"t","userId":"1","userRegion":7}`,
+			want: "",
+		},
+		{
+			name: "region as array",
+			raw:  `{"token":"t","userId":"1","userRegion":["CN"]}`,
+			want: "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,7 +94,49 @@ func TestDecodeEnvelopeRegionObjectKeepsOtherFields(t *testing.T) {
 	if env.Host != "https://api.trae.cn" {
 		t.Fatalf("host = %q", env.Host)
 	}
-	if got := firstNonEmpty(string(env.UserRegion), env.Region); got != "CN" {
+	if got := firstNonEmpty(string(env.UserRegion), string(env.Region)); got != "CN" {
 		t.Fatalf("resolved region = %q, want CN", got)
+	}
+}
+
+// TestDecodeEnvelopeRegionShapesNeverFail pins the hardening: whatever shape a
+// future client writes for either region field, the sign-in itself must still
+// decode. The region only picks a host, so an unreadable one degrades to the
+// top-level fallback or to "".
+func TestDecodeEnvelopeRegionShapesNeverFail(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "top-level region also written as an object",
+			raw:  `{"token":"t","region":{"region":"CN","_aiRegion":"CN"}}`,
+			want: "CN",
+		},
+		{
+			name: "object userRegion falls back to a string region",
+			raw:  `{"token":"t","userRegion":{"region":true},"region":"US"}`,
+			want: "US",
+		},
+		{
+			name: "both region fields unrecognised",
+			raw:  `{"token":"t","userRegion":[1,2],"region":false}`,
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, ok := decodeEnvelope(json.RawMessage(tc.raw))
+			if !ok {
+				t.Fatalf("decodeEnvelope(%s) dropped the sign-in", tc.raw)
+			}
+			if env.Token != "t" {
+				t.Fatalf("token = %q, want %q", env.Token, "t")
+			}
+			if got := firstNonEmpty(string(env.UserRegion), string(env.Region)); got != tc.want {
+				t.Fatalf("resolved region = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
