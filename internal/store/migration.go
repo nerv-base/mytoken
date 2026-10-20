@@ -142,10 +142,17 @@ func (s *Store) migrate() error {
 	if err != nil {
 		return err
 	}
+	// The measured decode window is a plain additive fact column: no history is
+	// rewritten and no price changes, so an old index only gains zeroes. It is
+	// added before the view is built, because the view selects it.
+	decodeMs, err := migrateDecodeMs(tx)
+	if err != nil {
+		return err
+	}
 	if err = migrateSignals(tx, sc); err != nil {
 		return err
 	}
-	if cacheWrite1h {
+	if cacheWrite1h || decodeMs {
 		if err = rebuildEventsView(tx, sc); err != nil {
 			return err
 		}

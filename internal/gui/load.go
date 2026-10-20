@@ -450,27 +450,63 @@ func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentE
 	return out, nil
 }
 
-// outputRate estimates output tokens per second over the last ten minutes:
-// each request's output over the time since the request before it, capped
-// so that a pause for the user or a tool does not count as generation.
+// outputRate reports output tokens per second over the last ten minutes.
+//
+// A request whose log timed its own stream (DecodeMS, currently only DSH) is
+// read the way that tool reads itself: its output tokens over exactly the
+// window it spent generating them. That window starts at the first streamed
+// token, so it excludes the wait for the first token and every pause between
+// requests, and it is counted with the tokens the harness counted as output —
+// reasoning excluded, as the tool displays it. When a session has such
+// measurements they are the answer, because an estimate must not overrule a
+// measurement.
+//
+// Everything else is estimated over the gap since the request before it, since
+// a log measures the requests, not the generation inside them. Both ends of
+// that gap are repaired rather than believed:
+//
+//   - a gap longer than gapCap is a pause for the user or a tool, not
+//     generation, so it counts as at most gapCap;
+//   - a gap shorter than the tokens could possibly have taken is a timestamp
+//     artifact (a reader that rounds to the second, or writes several records
+//     of one turn inside the same millisecond), so it counts as at least the
+//     time `fast` would need. Without that floor a single such pair read
+//     millions of tokens per second, and since the window divides summed
+//     tokens by summed gaps, one bad pair made a whole session absurd.
+//     Requests that share a timestamp count too, instead of being dropped.
 func outputRate(events []query.AttributedEvent, now time.Time) (float64, int) {
 	const window, gapCap = 10 * time.Minute, 90 * time.Second
-	var out int64
+	// fast is faster than any model generates; it only has to be an honest
+	// upper bound for the estimate.
+	const fast = 300 // tokens per second
+	var out, timed int64
 	var secs float64
+	var decode time.Duration
 	n := 0
 	for i := len(events) - 1; i > 0; i-- {
 		e, prev := events[i], events[i-1]
 		if now.Sub(e.Timestamp) > window {
 			break
 		}
-		gap := e.Timestamp.Sub(prev.Timestamp)
-		if gap <= 0 {
+		n++
+		if e.DecodeMS > 0 {
+			timed += e.Tokens.Output
+			decode += time.Duration(e.DecodeMS) * time.Millisecond
 			continue
 		}
-		gap = min(gap, gapCap)
-		out += e.Tokens.Output + e.Tokens.Reasoning
+		tokens := e.Tokens.Output + e.Tokens.Reasoning
+		gap := e.Timestamp.Sub(prev.Timestamp)
+		if gap > gapCap {
+			gap = gapCap
+		}
+		if floor := time.Duration(float64(tokens) / fast * float64(time.Second)); gap < floor {
+			gap = floor
+		}
+		out += tokens
 		secs += gap.Seconds()
-		n++
+	}
+	if decode > 0 && timed > 0 {
+		return float64(timed) / decode.Seconds(), n
 	}
 	if secs < 1 || out == 0 {
 		return 0, n

@@ -29,8 +29,9 @@ const deckPeek = 9
 // rises into place as cards do when the page opens; the deck turns by
 // itself, or by its dots and arrows, and holds still under the pointer.
 //
-// It shows money and requests, which the logs record, and not output
-// speed, which they do not (it would be a guess from gaps).
+// It shows money and requests, which every log records, and output speed
+// where a log timed its own token stream (DSH); elsewhere that number is an
+// estimate from the gaps between requests and it is labelled as one.
 func (a *App) liveCard(c *ui.Context, pal palette) {
 	act := a.ov.active
 	live := len(act) > 0

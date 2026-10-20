@@ -207,6 +207,13 @@ type UsageEvent struct {
 	RequestID   string    `json:"requestId,omitempty"` // upstream request/response ID, never a local fallback
 	Boundary    Boundary  `json:"boundary,omitempty"`
 	Bill        *Bill     `json:"bill,omitempty"`
+	// DecodeMS is the generation window of this request in milliseconds, when
+	// the log itself timed it: the distance from the first streamed output
+	// token to the record that closed the message. Only a tool that journals its
+	// own token stream can report it. It is a measurement, never a guess; zero
+	// means the log did not say, and consumers fall back to estimating speed
+	// from the gaps between requests.
+	DecodeMS int64 `json:"decodeMs,omitempty"`
 	// GitBranch is the git branch the source log itself recorded for this
 	// request: Claude Code writes a top-level `gitBranch` on a transcript line,
 	// Codex writes `session_meta.payload.git.branch` once per rollout. It is
