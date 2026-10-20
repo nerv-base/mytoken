@@ -37,8 +37,8 @@ machine.
   there are no provider multipliers or inferred discounts.
 - **Spend first** — today's cost in big type, the month so far with a forecast, daily spend stacked
   by tool, and rankings by cost.
-- **Plan quotas** — Codex, Claude, Cursor, Copilot, GLM, Trae, WorkBuddy, Qoder and your DeepSeek
-  API balance, fetched from each provider and detected automatically. Usage windows show the share
+- **Plan quotas** — Codex, Claude, Cursor, Copilot, GLM, Trae, WorkBuddy, Qoder, ZCode and your
+  DeepSeek API balance, fetched from each provider and detected automatically. Usage windows show the share
   used and when they reset; credit balances show what is left and how many days that buys.
 - **Live sessions** — what is running right now, with its cost so far, spend per hour, cache hit
   rate and an estimated output speed.
@@ -258,6 +258,7 @@ login, and it never derives a quota from local usage.
 | Trae (CN / Global) | Trae plan usage, from the app login |
 | WorkBuddy | WorkBuddy plan usage, from the app login |
 | Qoder | Qoder plan usage, from the app login |
+| ZCode | ZCode Start Plan token grants, from the ZCode app login |
 | DeepSeek | API account balance, from the DeepSeek Harness credential or `DEEPSEEK_API_KEY` |
 
 A quota card only appears for a provider whose credential MyToken finds. Percentage windows show

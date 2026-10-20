@@ -65,7 +65,7 @@ mytoken quota [plan] [--json|--format table|json|csv] [--db PATH]
 ```
 
 Shows the plan windows the background quota service fetched from each provider's own server
-(Codex, Claude, Cursor, GitHub Copilot, GLM, DeepSeek, Trae, WorkBuddy, Qoder). A server response
+(Codex, Claude, Cursor, GitHub Copilot, GLM, DeepSeek, Trae, WorkBuddy, Qoder, ZCode). A server response
 is cached in the index (`quota.plan.*`) so the command can show the last good snapshot offline;
 its source is always `api`. Quotas are never derived from local usage logs — those only supply
 tokens and cost. Credentials the tool itself stored are read to authenticate; no credential is

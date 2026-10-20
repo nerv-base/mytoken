@@ -42,7 +42,7 @@
 - 删除中转站 / 对账 / 倍率 / 多实例 / 预算 / 缓存账本，数据库原地迁移（保留历史、重新计价、VACUUM）。
 - 修复 Claude Desktop 与 Claude Code 的重复计数、Cowork 按轮去重、1 小时缓存写入计价、ledger 去重键精度。
 - 扫描重写为线性：全新扫描从 23 分钟降到约 13 秒；监听目录有上限，空闲时几乎不占 CPU。
-- 统一的套餐额度服务：Codex、Claude、Cursor、Copilot、GLM、DeepSeek、Trae、WorkBuddy、Qoder，全部从服务商服务器读取。
+- 统一的套餐额度服务：Codex、Claude、Cursor、Copilot、GLM、DeepSeek、Trae、WorkBuddy、Qoder、ZCode，全部从服务商服务器读取。
 - 界面基于 MyGo v0.5.5 重写：概览 / 会话 / 排行 / 项目 / 设置五页；托盘弹出面板；Windows 托盘支持右键菜单退出。
 - CLI 精简为：摘要、按天表格、额度、扫描、statusline、doctor、version，读命令全部只读打开。
 
