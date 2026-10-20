@@ -178,6 +178,7 @@ var strs = map[string][2]string{
 	"now":           {"now", "现在"},
 	"minutesAgo":    {"%d min ago", "%d 分钟前"},
 	"tokRangeSum":   {"Last %d days", "近 %d 天"},
+	"tokAllSum":     {"All time", "全部时间"},
 	"tokAvg":        {"Daily average", "日均（有用量的天）"},
 	"tokensN":       {"%s tokens", "%s Token"},
 	"requests":      {"Requests", "请求"},
