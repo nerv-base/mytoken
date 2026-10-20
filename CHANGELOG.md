@@ -3,6 +3,13 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## Unreleased
+
+- **The token card has an All range.** The card now offers the same four
+  ranges as the other pages — the last 7, 30 and 90 days and all time. All
+  time reads the whole history when it is chosen and folds it into weekly
+  or monthly bars, so a long history stays readable.
+
 ## 0.5.3
 
 - **Opening the app works again.** Since 0.5.0, opening MyToken!!!!! from

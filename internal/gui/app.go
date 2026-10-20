@@ -26,8 +26,12 @@ type App struct {
 	chartRange int
 	// spendTab is the spend card's view: 0 = this month, 1 = today's clock.
 	spendTab int
-	// tokRange is the token card's range (index of chartDays).
+	// tokRange is the token card's range (index of tokDays).
 	tokRange int
+	// tokAll is the token card's all-time series, read when its All tab is
+	// chosen; the overview itself only carries the last 90 days.
+	tokAll    tokenAll
+	tokAllJob job
 	// quotaAll shows every quota account instead of the first rows.
 	quotaAll bool
 	// deck is the running-sessions card deck: which session is in front,
@@ -160,6 +164,11 @@ func (a *App) dataChanged() {
 	if a.page == "settings" {
 		a.loadSettings()
 	}
+	// The token card's all-time series is read apart from the overview;
+	// once it has been opened it follows new data like the rest.
+	if a.tokRange == len(tokDays)-1 && (a.tokAll.ready || a.tokAll.err != "") {
+		a.loadTokenAll()
+	}
 }
 
 func (a *App) minuteTick() {
@@ -245,7 +254,7 @@ func (a *App) run(j *job, work func(ctx context.Context) func()) {
 
 // busy reports whether any job is running or waiting, for tests.
 func (a *App) busy() bool {
-	for _, j := range []*job{&a.ovJob, &a.rkJob, &a.pjJob, &a.pjdJob, &a.ssJob, &a.sdJob, &a.set.job, &a.set.act} {
+	for _, j := range []*job{&a.ovJob, &a.tokAllJob, &a.rkJob, &a.pjJob, &a.pjdJob, &a.ssJob, &a.sdJob, &a.set.job, &a.set.act} {
 		if j.running || j.pending != nil {
 			return true
 		}
