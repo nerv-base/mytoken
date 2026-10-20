@@ -236,6 +236,7 @@ var quotaIcons = map[string]brandMark{
 	"trae":    {loadBrand("trae-color"), true, false},
 	"qoder":   {loadBrand("qoder-color"), true, false},
 	"copilot": {loadBrand("githubcopilot"), false, false},
+	"zcode":   {loadBrand("zai"), false, false},
 }
 
 var harnessIcons = func() map[model.Harness]brandMark {

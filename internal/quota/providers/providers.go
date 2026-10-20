@@ -17,6 +17,7 @@ import (
 	"github.com/zzstar101/mytoken/internal/quota/qoder"
 	"github.com/zzstar101/mytoken/internal/quota/trae"
 	"github.com/zzstar101/mytoken/internal/quota/workbuddy"
+	"github.com/zzstar101/mytoken/internal/quota/zcode"
 )
 
 // All returns the supported providers in display order.
@@ -33,5 +34,6 @@ func All() []plan.Provider {
 		workbuddy.New(workbuddy.Options{}),
 		workbuddy.NewAI(workbuddy.Options{}),
 		qoder.New(qoder.Options{}),
+		zcode.New(zcode.Options{}),
 	}
 }

@@ -117,6 +117,8 @@ func quotaName(id string) string {
 		return "WorkBuddy AI"
 	case "qoder-cn":
 		return "Qoder"
+	case "zcode":
+		return "ZCode"
 	}
 	if id == "" {
 		return id
