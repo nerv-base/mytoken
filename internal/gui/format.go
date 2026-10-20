@@ -172,6 +172,14 @@ func fmtDateTime(t time.Time) string {
 	return t.Format("Jan 2 15:04")
 }
 
+// fmtMonthYear names the month with its year, for charts that can span years.
+func fmtMonthYear(t time.Time) string {
+	if lang == "zh" {
+		return fmt.Sprintf("%d年%d月", t.Year(), t.Month())
+	}
+	return t.Format("January 2006")
+}
+
 func fmtMonth(t time.Time) string {
 	if lang == "zh" {
 		return fmt.Sprintf("%d月", t.Month())

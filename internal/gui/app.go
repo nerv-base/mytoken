@@ -26,12 +26,15 @@ type App struct {
 	chartRange int
 	// spendTab is the spend card's view: 0 = this month, 1 = today's clock.
 	spendTab int
-	// tokRange is the token card's range (index of tokDays).
+	// tokRange is the token card's range (index of rangeDays).
 	tokRange int
 	// tokAll is the token card's all-time series, read when its All tab is
-	// chosen; the overview itself only carries the last 90 days.
-	tokAll    tokenAll
-	tokAllJob job
+	// chosen; the overview itself only carries the last 90 days. tokScratch is
+	// the buffer the card folds a range's few days into, so the view can be
+	// rebuilt every frame without allocating bars.
+	tokAll     tokenAll
+	tokAllJob  job
+	tokScratch []tokenBar
 	// quotaAll shows every quota account instead of the first rows.
 	quotaAll bool
 	// deck is the running-sessions card deck: which session is in front,
@@ -164,9 +167,10 @@ func (a *App) dataChanged() {
 	if a.page == "settings" {
 		a.loadSettings()
 	}
-	// The token card's all-time series is read apart from the overview;
-	// once it has been opened it follows new data like the rest.
-	if a.tokRange == len(tokDays)-1 && (a.tokAll.ready || a.tokAll.err != "") {
+	// The token card's all-time series is read apart from the overview; once
+	// it has been read it follows new data like the rest, but only while the
+	// card is on screen, since no other page draws it.
+	if a.page == "overview" && a.tokAllTime() && (a.tokAll.ready || a.tokAll.err != "") {
 		a.loadTokenAll()
 	}
 }

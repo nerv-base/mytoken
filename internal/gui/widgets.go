@@ -50,9 +50,15 @@ func pageHeader(c *ui.Context, pal palette, title string, right func()) {
 	})
 }
 
+// rangeLabels are the shared range choices' labels, in rangeDays order, for
+// pickers that are not ui.Segmented (the token card's pills).
+func rangeLabels() []string {
+	return []string{tr("range7"), tr("range30"), tr("range90"), tr("rangeAll")}
+}
+
 // rangePicker chooses among the shared ranges; it reports a change.
 func rangePicker(c *ui.Context, sel *int) bool {
-	return ui.Segmented(c, sel, tr("range7"), tr("range30"), tr("range90"), tr("rangeAll")).Label(tr("range")).Changed()
+	return ui.Segmented(c, sel, rangeLabels()...).Label(tr("range")).Changed()
 }
 
 // swatch is a legend's colored square.
