@@ -45,9 +45,46 @@ type envelope struct {
 	ExpiredAt        json.RawMessage `json:"expiredAt"`
 	RefreshExpiredAt json.RawMessage `json:"refreshExpiredAt"`
 	Host             string          `json:"host"`
-	UserRegion       string          `json:"userRegion"`
+	UserRegion       flexRegion      `json:"userRegion"`
 	Region           string          `json:"region"`
 	API              string          `json:"api"`
+}
+
+// flexRegion accepts Trae's region as either the plain string older builds
+// write ("CN") or the object the current CN client writes
+// ({"region":"CN","_aiRegion":"CN"}). Declaring it a plain string makes the
+// whole envelope fail to unmarshal, which silently drops the sign-in and with
+// it the Trae quota card.
+type flexRegion string
+
+func (r *flexRegion) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "null" {
+		*r = ""
+		return nil
+	}
+	switch b[0] {
+	case '"':
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		*r = flexRegion(v)
+		return nil
+	case '{':
+		var obj struct {
+			Region   string `json:"region"`
+			AIRegion string `json:"_aiRegion"`
+		}
+		if err := json.Unmarshal(b, &obj); err != nil {
+			return err
+		}
+		*r = flexRegion(firstNonEmpty(obj.Region, obj.AIRegion))
+		return nil
+	default:
+		*r = flexRegion(string(b))
+		return nil
+	}
 }
 
 // flexString accepts a JSON string or number as text.
@@ -126,7 +163,7 @@ func (p *Provider) appCredentials() (credential, bool) {
 			machineID: "",
 			expiresAt: parseTimeValue(env.ExpiredAt),
 			host:      env.Host,
-			region:    firstNonEmpty(env.UserRegion, env.Region),
+			region:    firstNonEmpty(string(env.UserRegion), env.Region),
 			source:    "app",
 		}, true
 	}
