@@ -38,8 +38,8 @@ machine.
 - **Spend first** — today's cost in big type, the month so far with a forecast, daily spend stacked
   by tool, and rankings by cost.
 - **Plan quotas** — Codex, Claude, Cursor, Copilot, GLM, Trae, WorkBuddy, Qoder, ZCode and your
-  DeepSeek API balance, fetched from each provider and detected automatically. Usage windows show the share
-  used and when they reset; credit balances show what is left and how many days that buys.
+  DeepSeek API balance, fetched from each provider and detected automatically. Usage windows show
+  the share used and when they reset; credit balances show what is left and how many days that buys.
 - **Live sessions** — what is running right now, with its cost so far, spend per hour, cache hit
   rate and an estimated output speed.
 - **Menu bar** — today's spend (or spend per hour, cache hit rate, quota) beside the icon; the panel
