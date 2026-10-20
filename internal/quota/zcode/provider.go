@@ -3,10 +3,12 @@ package zcode
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -152,7 +154,10 @@ func (p *Provider) Fetch(ctx context.Context) (plan.Snapshot, error) {
 	if envelope.Data == nil {
 		return plan.Snapshot{}, plan.NewError(plan.ReasonNoData, nil)
 	}
-	windows := envelope.Data.windows()
+	windows, err := envelope.Data.windows()
+	if err != nil {
+		return plan.Snapshot{}, err
+	}
 	if len(windows) == 0 {
 		return plan.Snapshot{}, plan.NewError(plan.ReasonNoWindows, nil)
 	}
@@ -165,29 +170,38 @@ func (p *Provider) Fetch(ctx context.Context) (plan.Snapshot, error) {
 	}, nil
 }
 
-// flexFloat accepts a number stated as a JSON number or a JSON string.
-type flexFloat float64
+// flexFloat accepts a number stated as a JSON number or a JSON string. A value
+// that cannot be read at all is remembered instead of being silently zeroed, so
+// a broken grant surfaces as a malformed response rather than as a window that
+// quietly disappears from the card.
+type flexFloat struct {
+	Value float64
+	Bad   bool
+}
 
 func (f *flexFloat) UnmarshalJSON(raw []byte) error {
+	f.Value, f.Bad = 0, false
 	text := strings.TrimSpace(string(raw))
 	if text == "" || text == "null" {
-		*f = 0
 		return nil
 	}
 	if text[0] == '"' {
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
-			*f = 0
+			f.Bad = true
 			return nil
 		}
 		text = strings.TrimSpace(s)
+		if text == "" {
+			return nil
+		}
 	}
 	v, err := strconv.ParseFloat(text, 64)
 	if err != nil {
-		*f = 0
+		f.Bad = true
 		return nil
 	}
-	*f = flexFloat(v)
+	f.Value = v
 	return nil
 }
 
@@ -198,33 +212,29 @@ type response struct {
 }
 
 type data struct {
-	ServerTime flexFloat `json:"server_time"`
-	Plans      []planRec `json:"plans"`
-	Balances   []balance `json:"balances"`
+	Plans    []planRec `json:"plans"`
+	Balances []balance `json:"balances"`
 }
 
 type planRec struct {
-	Name   string `json:"name"`
-	PlanID string `json:"plan_id"`
-	Status string `json:"status"`
+	Name string `json:"name"`
 }
 
 type balance struct {
-	EntitlementID  string    `json:"entitlement_id"`
-	ShowName       string    `json:"show_name"`
-	UnitType       string    `json:"unit_type"`
-	Meter          string    `json:"meter"`
-	TotalUnits     flexFloat `json:"total_units"`
-	UsedUnits      flexFloat `json:"used_units"`
-	RemainingUnits flexFloat `json:"remaining_units"`
-	PeriodStart    flexFloat `json:"period_start"`
-	PeriodEnd      flexFloat `json:"period_end"`
-	ExpiresAt      flexFloat `json:"expires_at"`
+	ShowName   string    `json:"show_name"`
+	UnitType   string    `json:"unit_type"`
+	TotalUnits flexFloat `json:"total_units"`
+	UsedUnits  flexFloat `json:"used_units"`
+	PeriodEnd  flexFloat `json:"period_end"`
+	ExpiresAt  flexFloat `json:"expires_at"`
 }
 
 // businessError maps a non-zero envelope code onto a plan reason.
 func (r response) businessError() error {
-	switch float64(r.Code) {
+	if r.Code.Bad {
+		return plan.NewError(plan.ReasonMalformed, fmt.Errorf("zcode: unreadable envelope code %q", r.Msg))
+	}
+	switch r.Code.Value {
 	case 0:
 		return nil
 	case 401, 403, 1001:
@@ -232,7 +242,9 @@ func (r response) businessError() error {
 	case 429:
 		return plan.NewError(plan.ReasonRateLimited, nil)
 	}
-	return plan.NewError(plan.ReasonHTTPStatus, nil)
+	// A business code arrives inside a 200 response, so it is not an HTTP
+	// status: the endpoint answered, it just had no plan to report.
+	return plan.NewError(plan.ReasonNoData, fmt.Errorf("zcode: business code %v: %s", r.Code.Value, r.Msg))
 }
 
 // planName is the plan's display name, falling back to a stable label.
@@ -245,43 +257,81 @@ func (d *data) planName() string {
 	return defaultPlanName
 }
 
-// windows converts the plan's per-model grants into quota windows, the
-// soonest to expire first.
-func (d *data) windows() []plan.Window {
-	seen := map[string]bool{}
+// windows converts the plan's per-model grants into quota windows, soonest to
+// reset first.
+//
+// The payload may carry more than one grant for a model. Grants that reset at
+// the same instant are one bucket and are summed; when they reset at different
+// instants, the current period is the window the dashboard is about, so the
+// later grant is left for its own period rather than being added to today's
+// allowance.
+func (d *data) windows() ([]plan.Window, error) {
 	var out []plan.Window
+	index := map[string]int{}
 	for _, b := range d.Balances {
 		name := strings.TrimSpace(b.ShowName)
 		if name == "" {
 			continue
 		}
-		if seen[name] {
-			continue
+		if b.TotalUnits.Bad || b.UsedUnits.Bad || b.PeriodEnd.Bad || b.ExpiresAt.Bad {
+			return nil, plan.NewError(plan.ReasonMalformed, fmt.Errorf("zcode: unreadable grant for %s", name))
 		}
-		total := float64(b.TotalUnits)
+		total := b.TotalUnits.Value
 		if total <= 0 {
 			continue
 		}
-		seen[name] = true
-		used := float64(b.UsedUnits)
+		used := b.UsedUnits.Value
 		if used < 0 {
 			used = 0
 		}
-		w := plan.Window{
+		reset := resetInstant(b)
+		if at, ok := index[name]; ok {
+			kept := &out[at]
+			if kept.ResetsAt.Equal(reset) {
+				kept.Limit += total
+				kept.Used += used
+				kept.UsedPercent = clampPercent(kept.Used / kept.Limit * 100)
+				continue
+			}
+			if !kept.ResetsAt.IsZero() && (reset.IsZero() || kept.ResetsAt.Before(reset)) {
+				continue
+			}
+			kept.Limit, kept.Used, kept.Unit = total, used, unitName(b.UnitType)
+			kept.ResetsAt = reset
+			kept.UsedPercent = clampPercent(used / total * 100)
+			continue
+		}
+		index[name] = len(out)
+		out = append(out, plan.Window{
 			Name:        name,
 			Limit:       total,
 			Used:        used,
 			Unit:        unitName(b.UnitType),
 			UsedPercent: clampPercent(used / total * 100),
-		}
-		if reset := epochTime(float64(b.PeriodEnd)); !reset.IsZero() {
-			w.ResetsAt = reset
-		} else if reset := epochTime(float64(b.ExpiresAt)); !reset.IsZero() {
-			w.ResetsAt = reset
-		}
-		out = append(out, w)
+			ResetsAt:    reset,
+		})
 	}
-	return out
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].ResetsAt, out[j].ResetsAt
+		switch {
+		case a.Equal(b):
+			return out[i].Name < out[j].Name
+		case a.IsZero():
+			return false
+		case b.IsZero():
+			return true
+		}
+		return a.Before(b)
+	})
+	return out, nil
+}
+
+// resetInstant is when the grant's current period ends.
+func resetInstant(b balance) time.Time {
+	if reset := epochTime(b.PeriodEnd.Value); !reset.IsZero() {
+		return reset
+	}
+	return epochTime(b.ExpiresAt.Value)
 }
 
 // unitName is the unit as the dashboard shows it.

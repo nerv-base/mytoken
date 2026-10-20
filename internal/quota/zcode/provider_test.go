@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -237,7 +238,9 @@ func TestFetchPayloadErrors(t *testing.T) {
 		{"no data", `{"code":0,"msg":"","data":null}`, plan.ReasonNoData},
 		{"no windows", `{"code":0,"data":{"balances":[]}}`, plan.ReasonNoWindows},
 		{"zero grant", `{"code":0,"data":{"balances":[{"show_name":"GLM-5.3","total_units":0}]}}`, plan.ReasonNoWindows},
-		{"business", `{"code":3001,"msg":"parameter error"}`, plan.ReasonHTTPStatus},
+		{"business", `{"code":3001,"msg":"parameter error"}`, plan.ReasonNoData},
+		{"unreadable code", `{"code":"nope","msg":""}`, plan.ReasonMalformed},
+		{"unreadable grant", `{"code":0,"data":{"balances":[{"show_name":"GLM-5.3","total_units":"3,000,000"}]}}`, plan.ReasonMalformed},
 		{"business unauthorized", `{"code":401,"msg":"token expired"}`, plan.ReasonUnauthorized},
 	}
 	for _, tc := range cases {
@@ -312,7 +315,7 @@ func TestCandidateSecrets(t *testing.T) {
 }
 
 func TestNodePlatform(t *testing.T) {
-	cases := map[string]string{"windows": "win32", "": "win32", "darwin": "darwin", "linux": "linux"}
+	cases := map[string]string{"windows": "win32", "darwin": "darwin", "linux": "linux", "": ""}
 	for goos, want := range cases {
 		if got := nodePlatform(goos); got != want {
 			t.Errorf("nodePlatform(%q) = %q, want %q", goos, got, want)
@@ -333,5 +336,99 @@ func TestDefaultConfigDir(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, filepath.Join(dataRootName, configDirName)) {
 		t.Errorf("defaultConfigDir = %q, want a %s suffix", got, filepath.Join(dataRootName, configDirName))
+	}
+}
+
+// TestFetchRetryAfter pins that a 429 carries the server's Retry-After through to
+// the service, which is what its backoff reads.
+func TestFetchRetryAfter(t *testing.T) {
+	dir := t.TempDir()
+	writeCredentials(t, dir, testSecret, "test-jwt", "")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "42")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	p := testProvider(t, server.URL, dir)
+	_, err := p.Fetch(context.Background())
+	if !plan.IsReason(err, plan.ReasonRateLimited) {
+		t.Fatalf("error = %v, want a rate-limited reason", err)
+	}
+	var qe *plan.Error
+	if !errors.As(err, &qe) {
+		t.Fatalf("error = %v, want a *plan.Error", err)
+	}
+	if qe.RetryAfter != 42*time.Second {
+		t.Errorf("RetryAfter = %v, want %v", qe.RetryAfter, 42*time.Second)
+	}
+}
+
+// TestDetectDoesNotUseNetwork pins the contract that Detect is local: the
+// transport fails the test if it is ever reached.
+func TestDetectDoesNotUseNetwork(t *testing.T) {
+	dir := t.TempDir()
+	writeCredentials(t, dir, testSecret, "test-jwt", "1a4666b6-608a-42e8-8f35-3afdde6d64b3")
+	p := New(Options{
+		Transport: failTransport{t: t},
+		ConfigDir: dir,
+		Getenv:    func(string) string { return "" },
+		Home:      `C:\Users\tester`,
+		GOOS:      "windows",
+	})
+	if !p.Detect(context.Background()) {
+		t.Error("Detect = false, want true")
+	}
+}
+
+type failTransport struct{ t *testing.T }
+
+func (f failTransport) Do(*http.Request) (*http.Response, error) {
+	f.t.Error("Detect reached the network")
+	return nil, errors.New("no network in tests")
+}
+
+// TestWindowsMergeAndOrder pins how duplicate grants and ordering are resolved:
+// same reset instant means one bucket, a later period is not added to the
+// current one, and the window that resets soonest comes first.
+func TestWindowsMergeAndOrder(t *testing.T) {
+	d := &data{Balances: []balance{
+		{ShowName: "later", UnitType: "token", TotalUnits: flexFloat{Value: 10}, PeriodEnd: flexFloat{Value: 1792598399}},
+		{ShowName: "merged", UnitType: "token", TotalUnits: flexFloat{Value: 100}, UsedUnits: flexFloat{Value: 90}, PeriodEnd: flexFloat{Value: 1792511999}},
+		{ShowName: "merged", UnitType: "token", TotalUnits: flexFloat{Value: 400}, UsedUnits: flexFloat{Value: 10}, PeriodEnd: flexFloat{Value: 1792511999}},
+		{ShowName: "next period", UnitType: "token", TotalUnits: flexFloat{Value: 5}, PeriodEnd: flexFloat{Value: 1792678399}},
+		{ShowName: "next period", UnitType: "token", TotalUnits: flexFloat{Value: 5000}, PeriodEnd: flexFloat{Value: 1792511999}},
+		{ShowName: "no reset", UnitType: "token", TotalUnits: flexFloat{Value: 7}},
+	}}
+	got, err := d.windows()
+	if err != nil {
+		t.Fatalf("windows: %v", err)
+	}
+	names := make([]string, len(got))
+	for i, w := range got {
+		names[i] = w.Name
+	}
+	want := []string{"merged", "next period", "later", "no reset"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("order = %v, want %v", names, want)
+	}
+	if got[0].Limit != 500 || got[0].Used != 100 {
+		t.Errorf("merged grant = %+v, want limit 500 used 100", got[0])
+	}
+	if got[0].UsedPercent < 19.99 || got[0].UsedPercent > 20.01 {
+		t.Errorf("merged percent = %v, want 20", got[0].UsedPercent)
+	}
+	if got[1].Limit != 5000 {
+		t.Errorf("current period limit = %v, want the sooner-period grant 5000", got[1].Limit)
+	}
+}
+
+// TestWindowsUnreadableGrant pins that a grant whose numbers cannot be read is
+// a reported failure, not a window that silently disappears.
+func TestWindowsUnreadableGrant(t *testing.T) {
+	d := &data{Balances: []balance{
+		{ShowName: "GLM-5.3", TotalUnits: flexFloat{Bad: true}, PeriodEnd: flexFloat{Value: 1792511999}},
+	}}
+	if _, err := d.windows(); !plan.IsReason(err, plan.ReasonMalformed) {
+		t.Fatalf("error = %v, want reason %q", err, plan.ReasonMalformed)
 	}
 }

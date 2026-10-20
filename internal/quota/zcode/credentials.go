@@ -188,16 +188,13 @@ func baseName(name string) string {
 }
 
 // nodePlatform mirrors Node's process.platform, which the app's fallback
-// secret embeds.
+// secret embeds. An unknown platform stays empty rather than pretending to be
+// Windows, so a wrong guess cannot silently match another platform's secret.
 func nodePlatform(goos string) string {
-	switch goos {
-	case "windows":
+	if goos == "windows" {
 		return "win32"
-	case "":
-		return "win32"
-	default:
-		return goos
 	}
+	return goos
 }
 
 // defaultConfigDir returns the directory holding credentials.json.
