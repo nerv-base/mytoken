@@ -32,7 +32,7 @@ API 价格给每次请求算出等价费用，展示今日与本月花费、套�
 - **API 等价费用** —— 优先用 models.dev 的价格、LiteLLM 兜底，界面明确标注这是“按官方 API 价”的等价费用。
   套餐、网关或议价不同时，可以按模型自定义单价；不叠加供应商倍率，也不推断折扣。
 - **花费优先** —— 今日花费大字显示，本月累计带月末预测，每日花费按工具堆叠，排行按花费。
-- **套餐额度** —— Codex、Claude、Cursor、Copilot、GLM、Trae、WorkBuddy、Qoder 以及 DeepSeek API 余额，
+- **套餐额度** —— Codex、Claude、Cursor、Copilot、GLM、Trae、WorkBuddy、Qoder、ZCode 以及 DeepSeek API 余额，
   自动检测并向各服务商请求。用量窗口显示已用比例和重置时间；积分余额显示剩余和还能用多少天。
 - **正在进行** —— 当前运行中的会话：已花费、每小时花费、缓存命中率和估算的输出速度。
 - **菜单栏** —— 图标旁显示今日花费（也可选每小时花费、缓存命中率、额度）；面板显示今日、正在进行的会话和
@@ -244,6 +244,7 @@ Linux 为 `~/.config/<editor>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…`�
 | Trae（CN / Global） | Trae 套餐用量，来自应用登录 |
 | WorkBuddy | WorkBuddy 套餐用量，来自应用登录 |
 | Qoder | Qoder 套餐用量，来自应用登录 |
+| ZCode | ZCode Start Plan 的 token 额度，来自 ZCode 应用登录 |
 | DeepSeek | API 账户余额，来自 DeepSeek Harness 的凭据或 `DEEPSEEK_API_KEY` |
 
 只有检测到某服务商的凭据时才会出现对应的额度卡片。百分比窗口显示已用比例和重置时间；积分余额显示剩余金额、

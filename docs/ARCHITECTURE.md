@@ -331,10 +331,11 @@ type Provider interface {
   snapshot and the status are persisted, under `quota.plan.<id>`; `Offline` reads the cache
   without fetching.
 - `internal/quota/providers/providers.go` wires Codex, Claude Code, Cursor, GitHub Copilot, GLM,
-  DeepSeek, Trae (CN and Global), WorkBuddy (and its AI variant) and Qoder. Codex reads its
+  DeepSeek, Trae (CN and Global), WorkBuddy (and its AI variant), Qoder and ZCode. Codex reads its
   existing `$CODEX_HOME/auth.json` (default `~/.codex`) and calls the ChatGPT backend usage endpoint;
-  DeepSeek reads its Harness credential or `DEEPSEEK_API_KEY` and calls the balance endpoint. No
-  provider refreshes or rewrites a stored login.
+  DeepSeek reads its Harness credential or `DEEPSEEK_API_KEY` and calls the balance endpoint. ZCode
+  unseals the token the ZCode app stores in `~/.zcode/v2/credentials.json` and calls the ZCode
+  gateway's plan-balance endpoint. No provider refreshes or rewrites a stored login.
 - The UI only shows a quota card for a provider whose credential was detected. There is no
   separate consent step, and no credential is copied into the index.
 
