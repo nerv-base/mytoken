@@ -3,12 +3,26 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
-## Unreleased
+## 0.5.4
 
 - **The token card has an All range.** The card now offers the same four
   ranges as the other pages — the last 7, 30 and 90 days and all time. All
   time reads the whole history when it is chosen and folds it into weekly
   or monthly bars, so a long history stays readable.
+- **ZCode plan quota.** The plan card now reads the ZCode Start Plan balance
+  from the login the ZCode app already stored, so its grants and their reset
+  times sit beside the other providers instead of leaving a gap.
+- **Trae appears again.** The current Trae client stores its sign-in region
+  as an object rather than a string, which made the whole sign-in unreadable
+  and the Trae card never appear. Both shapes are read now, and a region the
+  app does not recognise no longer takes the card down with it.
+- **DeepSeek Harness speed is measured, not guessed.** The live card's tokens
+  per second came from the gaps between requests, and a gap also carries the
+  wait for the first token and the tool round trips, so DSH sessions read two
+  to seven times slower than DeepSeek Harness's own figure. The reader now
+  keeps the decode window from each reply and divides by it, so a DSH session
+  reads 249.9 tok/s where it used to read 82. Tools that time nothing keep
+  the old estimate.
 
 ## 0.5.3
 
