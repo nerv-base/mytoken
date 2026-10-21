@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/zzstar101/mytoken/internal/model"
 	"github.com/zzstar101/mytoken/internal/query"
+	"github.com/zzstar101/mytoken/internal/traekey"
 )
 
 // settingsState is the Settings page's data and what is being edited.
@@ -33,6 +35,11 @@ type settingsState struct {
 	aliasFrom, aliasTo string
 	priceModel         string
 	price              [4]float64
+
+	// The database key being typed and the encrypted tool it belongs to.
+	keyTool  model.Harness
+	keyValue string
+	keyStep  string // the step of a capture that is running
 
 	// Confirmations.
 	confirmRebuild bool
@@ -379,6 +386,13 @@ func (a *App) sourceRow(c *ui.Context, pal palette, s Source) {
 			} else if s.Requests > 0 {
 				caption(c, pal, trf("srcStats", fmtInt(s.Requests), fmtAgo(now, s.LastSeen))).FontSize(11)
 			}
+			if s.NeedsKey {
+				if st.keyTool == s.Harness {
+					a.dbKeyEditor(c, pal, s)
+				} else {
+					a.dbKeyStatus(c, pal, s)
+				}
+			}
 		})
 		// A folder is only asked for when detection missed the tool, or to
 		// change one the user chose before.
@@ -402,6 +416,30 @@ func (a *App) sourceRow(c *ui.Context, pal palette, s Source) {
 				})
 			}
 		}
+		// The button opens the field below; while it is open the field's own
+		// Save and Cancel are the actions.
+		if s.NeedsKey && st.keyTool != h {
+			if !s.HasKey && traekey.Supported() {
+				// The key exists only in memory, so reading it from the tool is
+				// the whole job; the field below is the fallback for a machine
+				// where that cannot work.
+				if ui.Button(c, tr("authRead")).Disabled(st.act.running).Clicked() {
+					a.captureKey(h)
+				}
+			} else {
+				label := tr("setDbKey")
+				if s.HasKey {
+					label = tr("changeDbKey")
+				}
+				if ui.Button(c, label).Disabled(st.act.running).Clicked() {
+					if st.keyTool == h {
+						st.keyTool, st.keyValue = "", ""
+					} else {
+						st.keyTool, st.keyValue = h, ""
+					}
+				}
+			}
+		}
 		on := s.Enabled
 		if ui.Switch(c, &on).Label(h.DisplayName()).Disabled(st.act.running).Changed() {
 			// Show the change at once; the reload confirms it.
@@ -413,6 +451,95 @@ func (a *App) sourceRow(c *ui.Context, pal palette, s Source) {
 			a.act("", func(ctx context.Context) error {
 				return a.d.Sources.SetEnabled(ctx, h, on)
 			})
+		}
+	})
+}
+
+// dbKeyStatus says where the key stands: stored, being fetched, or missing with
+// a note that fetching it is one click away.
+func (a *App) dbKeyStatus(c *ui.Context, pal palette, s Source) {
+	st := &a.set
+	switch {
+	case s.HasKey:
+		caption(c, pal, tr("dbKeyStored")).FontSize(11).TextColor(pal.good)
+	case st.act.running && st.keyStep != "":
+		caption(c, pal, stepText(st.keyStep)).FontSize(11).TextColor(pal.accent).SingleLine().Ellipsis("…")
+	default:
+		caption(c, pal, tr("authHint")).FontSize(11)
+	}
+}
+
+// captureKey asks the tool for its own key. It opens the tool, reads the key out
+// of its memory and closes it again, so the user only clicks once; when that
+// cannot work here the field opens instead, so a key from a tool that already
+// recovers one can still be pasted.
+func (a *App) captureKey(h model.Harness) {
+	st := &a.set
+	st.keyStep, st.err, st.notice = "", "", ""
+	a.run(&st.act, func(ctx context.Context) func() {
+		err := a.d.Sources.CaptureKey(ctx, h, func(step string) {
+			a.post(func() { st.keyStep = step })
+		})
+		return func() {
+			st.keyStep = ""
+			if err != nil {
+				st.err = err.Error()
+				st.keyTool, st.keyValue = h, ""
+			} else {
+				st.notice = trf("authDone", h.DisplayName())
+			}
+			a.loadSettings()
+		}
+	})
+}
+
+// stepText names one step of a capture, which takes long enough to be worth
+// reporting.
+func stepText(step string) string {
+	switch step {
+	case traekey.StepCopy:
+		return tr("authStepCopy")
+	case traekey.StepSign:
+		return tr("authStepSign")
+	case traekey.StepLaunch:
+		return tr("authStepLaunch")
+	case traekey.StepScan:
+		return tr("authStepScan")
+	case traekey.StepStop:
+		return tr("authStepStop")
+	}
+	return tr("authWorking")
+}
+
+// dbKeyEditor renders the one-line field where a user pastes the key an
+// encrypted tool needs. The key is proved against the database before it is
+// stored, so a typo is refused here instead of turning into an empty scan.
+func (a *App) dbKeyEditor(c *ui.Context, pal palette, s Source) {
+	st := &a.set
+	h := s.Harness
+	if st.keyTool != h {
+		return
+	}
+	ui.TextInput(c, &st.keyValue).Placeholder(tr("dbKeyPlaceholder")).Label(tr("setDbKey")).FillWidth()
+	caption(c, pal, tr("dbKeyHint")).FontSize(11)
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		if ui.Button(c, tr("save")).Disabled(st.act.running).Clicked() {
+			key := strings.TrimSpace(st.keyValue)
+			st.keyTool, st.keyValue = "", ""
+			a.act(trf("dbKeySet", h.DisplayName()), func(ctx context.Context) error {
+				return a.d.Sources.SetKey(ctx, h, key)
+			})
+		}
+		if ui.Button(c, tr("cancel")).Clicked() {
+			st.keyTool, st.keyValue = "", ""
+		}
+		if s.HasKey {
+			if ui.Button(c, tr("clearDbKey")).Disabled(st.act.running).Clicked() {
+				st.keyTool, st.keyValue = "", ""
+				a.act(trf("dbKeyCleared", h.DisplayName()), func(ctx context.Context) error {
+					return a.d.Sources.SetKey(ctx, h, "")
+				})
+			}
 		}
 	})
 }

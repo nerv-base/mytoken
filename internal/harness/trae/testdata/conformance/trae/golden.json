@@ -1,0 +1,104 @@
+{
+  "harness": "trae",
+  "sources": [
+    {
+      "path": "database.db",
+      "kind": "sqlite"
+    }
+  ],
+  "events": [
+    {
+      "harness": "trae",
+      "dedupKey": "trae:turn-1",
+      "sessionId": "sess-alpha",
+      "projectPath": "/work/alpha",
+      "timestamp": "2026-10-16T01:26:51.935Z",
+      "model": "deepseek-v4.1-flash",
+      "tokens": {
+        "input": 4911,
+        "output": 7091,
+        "cacheRead": 118784,
+        "cacheWrite": 0,
+        "reasoning": 65
+      }
+    },
+    {
+      "harness": "trae",
+      "dedupKey": "trae:turn-2",
+      "sessionId": "sess-alpha",
+      "projectPath": "/work/alpha",
+      "timestamp": "2026-10-16T01:30:00Z",
+      "model": "kimi-k2",
+      "tokens": {
+        "input": 700,
+        "output": 200,
+        "cacheRead": 0,
+        "cacheWrite": 300,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "trae",
+      "dedupKey": "trae:turn-3",
+      "sessionId": "sess-beta",
+      "projectPath": "/work/beta",
+      "timestamp": "2026-10-16T01:43:20Z",
+      "model": "step-3",
+      "tokens": {
+        "input": 50,
+        "output": 10,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "trae",
+      "dedupKey": "trae:turn-4",
+      "sessionId": "sess-alpha",
+      "projectPath": "/work/alpha",
+      "timestamp": "2026-10-16T01:33:20Z",
+      "model": "deepseek-v4.1-flash",
+      "tokens": {
+        "input": 200,
+        "output": 40,
+        "cacheRead": 500,
+        "cacheWrite": 100,
+        "reasoning": 20
+      }
+    },
+    {
+      "harness": "trae",
+      "dedupKey": "trae:turn-9",
+      "sessionId": "sess-alpha",
+      "projectPath": "/work/alpha",
+      "timestamp": "2026-10-16T01:31:40Z",
+      "model": "",
+      "tokens": {
+        "input": 7,
+        "output": 3,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "harness": "trae",
+      "sessionId": "sess-alpha",
+      "title": "Refactor the parser",
+      "project": "/work/alpha",
+      "startedAt": "2026-10-16T01:26:40Z",
+      "updatedAt": "2026-10-16T01:33:20Z"
+    },
+    {
+      "harness": "trae",
+      "sessionId": "sess-beta",
+      "title": "Fix the flaky test",
+      "project": "/work/beta",
+      "startedAt": "2026-10-16T01:41:40Z",
+      "updatedAt": "2026-10-16T01:43:20Z"
+    }
+  ]
+}

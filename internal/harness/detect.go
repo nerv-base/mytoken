@@ -61,6 +61,7 @@ func Detect(p Parser) Status {
 		found = true
 		if dirHasData(root) {
 			st.Detected = true
+			st.Problem = readinessProblem(p)
 			return st
 		}
 	}
@@ -73,6 +74,16 @@ func Detect(p Parser) Status {
 		st.Problem = "data directory not found"
 	}
 	return st
+}
+
+// readinessProblem asks a parser that can be present but unusable — an
+// encrypted database with no key, say — what the user has to supply. Problem is
+// otherwise only about detection, so a ready parser adds nothing.
+func readinessProblem(p Parser) string {
+	if nr, ok := p.(NotReady); ok {
+		return nr.NotReady()
+	}
+	return ""
 }
 
 // dirHasData reports whether dir holds a plausible data entry. It reads at most

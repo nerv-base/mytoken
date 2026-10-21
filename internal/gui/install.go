@@ -50,6 +50,7 @@ var installHints = map[model.Harness]installHint{
 	model.MiniMaxCode:   {"curl -fsSL https://filecdn.minimax.chat/public/install.sh | bash", "https://github.com/MiniMax-AI/minimax-code"},
 	model.MiMoCode:      {"curl -fsSL https://mimo.xiaomi.com/install | bash", "https://github.com/XiaomiMiMo/MiMo-Code"},
 	model.StepCode:      {"curl -fsSL https://static-openapi.stepfun.com/stepcode/install.sh | bash", "https://www.stepfun.com/stepcode"},
+	model.Trae:          {"", "https://www.trae.ai/"},
 }
 
 // installCard lists the tools not found on this machine, each with how to

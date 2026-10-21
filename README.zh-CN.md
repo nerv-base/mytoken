@@ -23,10 +23,10 @@
 API 价格给每次请求算出等价费用，展示今日与本月花费、套餐额度和正在进行的会话 —— 在原生桌面应用、菜单栏面板
 或命令行里都能看。一切都在你自己的机器上完成。
 
-- **一个窗口里看三十二个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
+- **一个窗口里看三十三个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
   Cline、Roo Code、Kilo Code、Claude Desktop、WorkBuddy、CodeBuddy、Hermes、Qwen Code、Kimi、
   OpenClaude、Grok、OpenClaw、Droid、Goose、Forge、Amp、Kiro、Zed、Antigravity、Codebuff、Mux、
-  ZCode、MiniMax Code、MiMo Code、Step Code。
+  ZCode、MiniMax Code、MiMo Code、Step Code 与 Trae。
 - **会话 × 供应商 × 模型** —— 五类 token 分开统计（input、output、cache read、cache write、
   reasoning），同时给出缓存命中率、按项目 / 按天的拆分，以及子代理树。
 - **API 等价费用** —— 优先用 models.dev 的价格、LiteLLM 兜底，界面明确标注这是“按官方 API 价”的等价费用。
@@ -138,10 +138,31 @@ MyToken!!!!! 读取每个工具本来就保留的日志，只读、不回写：�
 | MiniMax Code | `minimax-code` | — |
 | MiMo Code | `mimo-code` | — |
 | Step Code | `step-code` | — |
+| Trae | `trae` | 需要数据库密钥，见[加密数据库](#加密数据库) |
 
-Cursor、Trae、GitHub Copilot、GLM 和 Qoder 只有额度来源，没有会话日志读取器：它们的本地格式要么不记录可用的
-token（Cursor 每条消息的 `tokenCount` 恒为 0，Qoder 只有 credits），要么是加密的（Trae CN）。见
-[套餐额度](#套餐额度)。
+Cursor、GitHub Copilot、GLM 和 Qoder 只有额度来源，没有会话日志读取器：它们的本地格式不记录可用的
+token（Cursor 每条消息的 `tokenCount` 恒为 0，Qoder 只有 credits）。见[套餐额度](#套餐额度)。
+
+### 加密数据库
+
+有些工具会加密本地历史，并把密钥藏起来，因此里面的用量只有在密钥被提供一次之后才能读。Trae 就是其中之一：
+`ModularData/ai-agent/database.db` 是 SQLCipher 4 数据库，32 字节密钥只存在于运行中的进程内存里——不在配置、
+不在钥匙串条目、也不在任何文件里。
+
+`mytoken` 自己解密这个数据库（AES-256-CBC，逐页 HMAC-SHA512，并折算 WAL），所以密钥一旦保存，读取器就和其他
+读取器一样：离线、只读、不联网。
+
+```sh
+mytoken key trae                    # 从运行中的 Trae 读出密钥
+mytoken key trae "<64 位十六进制>"   # 或者自己填一个
+mytoken key                         # 查看已保存的（打码）
+mytoken key trae --clear            # 清除
+```
+
+密钥只存在于运行中进程的内存里，所以 `mytoken key trae` 直接向 Trae 要：需要时会启动它，从进程内存里读出密钥，
+并先拿数据库第一页验证，再存进索引旁边一个 `0600` 文件。macOS 上这一步用的是应用的一份副本（原安装拒绝调试器附加），
+原安装不会被改动。应用里同一件事在“设置 → 数据源”，只有一个按钮（*授权读取…*）；旁边的输入框留给从别处取回的密钥，
+例如 [trae-db-decrypt](https://github.com/Oh-My-Trae/trae-db-decrypt)。
 
 <details>
 <summary>日志位置</summary>
@@ -180,6 +201,7 @@ token（Cursor 每条消息的 `tokenCount` 恒为 0，Qoder 只有 credits）�
 | MiniMax Code | `minimax-code` | `$MINIMAX_DATA_DIR` / `$MAVIS_DATA_DIR`，否则 `~/.minimax/v2/sqlite/runtime-state.sqlite`（旧版 `~/.mavis`） |
 | MiMo Code | `mimo-code` | `$MIMOCODE_HOME/data`；否则所有平台都用 `$XDG_DATA_HOME/mimocode` 或 `~/.local/share/mimocode`，只读 SQLite |
 | Step Code | `step-code` | `$STEP_CODING_AGENT_SESSION_DIR`、`$STEP_CODING_AGENT_DIR/sessions`，否则 `~/.stepcode/agent/sessions` |
+| Trae | `trae` | `…/Trae CN/ModularData/ai-agent/database.db`（也包括 `TRAE SOLO CN`、`Trae`）——SQLCipher，需先 `mytoken key trae` |
 
 VS Code 系列扩展的 `…/globalStorage` 按平台和编辑器解析 —— 编辑器：VS Code、VS Code Insiders、Cursor、
 Windsurf、VSCodium、Trae；平台：macOS 为 `~/Library/Application Support/<editor>/User/globalStorage`，
@@ -223,6 +245,7 @@ Linux 为 `~/.config/<editor>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…`�
 | `MINIMAX_DATA_DIR`、`MAVIS_DATA_DIR`、`MYTOKEN_MINIMAX_DIRS` | MiniMax Code 数据根目录、旧版根目录，或显式根目录（路径列表） |
 | `MIMOCODE_HOME`、`MIMOCODE_DB`、`MYTOKEN_MIMO_CODE_DIRS` | MiMo Code 数据根目录、精确数据库路径，或显式根目录（路径列表） |
 | `STEP_CODING_AGENT_SESSION_DIR`、`STEP_CODING_AGENT_DIR`、`MYTOKEN_STEP_CODE_DIRS` | Step Code 会话根目录、agent 根目录，或显式根目录（路径列表） |
+| `MYTOKEN_TRAE_DIRS`、`MYTOKEN_TRAE_DBKEY` | Trae 数据目录（路径列表），或直接用环境变量提供数据库密钥 |
 
 </details>
 
@@ -294,6 +317,7 @@ mytoken daily                                  # 每日一行，默认最近 30 
 mytoken daily --days 7 --json                  # 脚本使用
 mytoken quota                                  # 从服务商服务器获取的套餐额度
 mytoken scan                                   # 立刻重新索引
+mytoken key trae "<密钥>"                       # 加密数据源的数据库密钥
 mytoken statusline                             # 给 shell 提示符的一行状态
 mytoken doctor                                 # 只读检查索引、数据源与 schema
 mytoken version

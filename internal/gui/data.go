@@ -75,6 +75,10 @@ type Source struct {
 	Roots    []string // the directories read
 	Override string   // a directory the user chose instead; "" = automatic
 	Problem  string   // why the source cannot be read, in plain words
+	// NeedsKey marks a tool that encrypts its database and keeps the key out of
+	// reach; HasKey says whether the user already gave it.
+	NeedsKey bool
+	HasKey   bool
 	Requests int64
 	LastSeen time.Time
 }
@@ -86,6 +90,13 @@ type Sources interface {
 	// SetRoot checks that dir holds the tool's data and reads it from there;
 	// "" goes back to the automatic location.
 	SetRoot(ctx context.Context, h model.Harness, dir string) error
+	// SetKey stores the key an encrypted tool needs; "" forgets it. A key that
+	// does not open the tool's database is an error, not a stored secret.
+	SetKey(ctx context.Context, h model.Harness, key string) error
+	// CaptureKey asks the tool's own application for its key, which is the only
+	// copy: it opens the tool once, reads the key from memory, stores it and
+	// closes the tool again. progress may be nil and reports step tokens.
+	CaptureKey(ctx context.Context, h model.Harness, progress func(string)) error
 	Rescan(ctx context.Context) error
 }
 

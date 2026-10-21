@@ -473,6 +473,7 @@ func (demoSources) List(context.Context) ([]Source, error) {
 		{Harness: model.DSH, Detected: true, Enabled: true, Roots: []string{"~/.dsh/sessions"}, Requests: 61210, LastSeen: now},
 		{Harness: model.OpenCode, Detected: true, Enabled: false, Roots: []string{"~/.local/share/opencode"}, Requests: 210},
 		{Harness: model.Pi, Override: "/Volumes/work/pi", Detected: true, Enabled: true, Roots: []string{"/Volumes/work/pi"}, Requests: 3120},
+		{Harness: model.Trae, Detected: true, Enabled: true, Roots: []string{"~/Library/Application Support/Trae CN/ModularData/ai-agent"}, NeedsKey: true, HasKey: true, Requests: 4212, LastSeen: now.Add(-2 * time.Hour)},
 		{Harness: model.Gemini, Problem: "folder has no Gemini CLI logs", Enabled: true},
 		{Harness: model.Kimi},
 		{Harness: model.Crush},
@@ -480,7 +481,11 @@ func (demoSources) List(context.Context) ([]Source, error) {
 }
 func (demoSources) SetEnabled(context.Context, model.Harness, bool) error { return nil }
 func (demoSources) SetRoot(context.Context, model.Harness, string) error  { return nil }
-func (demoSources) Rescan(context.Context) error                          { return nil }
+func (demoSources) SetKey(context.Context, model.Harness, string) error   { return nil }
+func (demoSources) CaptureKey(context.Context, model.Harness, func(string)) error {
+	return nil
+}
+func (demoSources) Rescan(context.Context) error { return nil }
 
 type demoPrices struct{}
 

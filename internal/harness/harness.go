@@ -167,6 +167,39 @@ type Rooted interface {
 	WithRoots(roots ...string) Parser
 }
 
+// Keyed is an optional capability of a registered parser whose sources are
+// encrypted with a secret the user supplies once: a database key, a password, a
+// passphrase. The app reads that secret from its own settings and hands it to
+// the parser, so a harness never stores credentials itself and the secret never
+// has to live in a file the tool reads.
+//
+// WithKey must return a parser that shares no mutable state with the receiver,
+// and must not touch the filesystem or the environment while constructing. An
+// empty key means "no key": the returned parser reads nothing and explains why
+// through NotReady. A key the parser cannot use is returned as an error, so the
+// settings page can reject it instead of leaving a harness silently unreadable.
+type Keyed interface {
+	WithKey(key string) (Parser, error)
+}
+
+// DatabaseLister is an optional capability of a parser whose source files can
+// be named without being readable — a locked database still has a path. The key
+// capture needs that path to prove a candidate key against, before any key is
+// available to open it.
+type DatabaseLister interface {
+	DatabaseFiles(ctx context.Context) ([]string, error)
+}
+
+// NotReady is an optional capability of a parser that is installed but cannot
+// read its sources yet — an encrypted database with no key, an expired
+// credential. NotReady returns a one-line English reason for the sources page,
+// or "" when the parser is ready. Detect reports it as Status.Problem on a
+// harness it detected, so the page can ask for what is missing before a scan
+// produces nothing.
+type NotReady interface {
+	NotReady() string
+}
+
 // NewRooted builds a fresh parser for h over exactly roots. It reports false
 // when h is not registered or when its registered parser does not implement
 // Rooted; callers must treat that as a hard error rather than falling back to

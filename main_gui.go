@@ -138,6 +138,7 @@ func (s sources) List(ctx context.Context) ([]gui.Source, error) {
 		out[i] = gui.Source{
 			Harness: v.Harness, Detected: v.Detected, Enabled: v.Enabled, Roots: v.Roots,
 			Override: v.Override, Problem: v.Problem, Requests: v.Requests, LastSeen: v.LastSeen,
+			NeedsKey: v.NeedsKey, HasKey: v.HasKey,
 		}
 	}
 	return out, nil
@@ -149,6 +150,14 @@ func (s sources) SetEnabled(ctx context.Context, h model.Harness, on bool) error
 
 func (s sources) SetRoot(ctx context.Context, h model.Harness, dir string) error {
 	return s.a.SetSourceRoot(ctx, h, dir)
+}
+
+func (s sources) SetKey(ctx context.Context, h model.Harness, key string) error {
+	return s.a.SetSourceKey(ctx, h, key)
+}
+
+func (s sources) CaptureKey(ctx context.Context, h model.Harness, progress func(string)) error {
+	return s.a.CaptureSourceKey(ctx, h, progress)
 }
 
 func (s sources) Rescan(ctx context.Context) error { return s.a.Rescan(ctx) }

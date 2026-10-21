@@ -43,6 +43,7 @@ import (
 	_ "github.com/zzstar101/mytoken/internal/harness/qwen"
 	_ "github.com/zzstar101/mytoken/internal/harness/roo"
 	_ "github.com/zzstar101/mytoken/internal/harness/stepcode"
+	_ "github.com/zzstar101/mytoken/internal/harness/trae"
 	_ "github.com/zzstar101/mytoken/internal/harness/workbuddy"
 	_ "github.com/zzstar101/mytoken/internal/harness/zcode"
 	_ "github.com/zzstar101/mytoken/internal/harness/zed"
@@ -90,8 +91,12 @@ type Source struct {
 	Roots    []string      `json:"roots"`
 	Override string        `json:"override"`
 	Problem  string        `json:"problem"`
-	Requests int64         `json:"requests"`
-	LastSeen time.Time     `json:"lastSeen"`
+	// NeedsKey marks a harness whose sources are encrypted with a secret the
+	// user supplies once; HasKey says whether that secret is stored already.
+	NeedsKey bool      `json:"needsKey"`
+	HasKey   bool      `json:"hasKey"`
+	Requests int64     `json:"requests"`
+	LastSeen time.Time `json:"lastSeen"`
 }
 
 // CustomPrice is a per-model override in USD per 1M tokens.
@@ -278,6 +283,16 @@ func (a *App) parserSet(ctx context.Context) ([]harness.Parser, map[model.Harnes
 				p = r.WithRoots(root)
 			}
 		}
+		if k, ok := p.(harness.Keyed); ok {
+			keyed, err := k.WithKey(readSourceKey(h))
+			if err != nil {
+				// A stored key that does not decode is treated as no key at all,
+				// so the parser reports what it is missing instead of dropping
+				// out of the sources page.
+				keyed, _ = k.WithKey("")
+			}
+			p = keyed
+		}
 		out = append(out, p)
 	}
 	return out, problems
@@ -327,10 +342,22 @@ func (a *App) ListSources(ctx context.Context) ([]Source, error) {
 				probe = r.WithRoots(src.Override)
 			}
 		}
+		if k, ok := probe.(harness.Keyed); ok {
+			src.NeedsKey = true
+			key := readSourceKey(h)
+			src.HasKey = key != ""
+			if keyed, err := k.WithKey(key); err == nil {
+				probe = keyed
+			}
+		}
 		status := harness.Detect(probe)
 		src.Detected = status.Detected
 		src.Roots = status.Roots
 		src.Problem = status.Problem
+		if src.Problem == "" && src.NeedsKey && !src.HasKey {
+			// The data is there but locked, which detection cannot see.
+			src.Problem = "encrypted database: a database key is needed to read it"
+		}
 		if problems[h] != "" {
 			src.Problem = problems[h]
 			src.Detected = false

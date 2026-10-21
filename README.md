@@ -25,10 +25,10 @@ list price, and shows today's and this month's spend, your plan quotas and what 
 now — in a native desktop app, a menu-bar panel, or the command line. Everything stays on your
 machine.
 
-- **Thirty-two harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
+- **Thirty-three harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
   Crush, Cline, Roo Code, Kilo Code, Claude Desktop, WorkBuddy, CodeBuddy, Hermes, Qwen Code, Kimi,
   OpenClaude, Grok, OpenClaw, Droid, Goose, Forge, Amp, Kiro, Zed, Antigravity, Codebuff, Mux,
-  ZCode, MiniMax Code, MiMo Code and Step Code.
+  ZCode, MiniMax Code, MiMo Code, Step Code and Trae.
 - **Session × provider × model** — the five token classes kept apart (input, output, cache read,
   cache write, reasoning), with cache-hit rate, per-project and per-day breakdowns, and sub-agent
   trees.
@@ -149,11 +149,36 @@ still counts toward spend.
 | MiniMax Code | `minimax-code` | — |
 | MiMo Code | `mimo-code` | — |
 | Step Code | `step-code` | — |
+| Trae | `trae` | database key, see [below](#encrypted-databases) |
 
-Cursor, Trae, GitHub Copilot, GLM and Qoder are quota sources without a session-log reader: their
-local formats either report no usable tokens (Cursor's per-message `tokenCount` is always zero,
-Qoder carries credits rather than tokens) or are encrypted (Trae CN). See
-[Plan quotas](#plan-quotas).
+Cursor, GitHub Copilot, GLM and Qoder are quota sources without a session-log reader: their local
+formats report no usable tokens (Cursor's per-message `tokenCount` is always zero, Qoder carries
+credits rather than tokens). See [Plan quotas](#plan-quotas).
+
+### Encrypted databases
+
+Some tools encrypt their local history and keep the key out of reach, so the usage inside is
+readable only after that key is supplied once. Trae is one: its `ModularData/ai-agent/database.db`
+is SQLCipher 4, and the 32-byte key exists only in the memory of the running app — not in its
+settings, its keychain entry or its files.
+
+`mytoken` decrypts that database itself (AES-256-CBC with a per-page HMAC-SHA512, WAL folded in),
+so once the key is stored the reader behaves like every other one: offline, read-only, no network.
+
+```sh
+mytoken key trae                         # read it from the running app
+mytoken key trae "<64 hex characters>"   # or supply one yourself
+mytoken key                              # what is stored, masked
+mytoken key trae --clear                 # forget it
+```
+
+The key exists only in the memory of the running app, so `mytoken key trae` asks the app for it:
+it starts Trae if needed, reads the key out of the process, and proves it against page 1 of the
+database before storing it in a `0600` file next to the index. On macOS that takes a copy of the
+app, because the installed one refuses a debugger; the installation itself is never modified.
+Settings → Sources offers the same as one button (*Authorize reading…*), and the field beside it
+takes a key recovered elsewhere, such as with
+[trae-db-decrypt](https://github.com/Oh-My-Trae/trae-db-decrypt).
 
 <details>
 <summary>Where the logs live</summary>
@@ -192,6 +217,7 @@ Qoder carries credits rather than tokens) or are encrypted (Trae CN). See
 | MiniMax Code | `minimax-code` | `$MINIMAX_DATA_DIR` / `$MAVIS_DATA_DIR`, else `~/.minimax/v2/sqlite/runtime-state.sqlite` (legacy `~/.mavis`) |
 | MiMo Code | `mimo-code` | `$MIMOCODE_HOME/data`; otherwise `$XDG_DATA_HOME/mimocode` or `~/.local/share/mimocode` on every OS, query-only SQLite |
 | Step Code | `step-code` | `$STEP_CODING_AGENT_SESSION_DIR`, `$STEP_CODING_AGENT_DIR/sessions`, else `~/.stepcode/agent/sessions` |
+| Trae | `trae` | `…/Trae CN/ModularData/ai-agent/database.db` (also `TRAE SOLO CN` and `Trae`) — SQLCipher, read after `mytoken key trae` |
 
 For the VS Code family extensions, `…/globalStorage` is resolved per platform and per editor —
 editors: VS Code, VS Code Insiders, Cursor, Windsurf, VSCodium, Trae; platforms:
@@ -236,6 +262,7 @@ Every reader can be pointed somewhere else for non-default installs, containers 
 | `MINIMAX_DATA_DIR`, `MAVIS_DATA_DIR`, `MYTOKEN_MINIMAX_DIRS` | MiniMax Code data root, legacy root, or explicit roots (path list) |
 | `MIMOCODE_HOME`, `MIMOCODE_DB`, `MYTOKEN_MIMO_CODE_DIRS` | MiMo Code data root, exact database, or explicit roots (path list) |
 | `STEP_CODING_AGENT_SESSION_DIR`, `STEP_CODING_AGENT_DIR`, `MYTOKEN_STEP_CODE_DIRS` | Step Code session root, agent root, or explicit roots (path list) |
+| `MYTOKEN_TRAE_DIRS`, `MYTOKEN_TRAE_DBKEY` | Trae data directories (path list), or the database key without storing it |
 
 </details>
 
@@ -321,6 +348,7 @@ mytoken daily                                  # one row per day, last 30 days
 mytoken daily --days 7 --json                  # scripting
 mytoken quota                                  # plan quota fetched from the providers' servers
 mytoken scan                                   # re-index now
+mytoken key trae "<key>"                       # database key for an encrypted source
 mytoken statusline                             # one-line status for a shell prompt
 mytoken doctor                                 # check index, sources and schema, read-only
 mytoken version

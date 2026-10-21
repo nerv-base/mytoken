@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/zzstar101/mytoken/internal/model"
 )
 
 // harness wires an App to the demo data with a Post queue the test drains.
@@ -20,6 +21,11 @@ type harness struct {
 }
 
 func newHarness(t testing.TB) *harness {
+	return newHarnessWith(t, demoSources{})
+}
+
+// newHarnessWith wires the demo data but a caller-supplied source list.
+func newHarnessWith(t testing.TB, sources Sources) *harness {
 	h := &harness{now: time.Date(2026, 10, 19, 15, 30, 0, 0, time.Local)}
 	lang := os.Getenv("GUI_SHOTS_LANG")
 	if lang == "" {
@@ -29,7 +35,7 @@ func newHarness(t testing.TB) *harness {
 	h.app = New(Deps{
 		Query:   newDemo(h.now),
 		Quotas:  func() []Quota { return demoQuotas(h.now) },
-		Sources: demoSources{},
+		Sources: sources,
 		Prices:  demoPrices{},
 		Maint:   demoMaint{},
 		Prefs:   prefs,
@@ -134,6 +140,13 @@ func TestScreenshots(t *testing.T) {
 			h.app.set.group = g
 			settle(t, h, tt)
 			save(t, tt, filepath.Join(dir, "settings-"+g+"-"+suffix+".png"))
+			if g == "sources" {
+				// The database-key field an encrypted tool needs.
+				h.app.set.keyTool, h.app.set.keyValue = model.Trae, ""
+				settle(t, h, tt)
+				save(t, tt, filepath.Join(dir, "settings-key-"+suffix+".png"))
+				h.app.set.keyTool, h.app.set.keyValue = "", ""
+			}
 		}
 		for _, page := range []string{"overview", "ranking"} {
 			h.app.goTo(page)

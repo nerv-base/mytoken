@@ -193,6 +193,9 @@ func harnessColor(h model.Harness) ui.Color {
 		return ui.Hex("#E5A877")
 	case model.StepCode:
 		return ui.Hex("#6F92E3")
+	case model.Trae:
+		// Trae's own mark is a black tile; the color is the red it accents with.
+		return ui.Hex("#E2564A")
 	}
 	return ui.Hex("#9297A3")
 }
@@ -273,6 +276,7 @@ var harnessIcons = func() map[model.Harness]brandMark {
 		model.MiniMaxCode:   {load("minimax-color"), true, false},
 		model.MiMoCode:      {load("xiaomimimo"), false, false},
 		model.StepCode:      {load("stepfun-color"), true, false},
+		model.Trae:          {load("trae-color"), true, false},
 	}
 }()
 

@@ -8,7 +8,7 @@ The data layer is deliberately small and linear:
 
 ```mermaid
 flowchart LR
-    logs["Tool logs<br/>JSONL · JSON · zstd · SQLite"] --> parsers["internal/harness<br/>32 readers · Discover · Parse"]
+    logs["Tool logs<br/>JSONL · JSON · zstd · SQLite"] --> parsers["internal/harness<br/>33 readers · Discover · Parse"]
     parsers --> scanner["internal/scan<br/>full · quick · watched · poll"]
     pricing["internal/pricing<br/>models.dev · LiteLLM · custom"] --> scanner
     scanner --> store[("internal/store<br/>mytoken.db (SQLite)")]
@@ -72,6 +72,19 @@ parser reports its built-in, environment and explicit roots through `RootOrigin`
 (`builtin`, `env`, `explicit`); the GUI uses `Detect` and `ValidateRoot` to show a detected /
 not-detected / invalid-directory state without walking the log tree. `ValidateRoot` calls
 `WithRoots(dir).Discover` so a picked folder is accepted exactly when the reader can read it.
+
+### Encrypted sources
+
+A tool that encrypts its history keeps the key where no file can reach it — in the memory of the
+process that opened the database. Such a parser implements `harness.Keyed` (`WithKey(string)
+(Parser, error)`) and reports `NotReady()` while it has none, so the settings page can say *why*
+nothing is read instead of showing an empty tool. `internal/traekey` recovers the key once: it
+starts the tool if needed, walks the memory of the process holding the database, and proves every
+candidate with the page-1 HMAC before accepting it. The key is stored in `keys/<harness>.key`
+under the data directory, mode `0600`, deliberately **not** in the settings table: the index is a
+ledger that can be copied or exported, and a credential does not belong in it. Readers decrypt to
+a temporary database, read it read-only and delete it, so nothing in the tool's own files is ever
+touched.
 
 Parsers register themselves from `init()` with `harness.Register`, and the application imports
 every package for its side effect in `internal/app/app.go`. **A parser without that blank import
@@ -404,7 +417,7 @@ performance rescan against the normal app data directory; copy the index to a te
 
 ## Harness coverage status
 
-Each of the 32 registered parsers has a conformance fixture. Passing synthetic conformance is
+Each of the 33 registered parsers has a conformance fixture. Passing synthetic conformance is
 **not** the same as validation against real logs:
 
 - **Protocol-validated against upstream plus synthetic fixtures, without a committed anonymized
@@ -412,11 +425,16 @@ Each of the 32 registered parsers has a conformance fixture. Passing synthetic c
   compatibility paths.
 - **Conformance-only (no real-world fixture yet):** Amp, Kiro, Zed, Antigravity, Codebuff, Mux,
   Hermes and OpenClaw.
-- **No harness is possible from local logs for Cursor, Trae and Qoder.** Cursor v3 reports
-  per-message `tokenCount` as `{0,0}` (and `composerData.usageData` is empty), so a parser could
-  only emit zeros or a character estimate. The Trae CN database is SQLCipher 4 encrypted without a
-  usable read-only key. Qoder transcripts carry `credits` rather than tokens; credits cannot be
-  converted to USD. All three have **quota** support instead, which uses the provider's own API.
+- **Schema validated against a real install, fixture synthetic:** Trae. Its `chat_turn.context`
+  document, its `token_usage` fields and its project join were read out of a real macOS
+  installation, but the committed fixture is built from seed scripts, because a real database is
+  encrypted and carries conversation text. It needs one thing no other parser does — the SQLCipher
+  key the app keeps in memory — and the cross-check between what the app's own UI counted and what
+  the reader produced was done by hand, not by the suite.
+- **No harness is possible from local logs for Cursor and Qoder.** Cursor v3 reports per-message
+  `tokenCount` as `{0,0}` (and `composerData.usageData` is empty), so a parser could only emit zeros
+  or a character estimate. Qoder transcripts carry `credits` rather than tokens; credits cannot be
+  converted to USD. Both have **quota** support instead, which uses the provider's own API.
 - **VS Code-family paths.** `…/globalStorage` is resolved for VS Code, Insiders, Cursor, Windsurf,
   VSCodium and Trae on macOS, Linux and Windows; the Cline/Roo/Kilo readers use the same
   resolution.

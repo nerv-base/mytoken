@@ -39,6 +39,8 @@ func run(args []string, out, errout io.Writer) int {
 		return runDoctor(ctx, args[1:], out, errout)
 	case "scan":
 		return runScan(ctx, args[1:], out, errout)
+	case "key":
+		return runKey(ctx, args[1:], out, errout)
 	case "statusline":
 		return runStatusline(ctx, args[1:], out, errout)
 	case "quota":
@@ -53,6 +55,8 @@ const usage = `Usage: mytoken [summary] [options]   today's and this month's API
        mytoken daily [--days N] [--json] [--no-cost]
        mytoken quota
        mytoken scan
+       mytoken key <harness> [<key>] [--capture] [--clear] [--show]
+                                                          database key for encrypted sources
        mytoken statusline
        mytoken doctor [--json]
        mytoken version | help

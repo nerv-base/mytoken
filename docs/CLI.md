@@ -89,6 +89,29 @@ This is the only command that opens the index writable; it runs the in-place 0.5
 and writes one pre-migration backup next to the index. The profiling flags write Go `pprof`
 profiles and are meant for development.
 
+## key
+
+```
+mytoken key                                  list the harnesses that need a database key
+mytoken key <harness>                        read the key from the running tool and store it
+mytoken key <harness> [--show]               show or print the stored key
+mytoken key <harness> <key> [--capture]      store a key, or re-read it from the tool
+mytoken key <harness> --clear                forget it
+```
+
+A few tools encrypt their local history and keep the key where nothing on disk can reach it, so the
+usage inside is unreadable until the key is supplied once. The key is proved against the tool's
+database before it is stored — a wrong one is refused here rather than turning into an empty scan —
+and it is kept in `keys/<harness>.key` under the data directory, mode `0600`, deliberately not in
+the index, which is a ledger that can be copied or exported. `--clear` forgets it and rescans.
+
+With no key on the command line, `mytoken key <harness>` reads the key from the tool itself: it
+starts the tool when it is not running, walks the memory of its processes, and keeps the candidate
+whose HMAC opens page 1 of the database, so no passphrase or derivation has to be known. On macOS
+that runs against a copy of the app, since the installed one refuses a debugger attach; on Linux the
+kernel has to allow the attach (`kernel.yama.ptrace_scope`), and the error says so. `--capture`
+re-reads a key that is already stored. `MYTOKEN_TRAE_DBKEY` supplies one without storing it.
+
 ## statusline
 
 ```
