@@ -42,6 +42,22 @@ func migrateCacheWrite1h(tx *sql.Tx) (bool, error) {
 	return true, err
 }
 
+// migrateDecodeMs adds the measured generation window to an index written before
+// a reader could report one. The column is evidence, not a token class: an old
+// row keeps the zero default, which means "this log did not time it", and nothing
+// is recounted or repriced by adding it.
+func migrateDecodeMs(tx *sql.Tx) (bool, error) {
+	var n int
+	if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('event_data') WHERE name='decode_ms'`).Scan(&n); err != nil {
+		return false, err
+	}
+	if n == 1 {
+		return false, nil
+	}
+	_, err := tx.Exec(`ALTER TABLE event_data ADD COLUMN decode_ms INTEGER NOT NULL DEFAULT 0`)
+	return true, err
+}
+
 // rebuildEventsView recreates the compatibility view without the cache-ledger
 // tail and reinstalls its write triggers.
 func rebuildEventsView(tx *sql.Tx, sc rollupSchema) error {

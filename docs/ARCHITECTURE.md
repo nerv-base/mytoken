@@ -130,6 +130,17 @@ this normalized shape.
 - **Reasoning** is its own class and is priced at the output rate unless the catalog has an
   explicit reasoning price.
 
+### Measured generation speed
+
+`DecodeMS` is not a token class; it is the one thing about *time* a log can state. A harness that
+journals its own token stream (DSH writes `data.stream` into every settled message, with a
+millisecond time on each record) knows when the first output token arrived and when the message
+settled. The reader records that window, and the live view divides output tokens by it instead of
+estimating speed from the gaps between requests. A log that does not time its stream leaves the
+column zero, which means *not measured*, and the view falls back to repairing request gaps. No
+reader derives a window from timestamps: a guess must never outrank a measurement. A parser that
+starts reporting windows raises its `ParserVersion`, so an older index re-ingests its rows once.
+
 The single free-text field is the session title: `harness.Title` collapses whitespace and
 truncates to 60 runes. It comes only from the first user message, and the store keeps the first
 non-empty title it sees.
@@ -181,7 +192,8 @@ The database is `mytoken.db`.
 - `Store.ReadDB()` is a lazily opened, read-only pool over the same WAL file. The GUI reads a
   consistent snapshot through it while the scanner's writer commits.
 - **Facts vs dimensions.** `event_data` stores one row per request (`dedup_key`, timestamp, five
-  token classes, nullable `log_cost`, computed `cost`, `priced`, request/boundary/bill columns).
+  token classes, the measured `decode_ms` window, nullable `log_cost`, computed `cost`, `priced`,
+  request/boundary/bill columns).
   `event_dimensions` is a string dictionary (harness, session, parent, project, raw project, model,
   provider, base URL, resolved provider, attrib); `event_data.dimension_id` references it. `events`
   is a compatibility **view** joining the two, with `INSTEAD OF` triggers so older queries and

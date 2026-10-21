@@ -311,7 +311,7 @@ func (s *service) loadTx(ctx context.Context, tx *sql.Tx, f Filter, mode ...load
 			for i, id := range rootDims {
 				args[i] = id
 			}
-			factRows, e := tx.QueryContext(ctx, `SELECT dimension_id,timestamp,dedup_key,input,output,cache_read,cache_write,cache_write_1h,reasoning,log_cost,cost,priced,request_id,boundary,bill_amount,bill_unit FROM event_data WHERE dimension_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(rootDims)), ",")+`) ORDER BY timestamp`, args...)
+			factRows, e := tx.QueryContext(ctx, `SELECT dimension_id,timestamp,dedup_key,input,output,cache_read,cache_write,cache_write_1h,reasoning,decode_ms,log_cost,cost,priced,request_id,boundary,bill_amount,bill_unit FROM event_data WHERE dimension_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(rootDims)), ",")+`) ORDER BY timestamp`, args...)
 			if e != nil {
 				return d, e
 			}
@@ -320,7 +320,7 @@ func (s *service) loadTx(ctx context.Context, tx *sql.Tx, f Filter, mode ...load
 				var dim, at int64
 				var logCost, billAmount sql.NullFloat64
 				var billUnit string
-				if e = factRows.Scan(&dim, &at, &v.DedupKey, &v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.Tokens.CacheWrite1h, &v.Tokens.Reasoning, &logCost, &v.Cost, &v.Priced, &v.RequestID, &v.Boundary, &billAmount, &billUnit); e != nil {
+				if e = factRows.Scan(&dim, &at, &v.DedupKey, &v.Tokens.Input, &v.Tokens.Output, &v.Tokens.CacheRead, &v.Tokens.CacheWrite, &v.Tokens.CacheWrite1h, &v.Tokens.Reasoning, &v.DecodeMS, &logCost, &v.Cost, &v.Priced, &v.RequestID, &v.Boundary, &billAmount, &billUnit); e != nil {
 					factRows.Close()
 					return d, e
 				}

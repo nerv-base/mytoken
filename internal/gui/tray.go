@@ -172,8 +172,10 @@ func (a *App) panelHeader(c *ui.Context, pal palette) {
 		// The band: a soft accent glow along the top edge.
 		phase := float32(0.5)
 		if rate > 0 && !reduce {
-			// One sweep every 6 s at rest speed, down to 1.2 s at 200 tok/s.
-			period := 6 - 4.8*math.Min(rate/200, 1)
+			// One sweep every 6 s at rest speed, down to 1.2 s at 320 tok/s:
+			// the ceiling a fast model reaches, so the band still tells a
+			// hundred tokens a second from three hundred.
+			period := 6 - 4.8*math.Min(rate/320, 1)
 			t := float64(p.Now().UnixMilli()%int64(period*1000)) / (period * 1000)
 			phase = float32(t)
 			p.AnimationFrame()

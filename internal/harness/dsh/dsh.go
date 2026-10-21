@@ -59,6 +59,17 @@
 //	CacheWrite = cacheWriteTokens
 //	Reasoning  = reasoningTokens   (separate, additive)
 //
+// # Stream timings
+//
+// assistant/message carries data.stream, the compact journal of the token stream
+// that produced the message, with a millisecond time on every record. The reader
+// keeps one number from it: the time of the first output token, exactly as DSH
+// defines it (a non-empty text or reasoning delta, any tool-call delta, or the
+// first non-empty member of a packed run). Timestamp minus that instant is the
+// request's generation window, stored as UsageEvent.DecodeMS so the live view can
+// report the same tok/s the harness itself shows. A record whose stream is
+// missing or carries no token reports no window.
+//
 // # Sessions
 //
 // Top-level sessions are named "session-<uuid>" and carry no parentSession;
@@ -195,6 +206,62 @@ func (p *Parser) WithRoots(roots ...string) harness.Parser {
 
 // Roots returns the directories to watch.
 func (p *Parser) Roots() []string { return append([]string(nil), p.roots...) }
+
+// ParserVersion reports the parse generation. Version 2 added DecodeMS, the
+// generation window measured from data.stream; rows written by version 1 carry
+// no window and are re-ingested once.
+func (p *Parser) ParserVersion() int { return 2 }
+
+// SourceSessions reports the session ids the events of src carry. One DSH log
+// file is one session: the id in the header record, or the directory name Parse
+// falls back to before that header exists.
+func (p *Parser) SourceSessions(ctx context.Context, src harness.Source) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	id := filepath.Base(filepath.Dir(src.Path))
+	if hdr := sessionHeaderID(src.Path); hdr != "" {
+		id = hdr
+	}
+	return []string{id}, nil
+}
+
+// errHeaderFound ends the header scan at the first session record.
+var errHeaderFound = errors.New("session header found")
+
+// sessionHeaderID returns the id of the log's session header record, or "" when
+// the log does not (yet) contain one. It stops at that record: the header is the
+// first line of a log DSH wrote, and SourceSessions runs on a parser-generation
+// change, so it must not re-read a whole session to answer.
+func sessionHeaderID(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	var r io.Reader = f
+	if isZstdPath(path) {
+		dec, derr := zstd.NewReader(f, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
+		if derr != nil {
+			return ""
+		}
+		defer dec.Close()
+		r = dec
+	}
+	var id string
+	_, _ = readCompleteLines(r, func(line []byte) error {
+		var rec dshRecord
+		if json.Unmarshal(bytes.TrimSpace(line), &rec) != nil {
+			return nil
+		}
+		if rec.Type == "session" {
+			id = rec.ID
+			return errHeaderFound
+		}
+		return nil
+	})
+	return id
+}
 
 var _ harness.Parser = (*Parser)(nil)
 
@@ -555,6 +622,7 @@ func (s *session) consume(line []byte) error {
 		}
 		s.events = append(s.events, model.UsageEvent{
 			Harness:     model.DSH,
+			DecodeMS:    decodeWindow(r.Time, line),
 			DedupKey:    firstNonEmpty(mID(d.Message), respID, fmt.Sprintf("%s#%d", s.id, int64(r.Seq))),
 			RequestID:   respID,
 			Boundary:    s.boundary.Apply(firstNonEmpty(mID(d.Message), respID, fmt.Sprintf("%s#%d", s.id, int64(r.Seq)))),

@@ -35,7 +35,7 @@ const instanceEventDimensionsDDL = `CREATE TABLE event_dimensions__instance(
 
 const instanceEventDataDDL = `CREATE TABLE event_data__instance(
  harness TEXT NOT NULL,instance_id TEXT NOT NULL DEFAULT '` + DefaultInstanceID + `',dedup_key TEXT NOT NULL,dimension_id INTEGER NOT NULL REFERENCES event_dimensions(id),
- timestamp INTEGER NOT NULL,input INTEGER NOT NULL,output INTEGER NOT NULL,cache_read INTEGER NOT NULL,cache_write INTEGER NOT NULL,cache_write_1h INTEGER NOT NULL DEFAULT 0,reasoning INTEGER NOT NULL,
+ timestamp INTEGER NOT NULL,input INTEGER NOT NULL,output INTEGER NOT NULL,cache_read INTEGER NOT NULL,cache_write INTEGER NOT NULL,cache_write_1h INTEGER NOT NULL DEFAULT 0,reasoning INTEGER NOT NULL,decode_ms INTEGER NOT NULL DEFAULT 0,
  log_cost REAL,cost REAL NOT NULL,priced INTEGER NOT NULL,
  request_id TEXT NOT NULL DEFAULT '',boundary TEXT NOT NULL DEFAULT '',bill_amount REAL,bill_unit TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(harness,instance_id,dedup_key))`
@@ -441,7 +441,7 @@ func requireColumns(tx *sql.Tx, table string, columns ...string) error {
 // whole transaction back, so facts, DDL and marker move together.
 func (s *Store) migrateInstance(ctx context.Context, tx *sql.Tx) error {
 	if err := requireColumns(tx, "event_data",
-		"harness", "dedup_key", "dimension_id", "timestamp", "input", "output", "cache_read", "cache_write", "cache_write_1h", "reasoning", "log_cost", "cost", "priced",
+		"harness", "dedup_key", "dimension_id", "timestamp", "input", "output", "cache_read", "cache_write", "cache_write_1h", "reasoning", "decode_ms", "log_cost", "cost", "priced",
 		"request_id", "boundary", "bill_amount", "bill_unit"); err != nil {
 		return err
 	}
@@ -498,7 +498,7 @@ func (s *Store) migrateInstance(ctx context.Context, tx *sql.Tx) error {
 		{
 			table: "event_data", ddl: instanceEventDataDDL,
 			columns:    factColumns,
-			selectList: "harness,'" + DefaultInstanceID + "',dedup_key,dimension_id,timestamp,input,output,cache_read,cache_write,cache_write_1h,reasoning,log_cost,cost,priced,request_id,boundary,bill_amount,bill_unit",
+			selectList: "harness,'" + DefaultInstanceID + "',dedup_key,dimension_id,timestamp,input,output,cache_read,cache_write,cache_write_1h,reasoning,decode_ms,log_cost,cost,priced,request_id,boundary,bill_amount,bill_unit",
 			from:       "event_data",
 		},
 		{
