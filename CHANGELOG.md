@@ -3,6 +3,23 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## 0.5.5
+
+- **Trae's token usage is readable now.** Trae keeps its history in a
+  SQLCipher 4 database and the key to it exists only inside the running app,
+  which is why the tool used to appear with a quota card and no usage. MyToken
+  decrypts that database itself — AES-256-CBC, per-page HMAC-SHA512, with the
+  write-ahead log folded in — and reads every turn's prompt, completion, cache
+  and reasoning tokens, the model it billed, and the workspace it came from.
+  Nothing is written to Trae's files: the reader decrypts to a temporary
+  database, reads it, and deletes it.
+- **One click to authorize.** The key is proved against the database before it
+  is accepted, and MyToken reads it from the running app itself: Settings →
+  Sources offers *Authorize reading…*, and `mytoken key trae` does the same from
+  a terminal, on macOS, Windows and Linux. A key recovered elsewhere can still
+  be pasted, and either way it lives in a `0600` file beside the index rather
+  than inside it.
+
 ## 0.5.4
 
 - **The token card has an All range.** The card now offers the same four
