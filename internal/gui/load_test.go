@@ -103,13 +103,43 @@ func TestOutputRateSameTimestamp(t *testing.T) {
 	}
 }
 
-// A long pause is not generation: it counts as at most 90 seconds.
-func TestOutputRateCapsPause(t *testing.T) {
+// A pause is not generation: a pair of requests split by one says nothing
+// about speed now, so it is dropped rather than reported as a slow request.
+func TestOutputRateDropsPause(t *testing.T) {
 	now := time.Now()
 	ev := rateEvents(now, rateSpec{age: 9 * time.Minute}, rateSpec{age: 0, out: 90})
 	rate, _ := outputRate(ev, now)
-	if math.Abs(rate-1) > 1e-9 {
-		t.Fatalf("rate = %v, want 1", rate)
+	if rate != 0 {
+		t.Fatalf("rate = %v, want 0: a nine-minute pause is not a speed", rate)
+	}
+}
+
+// The number is about now, not about the last ten minutes: a session whose
+// newest request is minutes old shows no speed, though it is still counted
+// among the card's requests.
+func TestOutputRateGoesQuietWhenNothingArrives(t *testing.T) {
+	now := time.Now()
+	ev := rateEvents(now,
+		rateSpec{age: 6 * time.Minute, out: 200},
+		rateSpec{age: 5 * time.Minute, out: 200},
+		rateSpec{age: 4 * time.Minute, out: 200})
+	rate, requests := outputRate(ev, now)
+	if rate != 0 {
+		t.Fatalf("rate = %v, want 0 for requests four minutes old", rate)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2: the count still covers ten minutes", requests)
+	}
+}
+
+// A measured window goes quiet the same way, from the same clock.
+func TestOutputRateMeasurementGoesQuiet(t *testing.T) {
+	now := time.Now()
+	ev := rateEvents(now,
+		rateSpec{age: 3 * time.Minute, out: 250, decodeMS: 1000},
+		rateSpec{age: 2 * time.Minute, out: 250, decodeMS: 1000})
+	if rate, _ := outputRate(ev, now); rate != 0 {
+		t.Fatalf("rate = %v, want 0 for a window that ended two minutes ago", rate)
 	}
 }
 

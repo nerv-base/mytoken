@@ -344,9 +344,19 @@ func byCost(b []query.Bucket) {
 // tray to count it as running.
 const activeWindow = 15 * time.Minute
 
+// liveWindow is how far back the output speed looks. A session that has
+// written nothing for this long is not generating, and the card says so
+// instead of repeating a number from minutes ago; countWindow is the span
+// the card's request count covers.
+const (
+	liveWindow  = 90 * time.Second
+	countWindow = 10 * time.Minute
+)
+
 // recentEvents keeps the last hour of each running session's requests, so
-// the refresh that runs every minute (and after every commit) reads a
-// session's whole history again only when it actually got a new request.
+// the refresh that runs every couple of seconds while something is running
+// (and after every commit) reads a session's whole history again only when
+// it actually got a new request.
 type recentEvents struct {
 	mu sync.Mutex
 	m  map[string]recentEntry
@@ -450,7 +460,7 @@ func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentE
 	return out, nil
 }
 
-// outputRate reports output tokens per second over the last ten minutes.
+// outputRate reports output tokens per second over the last liveWindow.
 //
 // A request whose log timed its own stream (DecodeMS, currently only DSH) is
 // read the way that tool reads itself: its output tokens over exactly the
@@ -465,8 +475,9 @@ func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentE
 // a log measures the requests, not the generation inside them. Both ends of
 // that gap are repaired rather than believed:
 //
-//   - a gap longer than gapCap is a pause for the user or a tool, not
-//     generation, so it counts as at most gapCap;
+//   - a gap longer than the window is a pause for the user or a tool, not
+//     generation, so it is dropped instead of reporting the pause as a slow
+//     speed;
 //   - a gap shorter than the tokens could possibly have taken is a timestamp
 //     artifact (a reader that rounds to the second, or writes several records
 //     of one turn inside the same millisecond), so it counts as at least the
@@ -475,20 +486,28 @@ func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentE
 //     tokens by summed gaps, one bad pair made a whole session absurd.
 //     Requests that share a timestamp count too, instead of being dropped.
 func outputRate(events []query.AttributedEvent, now time.Time) (float64, int) {
-	const window, gapCap = 10 * time.Minute, 90 * time.Second
+	const window = liveWindow
 	// fast is faster than any model generates; it only has to be an honest
 	// upper bound for the estimate.
 	const fast = 300 // tokens per second
+	// requests counts the last ten minutes, which is what the card labels;
+	// only the speed itself is kept to the last liveWindow, because a rate
+	// that still reports a session which stopped four minutes ago does not
+	// describe now.
 	var out, timed int64
 	var secs float64
 	var decode time.Duration
 	n := 0
 	for i := len(events) - 1; i > 0; i-- {
 		e, prev := events[i], events[i-1]
-		if now.Sub(e.Timestamp) > window {
+		age := now.Sub(e.Timestamp)
+		if age > countWindow {
 			break
 		}
 		n++
+		if age > window {
+			continue
+		}
 		if e.DecodeMS > 0 {
 			timed += e.Tokens.Output
 			decode += time.Duration(e.DecodeMS) * time.Millisecond
@@ -496,8 +515,8 @@ func outputRate(events []query.AttributedEvent, now time.Time) (float64, int) {
 		}
 		tokens := e.Tokens.Output + e.Tokens.Reasoning
 		gap := e.Timestamp.Sub(prev.Timestamp)
-		if gap > gapCap {
-			gap = gapCap
+		if gap > window {
+			continue
 		}
 		if floor := time.Duration(float64(tokens) / fast * float64(time.Second)); gap < floor {
 			gap = floor

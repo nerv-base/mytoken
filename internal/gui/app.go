@@ -15,8 +15,9 @@ type App struct {
 
 	page string // "overview", "sessions", "ranking", "projects", "settings"
 
-	ov    overview
-	ovJob job
+	ov      overview
+	ovJob   job
+	liveJob job // the running sessions' speed, refreshed between requests
 	// trayTitle is the menu-bar text last set.
 	trayTitle    string
 	trayTitleSet bool
@@ -123,6 +124,21 @@ func (a *App) Start() {
 			}
 		}
 	}()
+	// A running session's speed ages out on its own: the last ninety seconds
+	// of requests is the window, so the number has to fall when nothing more
+	// arrives, without waiting for the next request to trigger a reload.
+	go func() {
+		t := time.NewTicker(liveEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-a.ctx.Done():
+				return
+			case <-t.C:
+				a.post(a.liveTick)
+			}
+		}
+	}()
 }
 
 // Stop ends the background work.
@@ -173,6 +189,31 @@ func (a *App) dataChanged() {
 	if a.page == "overview" && a.tokAllTime() && (a.tokAll.ready || a.tokAll.err != "") {
 		a.loadTokenAll()
 	}
+}
+
+// liveEvery is how often the running sessions are re-read while they run:
+// often enough to look live, seldom enough to cost nothing.
+const liveEvery = 2 * time.Second
+
+// liveTick re-reads the running sessions and their speeds. It reads nothing
+// but those, so it is cheap, and it does nothing at all when no session is
+// running.
+func (a *App) liveTick() {
+	q := a.d.Query
+	if q == nil || len(a.ov.active) == 0 {
+		return
+	}
+	now := a.now()
+	a.run(&a.liveJob, func(ctx context.Context) func() {
+		active, err := activeSessions(ctx, q, now, &a.recent)
+		return func() {
+			if err != nil {
+				return
+			}
+			a.ov.active = active
+			a.updateTray()
+		}
+	})
 }
 
 func (a *App) minuteTick() {
@@ -258,7 +299,7 @@ func (a *App) run(j *job, work func(ctx context.Context) func()) {
 
 // busy reports whether any job is running or waiting, for tests.
 func (a *App) busy() bool {
-	for _, j := range []*job{&a.ovJob, &a.tokAllJob, &a.rkJob, &a.pjJob, &a.pjdJob, &a.ssJob, &a.sdJob, &a.set.job, &a.set.act} {
+	for _, j := range []*job{&a.ovJob, &a.liveJob, &a.tokAllJob, &a.rkJob, &a.pjJob, &a.pjdJob, &a.ssJob, &a.sdJob, &a.set.job, &a.set.act} {
 		if j.running || j.pending != nil {
 			return true
 		}

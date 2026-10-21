@@ -154,6 +154,11 @@ column zero, which means *not measured*, and the view falls back to repairing re
 reader derives a window from timestamps: a guess must never outrank a measurement. A parser that
 starts reporting windows raises its `ParserVersion`, so an older index re-ingests its rows once.
 
+The number describes *now*, so the running view looks back only ninety seconds for it: a rate that
+still reports a session which stopped four minutes ago is not a rate. The request count beside it
+keeps its ten-minute span, and the view re-reads the running sessions every couple of seconds, which
+is what lets a speed fall to nothing while no request is being written.
+
 The single free-text field is the session title: `harness.Title` collapses whitespace and
 truncates to 60 runes. It comes only from the first user message, and the store keeps the first
 non-empty title it sees.
