@@ -6,8 +6,8 @@
       "kind": "jsonl"
     },
     {
-      "path": "sessions/2026/01/02/rollout-2026-01-02T03-06-00-agent-1.jsonl",
-      "kind": "jsonl"
+      "path": "sessions/2026/01/02/rollout-2026-01-02T03-06-00-agent-1.jsonl.zst",
+      "kind": "jsonl.zstd"
     }
   ],
   "events": [

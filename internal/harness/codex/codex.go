@@ -1,9 +1,12 @@
 // Package codex parses Codex CLI rollout logs.
 //
 // Roots: $CODEX_HOME/sessions or ~/.codex/sessions (plus archived_sessions),
-// layout <root>/YYYY/MM/DD/rollout-*.jsonl. Only token accounting is read:
-// every other payload (messages, reasoning, tool output) is ignored, except the
-// first real user message which becomes the session title.
+// layout <root>/YYYY/MM/DD/rollout-*.jsonl. Codex compresses a rollout to
+// rollout-*.jsonl.zst once the session ends, so both suffixes are read; the
+// uncompressed file is preferred while it is still being appended to. Only
+// token accounting is read: every other payload (messages, reasoning, tool
+// output) is ignored, except the first real user message which becomes the
+// session title.
 //
 // Token normalization (verified against real logs): the usage objects satisfy
 // total_tokens == input_tokens + output_tokens, i.e. cached_input_tokens is a
@@ -33,6 +36,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -42,14 +46,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/zzstar101/mytoken/internal/harness"
 	"github.com/zzstar101/mytoken/internal/model"
 )
 
 const (
 	kindJSONL    = "jsonl"
+	kindJSONLzs  = "jsonl.zstd"
 	fingerprintN = 4096
 	maxDepth     = 6
+
+	// parserVersion is the parse generation. Version 2 reads rollout files
+	// Codex compressed to .jsonl.zst; rows written by version 1 came only from
+	// the plain logs still on disk and are re-ingested once.
+	parserVersion = 2
 )
 
 // Parser implements harness.Parser for Codex CLI.
@@ -147,12 +158,16 @@ func (p *Parser) Discover(ctx context.Context) ([]harness.Source, error) {
 				}
 				return nil
 			}
-			if !strings.HasSuffix(d.Name(), ".jsonl") {
+			if !strings.HasSuffix(d.Name(), ".jsonl") && !isZstdPath(d.Name()) {
 				return nil
 			}
 			if !seen[path] {
 				seen[path] = true
-				out = append(out, harness.Source{Path: path, Kind: kindJSONL})
+				kind := kindJSONL
+				if isZstdPath(path) {
+					kind = kindJSONLzs
+				}
+				out = append(out, harness.Source{Path: path, Kind: kind})
 			}
 			return nil
 		})
@@ -319,9 +334,173 @@ type rawUsage struct {
 
 var readers = sync.Pool{New: func() any { return bufio.NewReaderSize(nil, 1<<20) }}
 
-// Parse implements harness.Parser.
+// decoderPool reuses zstd decoders. A decoder holds its window and history
+// buffers, which dwarf a line buffer; a full scan of an archived Codex home
+// opens hundreds of these, so they are pooled rather than rebuilt per file.
+var decoderPool sync.Pool
+
+// ParserVersion implements harness.Versioned.
+func (p *Parser) ParserVersion() int { return parserVersion }
+
+var _ harness.SourceSessions = (*Parser)(nil)
+
+// SourceSessions implements harness.SourceSessions. A rollout is one thread, so
+// the session ids of src are the one its session_meta names — or, for a rollout
+// whose session_meta line has not been written yet, the id recovered from the
+// file name. Both are found in the first lines, so a reset never decompresses a
+// whole rollout to answer.
+func (p *Parser) SourceSessions(ctx context.Context, src harness.Source) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	id := sessionFromFilename(src.Path)
+	if hdr := sessionMetaID(src.Path); hdr != "" {
+		id = hdr
+	}
+	return []string{id}, nil
+}
+
+// sessionMetaID returns the session id of a rollout's session_meta record, or ""
+// when the log does not (yet) contain one. It stops at that record: Codex writes
+// session_meta once, as the first line, and SourceSessions runs on a
+// parser-generation change, so it must not decompress a whole rollout to answer.
+func sessionMetaID(path string) string {
+	r, closeReader, err := openRollout(path)
+	if err != nil {
+		return ""
+	}
+	defer closeReader()
+	var id string
+	_, _ = readCompleteLines(r, func(line []byte) error {
+		var rec rawLine
+		if json.Unmarshal(bytes.TrimSpace(line), &rec) != nil {
+			return nil // not a record this parser understands; keep reading
+		}
+		if rec.Type != "session_meta" {
+			return nil
+		}
+		pl, ok := decodePayload(rec.Payload)
+		if !ok {
+			return nil
+		}
+		id = firstNonEmpty(pl.ID, pl.SessionID)
+		return errSessionMetaFound
+	})
+	return id
+}
+
+// errSessionMetaFound ends the header scan at the first session_meta record.
+var errSessionMetaFound = errors.New("session_meta found")
+
+// openRollout opens path for reading, transparently decompressing a .zst log.
+// The returned close must be called to release the decoder back to its pool.
+func openRollout(path string) (io.Reader, func(), error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isZstdPath(path) {
+		return f, func() { _ = f.Close() }, nil
+	}
+	r, closeReader, err := zstdReader(f)
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	return r, closeReader, nil
+}
+
+// zstdReader wraps an already-open rollout in a pooled zstd decoder. The
+// returned close releases both the decoder and the underlying reader.
+func zstdReader(f *os.File) (io.Reader, func(), error) {
+	in := readers.Get().(*bufio.Reader)
+	in.Reset(f)
+	var dec *zstd.Decoder
+	if pooled := decoderPool.Get(); pooled != nil {
+		dec = pooled.(*zstd.Decoder)
+		if err := dec.Reset(in); err != nil {
+			in.Reset(nil)
+			readers.Put(in)
+			return nil, nil, err
+		}
+	} else {
+		var err error
+		// Codex writes one frame per rollout, so a single-block decoder and a
+		// low-memory window keep the pooled decoder small; a full scan of an
+		// archived home opens hundreds of these.
+		dec, err = zstd.NewReader(in, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
+		if err != nil {
+			in.Reset(nil)
+			readers.Put(in)
+			return nil, nil, err
+		}
+	}
+	return dec, func() {
+		// Detach the source so a pooled decoder never retains a rollout.
+		if dec.Reset(nil) == nil {
+			decoderPool.Put(dec)
+		} else {
+			dec.Close()
+		}
+		in.Reset(nil)
+		readers.Put(in)
+		_ = f.Close()
+	}, nil
+}
+
+// readCompleteLines feeds every '\n'-terminated line of r to fn and returns the
+// number of bytes consumed, which always ends on a line boundary. A trailing
+// chunk without '\n' is never passed to fn and never counted, so a partially
+// written record is left for the next scan.
+func readCompleteLines(r io.Reader, fn func(line []byte) error) (int64, error) {
+	br := readers.Get().(*bufio.Reader)
+	br.Reset(r)
+	defer func() {
+		br.Reset(nil)
+		readers.Put(br)
+	}()
+	var n int64
+	var pending []byte
+	for {
+		line, err := br.ReadSlice('\n')
+		if err == bufio.ErrBufferFull {
+			pending = append(pending, line...)
+			continue
+		}
+		if err != nil {
+			return n, nil // a trailing incomplete line is never consumed
+		}
+		if len(pending) > 0 {
+			line = append(pending, line...)
+			pending = pending[:0]
+			if cap(pending) > 1<<20 {
+				pending = nil
+			}
+		}
+		n += int64(len(line))
+		if e := fn(line[:len(line)-1]); e != nil {
+			return n, e
+		}
+	}
+}
+
+// isZstdPath reports whether path names a zstd-compressed rollout. Codex writes
+// the .zst suffix; DSH's .zstd is accepted too so a log copied between tools
+// still reads.
+func isZstdPath(path string) bool {
+	return strings.HasSuffix(path, ".zst") || strings.HasSuffix(path, ".zstd")
+}
+
+// Parse implements harness.Parser. A plain rollout resumes from cur.Offset and
+// never consumes a trailing incomplete line. A zstd frame cannot be resumed by
+// offset, so a compressed rollout is decompressed and reparsed in full and
+// relies on DedupKey for idempotence; Codex rewrites a rollout only when it
+// rotates it, and an unchanged file is skipped before either path runs.
 func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Cursor) (harness.Batch, error) {
 	b := harness.Batch{}
+	if err := ctx.Err(); err != nil {
+		return b, err
+	}
 	f, err := os.Open(src.Path)
 	if err != nil {
 		return b, err
@@ -335,10 +514,18 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 	if err != nil {
 		return b, err
 	}
-
 	if cur.Fingerprint == fp && cur.Size == st.Size() && cur.ModTime.Equal(st.ModTime()) {
 		return harness.Batch{Next: cur}, nil
 	}
+	if isZstdPath(src.Path) || src.Kind == kindJSONLzs {
+		return p.parseZstd(ctx, src, f, st, fp)
+	}
+	return p.parseJSONL(ctx, src, f, st, fp, cur)
+}
+
+// parseJSONL reads a plain rollout from cur.Offset. The caller owns f.
+func (p *Parser) parseJSONL(ctx context.Context, src harness.Source, f *os.File, st os.FileInfo, fp string, cur harness.Cursor) (harness.Batch, error) {
+	b := harness.Batch{}
 	start := cur.Offset
 	stt := state{}
 	if cur.Fingerprint != "" && cur.Fingerprint != fp {
@@ -353,13 +540,66 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 	if stt.Session == "" {
 		stt.Session = sessionFromFilename(src.Path)
 	}
-
 	acc := newAccumulator(&stt)
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		return b, err
 	}
+	off, cerr := p.consumeLines(ctx, &b, acc, f, start)
+	if cerr != nil {
+		return b, cerr
+	}
+	b.Sessions = acc.sessionMeta()
+	b.Next = harness.Cursor{
+		Offset:      off,
+		Size:        st.Size(),
+		ModTime:     st.ModTime().UTC(),
+		Fingerprint: fp,
+		Extra:       acc.encodeState(),
+	}
+	return b, nil
+}
+
+// parseZstd reads a rollout Codex compressed. zstd frames are not seekable, so
+// the whole log is decompressed and reparsed whenever it changes and DedupKey
+// keeps the result identical to a plain read. The cursor therefore records no
+// offset — one does not apply — and the compressed file's stamp, which is what
+// the unchanged fast path compares. The caller owns f.
+func (p *Parser) parseZstd(ctx context.Context, src harness.Source, f *os.File, st os.FileInfo, fp string) (harness.Batch, error) {
+	next := harness.Cursor{
+		Offset:      0,
+		Size:        st.Size(),
+		ModTime:     st.ModTime().UTC(),
+		Fingerprint: fp,
+		Extra:       kindJSONLzs,
+	}
+	r, closeReader, err := zstdReader(f)
+	if err != nil {
+		// Not a decodable frame (yet): the log is probably mid-rotation. Report
+		// no progress and retry on the next scan.
+		return harness.Batch{Next: next}, nil
+	}
+	defer closeReader()
+	b := harness.Batch{}
+	stt := state{Session: sessionFromFilename(src.Path)}
+	acc := newAccumulator(&stt)
+	if _, cerr := p.consumeLines(ctx, &b, acc, r, 0); cerr != nil {
+		return b, cerr
+	}
+	b.Sessions = acc.sessionMeta()
+	b.Next = next
+	return b, nil
+}
+
+// consumeLines feeds every complete line of r to the parser and returns the
+// offset one past the last complete line it consumed; base is the offset r
+// starts at, which is 0 for a decompressed stream. A trailing chunk without
+// '\n' is never consumed, so a partially written record is left for the next
+// scan. A line too long for the read buffer is accumulated, except when it
+// belongs to a record this parser skips, whose body is counted without being
+// retained.
+func (p *Parser) consumeLines(ctx context.Context, b *harness.Batch, acc *accumulator, r io.Reader, base int64) (int64, error) {
 	br := readers.Get().(*bufio.Reader)
-	br.Reset(f)
+	br.Reset(r)
 	defer func() {
 		br.Reset(nil)
 		readers.Put(br)
@@ -367,10 +607,10 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 	var pending []byte
 	var skipped int64
 	var skippedTime time.Time
-	off := start
+	off := base
 	for {
 		if err := ctx.Err(); err != nil {
-			return b, err
+			return off, err
 		}
 		line, rerr := br.ReadSlice('\n')
 		if rerr == bufio.ErrBufferFull {
@@ -414,7 +654,7 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 		var cl combinedLine
 		if err := json.Unmarshal(line, &cl); err == nil {
 			ts, _ := parseTime(cl.Timestamp)
-			handlePayload(&b, cl.Type, &cl.Payload, acc, ts)
+			handlePayload(b, cl.Type, &cl.Payload, acc, ts)
 			continue
 		}
 		var rl rawLine
@@ -422,18 +662,9 @@ func (p *Parser) Parse(ctx context.Context, src harness.Source, cur harness.Curs
 			continue
 		}
 		ts, _ := parseTime(rl.Timestamp)
-		p.handleLine(&b, &rl, acc, ts)
+		p.handleLine(b, &rl, acc, ts)
 	}
-
-	b.Sessions = acc.sessionMeta()
-	b.Next = harness.Cursor{
-		Offset:      off,
-		Size:        st.Size(),
-		ModTime:     st.ModTime().UTC(),
-		Fingerprint: fp,
-		Extra:       acc.encodeState(),
-	}
-	return b, nil
+	return off, nil
 }
 
 var (
@@ -962,9 +1193,15 @@ func clamp(v, max int64) int64 {
 	return v
 }
 
-// sessionFromFilename recovers the thread id from rollout-<ts>-<uuid>[_<uuid>].jsonl.
+// sessionFromFilename recovers the thread id from
+// rollout-<ts>-<uuid>[_<uuid>].jsonl, with either the plain or the rotated
+// suffix Codex writes.
 func sessionFromFilename(path string) string {
-	name := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	name := filepath.Base(path)
+	// The rotated suffixes wrap .jsonl, so they come off first.
+	name = strings.TrimSuffix(name, ".zst")
+	name = strings.TrimSuffix(name, ".zstd")
+	name = strings.TrimSuffix(name, ".jsonl")
 	name = strings.TrimPrefix(name, "rollout-")
 	if i := strings.LastIndexByte(name, '_'); i >= 0 && isUUID(name[i+1:]) {
 		return name[i+1:] // fork/continuation: the trailing uuid is the thread
