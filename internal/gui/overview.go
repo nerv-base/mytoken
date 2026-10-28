@@ -353,14 +353,17 @@ func (a *App) burnup(c *ui.Context, pal palette) {
 			al := float32(clamp01(float64(prog-0.85) / 0.15))
 			xa, ya := xs[dayNo-1], ys[dayNo-1]
 			xb, yb := xAt(float64(monthDays)), yAt(forecast)
-			const n = 28
-			for i := 0; i < n; i += 2 {
-				f0, f1 := float32(i)/n, float32(i+1)/n
-				var d ui.Path
-				d.MoveTo(xa+(xb-xa)*f0, ya+(yb-ya)*f0)
-				d.LineTo(xa+(xb-xa)*f1, ya+(yb-ya)*f1)
-				p.StrokePath(&d, 1.75, pal.accent.Alpha(0.6*al))
-			}
+			// Path.Dash strokes the dashes and the gaps between them in turn
+			// along one line, which is what the 14 segments this replaces
+			// drew by hand, so the dash follows the segment rather than
+			// being 14 of its own.
+			dx, dy := xb-xa, yb-ya
+			seg := float32(math.Hypot(float64(dx), float64(dy))) / 28
+			var d ui.Path
+			d.MoveTo(xa, ya)
+			d.LineTo(xb, yb)
+			d.Dash(0, seg, seg)
+			p.StrokePath(&d, 1.75, pal.accent.Alpha(0.6*al))
 			p.FillPath((&ui.Path{}).Circle(xb, yb, 4), pal.card)
 			p.StrokePath((&ui.Path{}).Circle(xb, yb, 4), 1.75, pal.accent.Alpha(0.75*al))
 			lbl := tr("projected") + " " + fmtUSDShort(forecast)

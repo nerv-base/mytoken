@@ -1,7 +1,7 @@
 # AGENTS.md
 
 MyToken!!!!! is a local, read-only spend and plan-quota dashboard for AI coding tools. Go 1.27,
-native UI via MyGo v0.5.5, no cgo. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before
+native UI via MyGo v0.7.1, no cgo. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before
 changing the data layer.
 
 ## Commands
