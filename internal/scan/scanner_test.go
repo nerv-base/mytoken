@@ -3,6 +3,8 @@ package scan
 import (
 	"context"
 	"errors"
+	"fmt"
+
 	"github.com/zzstar101/mytoken/internal/harness"
 	"github.com/zzstar101/mytoken/internal/model"
 	"github.com/zzstar101/mytoken/internal/store"
@@ -26,6 +28,64 @@ func (p cancelParser) Parse(ctx context.Context, _ harness.Source, _ harness.Cur
 	}
 	<-ctx.Done()
 	return harness.Batch{}, ctx.Err()
+}
+
+// notReadyParser is installed and its data is there, but it cannot be read
+// until the user supplies something — Trae's encrypted database before its
+// key. It reports that through the NotReady capability, exactly as Trae does.
+type notReadyParser struct{ root string }
+
+func (p notReadyParser) Harness() model.Harness { return model.Harness("notready") }
+func (p notReadyParser) Roots() []string        { return []string{p.root} }
+func (p notReadyParser) Discover(context.Context) ([]harness.Source, error) {
+	return nil, fmt.Errorf("%w: set the database key", harness.ErrNotReady)
+}
+func (p notReadyParser) Parse(ctx context.Context, src harness.Source, cur harness.Cursor) (harness.Batch, error) {
+	return harness.Batch{}, errors.New("a not-ready parser must never be parsed")
+}
+func (p notReadyParser) NotReady() string { return "the database is encrypted: set the database key" }
+
+// TestNotReadyDoesNotAbortScan is the regression: one tool that needs a key
+// used to fail the whole scan, so every other tool's data was lost with it.
+func TestNotReadyDoesNotAbortScan(t *testing.T) {
+	dir := t.TempDir()
+	// The readable harness beside the not-ready one needs its log to exist, or
+	// the test would fail on a missing file instead of on the behaviour.
+	logDir := filepath.Join(dir, "sessions")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "log"), []byte("a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, e := store.Open(filepath.Join(dir, "db"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer st.Close()
+	sc := New(st, nil, nil, notReadyParser{dir}, testParser{logDir})
+	if err := sc.Scan(context.Background()); err != nil {
+		t.Fatalf("a not-ready harness must not fail the scan: %v", err)
+	}
+	// The readable harness beside it still had to be scanned.
+	var n int
+	if err := st.DB().QueryRow("SELECT count(*) FROM events").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n == 0 {
+		t.Fatal("the readable harness beside a not-ready one was skipped")
+	}
+	// And the not-ready instance is recorded, not silently dropped.
+	d, ok, err := LoadDiagnostics(context.Background(), st, "notready", store.DefaultInstanceID)
+	if err != nil || !ok {
+		t.Fatalf("LoadDiagnostics(notready) = %v, %v", ok, err)
+	}
+	if d.Reason != ReasonNotReady {
+		t.Fatalf("reason = %q, want %q", d.Reason, ReasonNotReady)
+	}
+	if !d.LastSuccessAt.IsZero() {
+		t.Fatal("a not-ready instance must never advance the success time")
+	}
 }
 func TestRunCancellationStopsDispatch(t *testing.T) {
 	st, err := store.Open(":memory:")

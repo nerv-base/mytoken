@@ -457,6 +457,16 @@ func (s *Scanner) scanMode(ctx context.Context, mode scanMode, hints []string) (
 			var e error
 			srcs, e = p.Discover(ctx)
 			if e != nil {
+				if errors.Is(e, harness.ErrNotReady) {
+					// Installed but not readable yet: the user has to supply
+					// something, which is a state and not a defect. It is
+					// recorded as an unread instance so the sources page can
+					// still show the reason, and the scan keeps going — a
+					// missing key on one tool must not cost every other
+					// tool's data.
+					s.diagNotReady(p.Harness(), inst.ID)
+					continue
+				}
 				s.diagFailure(p.Harness(), inst.ID)
 				errs = append(errs, fmt.Errorf("discover %s: %w", p.Harness(), e))
 				continue

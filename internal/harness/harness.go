@@ -3,6 +3,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -199,6 +200,17 @@ type DatabaseLister interface {
 type NotReady interface {
 	NotReady() string
 }
+
+// ErrNotReady is what Discover returns for a parser that is installed but
+// cannot read its sources yet. It is a state, not a defect: the tool is there
+// and the user has to supply something, so a scan that meets it records the
+// instance as not read and keeps going. Every other harness still gets
+// scanned, and the sources page still shows the reason through NotReady.
+//
+// A parser wraps it with what is missing, so the message stays actionable:
+//
+//	fmt.Errorf("%w: set the database key", harness.ErrNotReady)
+var ErrNotReady = errors.New("harness: not ready to read its sources")
 
 // NewRooted builds a fresh parser for h over exactly roots. It reports false
 // when h is not registered or when its registered parser does not implement

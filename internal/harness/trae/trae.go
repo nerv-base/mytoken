@@ -76,6 +76,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -124,7 +125,9 @@ var productDirs = []string{"Trae CN", "TRAE SOLO CN", "Trae"}
 
 // ErrKeyNeeded reports an encrypted database with no usable key: the reader
 // found Trae's data but cannot open it until the user supplies the key once.
-var ErrKeyNeeded = errors.New("trae: the ai-agent database is encrypted; set Trae's database key")
+// It wraps harness.ErrNotReady so a scan treats it as "ask for the key" rather
+// than "this harness is broken".
+var ErrKeyNeeded = fmt.Errorf("%w: the ai-agent database is encrypted; set Trae's database key", harness.ErrNotReady)
 
 // Parser reads the ai-agent database of every Trae product on this machine.
 type Parser struct {

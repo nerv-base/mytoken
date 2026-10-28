@@ -85,6 +85,10 @@ const (
 	ReasonUnknown DiagnosticsReason = "unknown"
 	// ReasonNoSources is a completed discovery that recognized no source.
 	ReasonNoSources DiagnosticsReason = "no-sources"
+	// ReasonNotReady is a harness that is installed but cannot be read yet:
+	// Trae's encrypted database before its key is supplied. It is a state, not
+	// a defect, and it outranks no-sources because discovery did find the tool.
+	ReasonNotReady DiagnosticsReason = "not-ready"
 )
 
 // diagnosticsReasons is the closed set of persisted reason codes.
@@ -97,6 +101,7 @@ var diagnosticsReasons = map[DiagnosticsReason]bool{
 	ReasonUnsupported: true,
 	ReasonUnknown:     true,
 	ReasonNoSources:   true,
+	ReasonNotReady:    true,
 }
 
 // diagReasonPriority orders the instance-level reason: the most specific
@@ -106,6 +111,7 @@ var diagReasonPriority = [...]DiagnosticsReason{
 	ReasonMissing,
 	ReasonPermission,
 	ReasonUnsupported,
+	ReasonNotReady,
 	ReasonNoTokenData,
 	ReasonZeroUsage,
 	ReasonOK,
@@ -317,6 +323,7 @@ type diagInstance struct {
 	discovered int
 	files      int
 	failed     bool
+	notReady   bool
 	newEvents  int64
 	sessions   int64
 	sources    map[string]*diagSource
@@ -438,6 +445,20 @@ func (s *Scanner) diagFailure(h model.Harness, instance string) {
 	}
 }
 
+// diagNotReady records an instance whose sources exist but cannot be read yet
+// — Trae's encrypted database before the key is supplied. Nothing was proven
+// about its usage, so it is not a failure and no success time advances; the
+// reason is the not-ready state, not an error. NotReady's own wording reaches
+// the user through the sources page.
+func (s *Scanner) diagNotReady(h model.Harness, instance string) {
+	s.diagMu.Lock()
+	defer s.diagMu.Unlock()
+	if ev := s.diagEntry(h, instance); ev != nil {
+		ev.failed = false
+		ev.notReady = true
+	}
+}
+
 // diagParse records what one Parse call proved about a source.
 func (s *Scanner) diagParse(h model.Harness, instance string, src harness.Source, out parseOutcome, parseErr error) {
 	s.diagMu.Lock()
@@ -514,6 +535,7 @@ type diagSnapshot struct {
 	discovered int
 	files      int
 	failed     bool
+	notReady   bool
 	newEvents  int64
 	sessions   int64
 	sources    []diagSourceSnapshot
@@ -534,7 +556,7 @@ func (s *Scanner) diagTake() []diagSnapshot {
 	defer s.diagMu.Unlock()
 	out := make([]diagSnapshot, 0, len(s.diag))
 	for _, ev := range s.diag {
-		snap := diagSnapshot{harness: ev.harness, instance: ev.instance, discovered: ev.discovered, files: ev.files, failed: ev.failed, newEvents: ev.newEvents, sessions: ev.sessions}
+		snap := diagSnapshot{harness: ev.harness, instance: ev.instance, discovered: ev.discovered, files: ev.files, failed: ev.failed, notReady: ev.notReady, newEvents: ev.newEvents, sessions: ev.sessions}
 		snap.sources = make([]diagSourceSnapshot, 0, len(ev.sources))
 		for _, src := range ev.sources {
 			snap.sources = append(snap.sources, diagSourceSnapshot{path: src.path, kind: src.kind, reason: src.reason, events: src.events, sessions: src.sessions, failed: src.failed})
@@ -556,7 +578,7 @@ func (s *Scanner) diagTake() []diagSnapshot {
 // whose sources were all skipped or inconclusive measured nothing, so it
 // advances no success time and leaves the prior evidence standing.
 func (ev diagSnapshot) clean() bool {
-	if ev.failed || ev.discovered == 0 {
+	if ev.failed || ev.notReady || ev.discovered == 0 {
 		return false
 	}
 	proven := false
@@ -575,6 +597,11 @@ func (ev diagSnapshot) clean() bool {
 // summaryReason is the instance-level reason: the most specific finding wins,
 // and unknown ranks last so a proven finding is never hidden.
 func summaryReason(ev diagSnapshot) DiagnosticsReason {
+	if ev.notReady {
+		// The tool is installed and its data was found; it just cannot be read
+		// yet. That is more specific than "no sources" and says what to do.
+		return ReasonNotReady
+	}
 	if len(ev.sources) == 0 {
 		if ev.failed {
 			return ReasonUnknown
