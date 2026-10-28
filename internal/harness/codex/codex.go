@@ -793,9 +793,12 @@ func handlePayload(b *harness.Batch, typ string, pl *rawPayload, acc *accumulato
 		acc.observe(ts)
 		return
 	case "token_usage_record":
-		if pl.SessionID != "" {
-			acc.session = pl.SessionID
-		}
+		// The record's session_id is the *parent* thread's id, not this
+		// rollout's: Codex stamps every record of a subagent rollout with the
+		// thread that spawned it. Taking it would reassign a whole rollout's
+		// usage to the parent, so the subagent's own session would never be
+		// created. session_meta is the rollout's own statement of identity and
+		// it is always the first line, so it is the only source read here.
 		acc.observe(ts)
 		acc.addUsage(b, pl.ThreadTokenUsage, pl.Usage, ts, firstNonEmpty(pl.RequestID, pl.ResponseID))
 		return

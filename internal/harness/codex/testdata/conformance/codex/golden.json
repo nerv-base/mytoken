@@ -59,6 +59,24 @@
         "cacheWrite": 0,
         "reasoning": 2
       }
+    },
+    {
+      "harness": "codex",
+      "dedupKey": "codex:sess-a:70-14-0-21-3-91",
+      "sessionId": "agent-1",
+      "parentId": "sess-a",
+      "projectPath": "/Users/demo/proj",
+      "timestamp": "2026-01-02T03:06:40Z",
+      "model": "gpt-5-mini",
+      "provider": "openai",
+      "tokens": {
+        "input": 16,
+        "output": 5,
+        "cacheRead": 4,
+        "cacheWrite": 0,
+        "reasoning": 1
+      },
+      "requestId": "resp_agent_1"
     }
   ],
   "sessions": [
@@ -69,7 +87,7 @@
       "title": "look up the config",
       "project": "/Users/demo/proj",
       "startedAt": "2026-01-02T03:06:00Z",
-      "updatedAt": "2026-01-02T03:06:30Z"
+      "updatedAt": "2026-01-02T03:06:40Z"
     },
     {
       "harness": "codex",
