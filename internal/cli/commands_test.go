@@ -50,7 +50,7 @@ func TestSummary(t *testing.T) {
 		if today.Label != "today" {
 			t.Errorf("today label = %q", today.Label)
 		}
-		wantTokens := model.Tokens{Input: 150, Output: 30, CacheRead: 300, CacheWrite: 40}
+		wantTokens := model.Tokens{Input: 150, Output: 30, CacheRead: 300, CacheWrite: 40, CacheMissing: 50}
 		// The 1h detail prices the cache write; the reporting surface exposes the
 		// cache-write total, not the 1h split.
 		today.Tokens.CacheWrite1h = 0
@@ -85,7 +85,7 @@ func TestSummary(t *testing.T) {
 		mustContain(t, out,
 			"API-equivalent cost · UTC",
 			// The 1h cache write is part of cache write, never added twice.
-			"Today  $0.50 (+unpriced)  520 tokens (in 150, out 30, cache read 300, write 40)  2 requests · cache hit 61.2%",
+			"Today  $0.50 (+unpriced)  520 tokens (in 150, out 30, cache read 300, write 40)  2 requests · cache hit 68.2%",
 		)
 	})
 
@@ -153,8 +153,8 @@ func TestDaily(t *testing.T) {
 		cost   float64
 	}{
 		{-2, model.Tokens{Input: 7, Output: 3}, 0.10},
-		{-1, model.Tokens{Input: 30, Output: 13, CacheRead: 100}, 0.25},
-		{0, model.Tokens{Input: 150, Output: 30, CacheRead: 300, CacheWrite: 40}, 0.50},
+		{-1, model.Tokens{Input: 30, Output: 13, CacheRead: 100, CacheMissing: 20}, 0.25},
+		{0, model.Tokens{Input: 150, Output: 30, CacheRead: 300, CacheWrite: 40, CacheMissing: 50}, 0.50},
 	}
 	for i, w := range want {
 		day := got.Days[i]

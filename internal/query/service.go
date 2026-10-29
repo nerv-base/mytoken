@@ -411,8 +411,48 @@ func (s *service) loadTx(ctx context.Context, tx *sql.Tx, f Filter, mode ...load
 		}
 		d.events = append(d.events, v)
 	}
+	annotateCacheMissing(d.events)
 	return d, nil
 }
+
+// annotateCacheMissing marks the input of routes that never reported a cache
+// field, so the hit rate does not read unmeasured input as a miss. The route
+// key is the whole routing identity and not just the model name: one model
+// name can be served both by a relay that drops the cache fields and by the
+// provider itself, which reports them, and lumping those two together would
+// skew the route that does report.
+func annotateCacheMissing(evs []AttributedEvent) {
+	type route struct {
+		harness  model.Harness
+		model    string
+		provider string
+		baseURL  string
+	}
+	key := func(v AttributedEvent) route {
+		return route{v.Harness, v.Model, v.ResolvedProvider, v.BaseURL}
+	}
+	reported := map[route]bool{}
+	for _, v := range evs {
+		if v.Tokens.CacheRead > 0 || v.Tokens.CacheWrite > 0 || v.Tokens.CacheWrite1h > 0 {
+			reported[key(v)] = true
+		}
+	}
+	silent := map[route]bool{}
+	for _, v := range evs {
+		if v.Tokens.Input > 0 && !reported[key(v)] {
+			silent[key(v)] = true
+		}
+	}
+	if len(silent) == 0 {
+		return
+	}
+	for i := range evs {
+		if silent[key(evs[i])] {
+			evs[i].Tokens.CacheMissing = evs[i].Tokens.Input
+		}
+	}
+}
+
 func filterSQL(f Filter) (string, []any) {
 	var clauses []string
 	var args []any
@@ -483,10 +523,7 @@ func totalsOf(d data) Totals {
 		sessions[d.root(sessionKey{v.Harness, v.InstanceID, v.SessionID})] = true
 	}
 	out.Sessions = int64(len(sessions))
-	denom := out.Tokens.Input + out.Tokens.CacheRead + out.Tokens.CacheWrite
-	if denom > 0 {
-		out.CacheHit = float64(out.Tokens.CacheRead) / float64(denom)
-	}
+	out.CacheHit = out.Tokens.HitRate()
 	return out
 }
 func (s *service) Daily(ctx context.Context, f Filter) ([]Point, error) {

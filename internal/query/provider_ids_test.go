@@ -125,8 +125,8 @@ func TestProviderIDsSelectEndpointAcrossPricingNames(t *testing.T) {
 		want Totals
 	}{
 		{"main", []string{mainID}, Totals{Requests: 2, Sessions: 2, Tokens: model.Tokens{Input: 300, CacheRead: 130, CacheWrite: 10}}},
-		{"alt path", []string{altID}, Totals{Requests: 2, Sessions: 2, Tokens: model.Tokens{Input: 1200}}},
-		{"union", []string{mainID, altID}, Totals{Requests: 4, Sessions: 3, Tokens: model.Tokens{Input: 1500, CacheRead: 130, CacheWrite: 10}}},
+		{"alt path", []string{altID}, Totals{Requests: 2, Sessions: 2, Tokens: model.Tokens{Input: 1200, CacheMissing: 1200}}},
+		{"union", []string{mainID, altID}, Totals{Requests: 4, Sessions: 3, Tokens: model.Tokens{Input: 1500, CacheRead: 130, CacheWrite: 10, CacheMissing: 1200}}},
 	}
 	for _, tc := range cases {
 		got, err := q.Totals(ctx, Filter{ProviderIDs: tc.ids})

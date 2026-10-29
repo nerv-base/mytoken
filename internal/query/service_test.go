@@ -25,7 +25,7 @@ func TestAggregatesRollupAndZeroFill(t *testing.T) {
 	q := NewService(st)
 	f := Filter{Range: Range{From: day, To: day.AddDate(0, 0, 3)}}
 	tot, e := q.Totals(ctx, f)
-	if e != nil || tot.Requests != 3 || tot.Sessions != 2 || tot.Tokens.Total() != 230 || tot.CacheHit != float64(50)/210 {
+	if e != nil || tot.Requests != 3 || tot.Sessions != 2 || tot.Tokens.Total() != 230 || tot.Tokens.CacheMissing != 10 || tot.CacheHit != float64(50)/200 {
 		t.Fatalf("totals %+v %v", tot, e)
 	}
 	daily, e := q.Daily(ctx, f)

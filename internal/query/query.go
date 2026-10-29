@@ -60,7 +60,8 @@ type Totals struct {
 	// Unpriced counts requests with neither a log cost nor a known price;
 	// CostUSD excludes them. The UI shows "—" when Unpriced == Requests.
 	Unpriced int64 `json:"unpriced"`
-	// CacheHit = CacheRead / (Input + CacheRead + CacheWrite); 0 when denominator is 0.
+	// CacheHit is model.Tokens.HitRate(): CacheRead / (Input + CacheRead +
+	// CacheWrite - CacheMissing); 0 when that denominator is 0.
 	CacheHit float64 `json:"cacheHit"`
 }
 

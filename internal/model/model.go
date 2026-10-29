@@ -133,6 +133,12 @@ type Tokens struct {
 	// instead of 1.25x.
 	CacheWrite1h int64 `json:"cacheWrite1h,omitempty"`
 	Reasoning    int64 `json:"reasoning"`
+	// CacheMissing is the part of Input that came from a route which never
+	// reported a cache field at all. It is a subset of Input, never added on
+	// top, and is kept out of the hit-rate denominator: a route that logs no
+	// cache_read is silent about the hit, not proof of a miss. Total does not
+	// include it, because it is already inside Input.
+	CacheMissing int64 `json:"cacheMissing,omitempty"`
 }
 
 // Total sums all five classes (CacheWrite1h is inside CacheWrite).
@@ -141,10 +147,12 @@ func (t Tokens) Total() int64 {
 }
 
 // HitRate is the one cache hit-rate formula MyToken shows anywhere:
-// cache_read / (input + cache_read + cache_write). It is 0 when there was
-// no prompt at all.
+// cache_read / (input + cache_read + cache_write). Input that came from a
+// route which never reports cache fields is kept out of the denominator (it
+// is CacheMissing), because a route that logs no cache_read is silent about
+// the hit, not proof of a miss. It is 0 when there was no prompt at all.
 func (t Tokens) HitRate() float64 {
-	den := t.Input + t.CacheRead + t.CacheWrite
+	den := t.Input + t.CacheRead + t.CacheWrite - t.CacheMissing
 	if den <= 0 {
 		return 0
 	}
@@ -160,6 +168,7 @@ func (t Tokens) Add(o Tokens) Tokens {
 		CacheWrite:   t.CacheWrite + o.CacheWrite,
 		CacheWrite1h: t.CacheWrite1h + o.CacheWrite1h,
 		Reasoning:    t.Reasoning + o.Reasoning,
+		CacheMissing: t.CacheMissing + o.CacheMissing,
 	}
 }
 
