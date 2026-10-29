@@ -58,9 +58,11 @@ const (
 	maxDepth     = 6
 
 	// parserVersion is the parse generation. Version 2 reads rollout files
-	// Codex compressed to .jsonl.zst; rows written by version 1 came only from
-	// the plain logs still on disk and are re-ingested once.
-	parserVersion = 2
+	// Codex compressed to .jsonl.zst; version 3 attributes a subagent
+	// rollout's usage to its own session rather than the parent's, which
+	// moves rows and creates sessions that version 2 never wrote. Rows from
+	// either generation are re-ingested once.
+	parserVersion = 3
 )
 
 // Parser implements harness.Parser for Codex CLI.
