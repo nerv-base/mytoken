@@ -3,6 +3,20 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## 0.5.7
+
+- **The Codex subagent sessions 0.5.6 promised are actually there now.** 0.5.6
+  read a subagent rollout's usage as its own session, but did not mark its
+  reader as changed, so an index that had already taken in the compressed
+  rollouts kept the old rows and never looked again. This release marks it and
+  those sessions appear the first time you open it — the same tokens, counted
+  once.
+- **A tool that needs a key no longer stops the scan.** Trae's database is
+  encrypted with a key only a running Trae holds, and until it is supplied the
+  reader could not open anything at all — which used to fail the whole scan, so
+  every other tool's data was lost with it. MyToken now reports that tool as
+  *not ready* and carries on; Settings → Sources still shows the reason.
+
 ## 0.5.6
 
 - **Codex's older sessions are readable again.** Codex compresses a rollout
