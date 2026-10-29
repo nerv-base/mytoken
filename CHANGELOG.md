@@ -3,6 +3,27 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## 0.5.6
+
+- **Codex's older sessions are readable again.** Codex compresses a rollout
+  once its session is over, and MyToken only ever looked at the plain files —
+  so on a machine with a few months of Codex history, 1 299 of 1 313 rollouts
+  were skipped and the sessions page showed a single day. Those files are read
+  now, and their tokens are counted as they always were.
+- **A subagent's work stays under its own session.** Codex writes the *parent*
+  thread's id into every usage record of a subagent rollout, which is what the
+  reader took, so a subagent's spend was attributed to the session that
+  spawned it and its own session never appeared. 1 277 sessions instead of
+  1 262 on the same history, with the same total.
+- **A tool that needs a key no longer stops the scan.** Trae's database is
+  encrypted with a key only a running Trae holds, and until it is supplied the
+  reader could not open anything at all — which used to fail the whole scan, so
+  every other tool's data was lost with it. MyToken now reports that tool as
+  *not ready* and carries on; Settings → Sources still shows the reason.
+- **Built on MyGo 0.7.1.** The dashed pace projection is now drawn with the
+  framework's own path dashes rather than a hand-rolled loop, and every other
+  drawing path is unchanged.
+
 ## 0.5.5
 
 - **Trae's token usage is readable now.** Trae keeps its history in a
