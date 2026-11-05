@@ -12,6 +12,7 @@
   <a href="go.mod"><img alt="Go" src="https://img.shields.io/github/go-mod/go-version/zzstar101/mytoken?style=flat-square&color=F0B43C"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/zzstar101/mytoken?style=flat-square&color=7C6CD4"></a>
   <a href="https://github.com/egoist/mygo"><img alt="Built with MyGo" src="https://img.shields.io/badge/built%20with-MyGo-5AA9D6?style=flat-square&labelColor=2B2640"></a>
+  <a href="https://awesomemygo.dev/apps/mytoken"><img alt="Listed on Awesome MyGo" src="https://awesomemygo.dev/badge.svg"></a>
 </p>
 
 <p align="center"><b>⚡ 由 <a href="https://github.com/egoist/mygo">MyGo</a> 强力驱动！</b></p>
