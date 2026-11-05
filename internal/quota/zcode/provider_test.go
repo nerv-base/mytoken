@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/quota/plan"
+	"github.com/nerv-base/mytoken/internal/quota/plan"
 )
 
 const testSecret = "zcode-credential-fallback:win32:C:\\Users\\tester:tester"

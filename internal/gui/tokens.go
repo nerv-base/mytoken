@@ -7,8 +7,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/query"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/query"
 )
 
 // How long a history may get before the chart folds it: a bar a day reads

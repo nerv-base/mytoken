@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/query"
-	"github.com/zzstar101/mytoken/internal/scan"
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/query"
+	"github.com/nerv-base/mytoken/internal/scan"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 // DiagnosticsSource is one source path the scan actually recognised, with the

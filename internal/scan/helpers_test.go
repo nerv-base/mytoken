@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 func openStore(t *testing.T) *store.Store {

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/quota/plan"
-	"github.com/zzstar101/mytoken/internal/snapshot"
+	"github.com/nerv-base/mytoken/internal/quota/plan"
+	"github.com/nerv-base/mytoken/internal/snapshot"
 )
 
 const quotaUsage = `Usage: mytoken quota [plan] [options]

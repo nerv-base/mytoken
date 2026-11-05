@@ -37,12 +37,12 @@ import (
 	"github.com/egoist/mygo/plugins/updater/native"
 	"github.com/egoist/mygo/ui"
 
-	"github.com/zzstar101/mytoken/internal/app"
-	"github.com/zzstar101/mytoken/internal/cli"
-	"github.com/zzstar101/mytoken/internal/gui"
-	"github.com/zzstar101/mytoken/internal/paths"
-	"github.com/zzstar101/mytoken/internal/quota/plan"
-	"github.com/zzstar101/mytoken/internal/sysproxy"
+	"github.com/nerv-base/mytoken/internal/app"
+	"github.com/nerv-base/mytoken/internal/cli"
+	"github.com/nerv-base/mytoken/internal/gui"
+	"github.com/nerv-base/mytoken/internal/paths"
+	"github.com/nerv-base/mytoken/internal/quota/plan"
+	"github.com/nerv-base/mytoken/internal/sysproxy"
 )
 
 // memoryLimit is the GUI's soft Go heap limit. Live data is ~20 MB on a

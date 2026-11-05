@@ -8,10 +8,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zzstar101/mytoken/internal/app"
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/traekey"
+	"github.com/nerv-base/mytoken/internal/app"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/traekey"
 )
 
 // runKey lists, shows, sets and clears the per-harness database keys that

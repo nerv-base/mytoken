@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // TestHarnessAndRoots checks that the WorkBuddy reader is instantiated with the

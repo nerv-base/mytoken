@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // The harnesses below name their providers in their own config files, and

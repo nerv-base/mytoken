@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness"
 )
 
 // A Cowork session stores the same requests twice: the usage ledger beside the

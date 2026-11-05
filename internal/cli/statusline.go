@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/quota/plan"
-	"github.com/zzstar101/mytoken/internal/snapshot"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/quota/plan"
+	"github.com/nerv-base/mytoken/internal/snapshot"
 )
 
 const statuslineUsage = `Usage: mytoken statusline [options]

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // Secret holds a credential in memory only. Every formatting path redacts it,

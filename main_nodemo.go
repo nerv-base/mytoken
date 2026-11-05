@@ -2,7 +2,7 @@
 
 package main
 
-import "github.com/zzstar101/mytoken/internal/gui"
+import "github.com/nerv-base/mytoken/internal/gui"
 
 const demoBuild = false
 

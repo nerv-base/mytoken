@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 // Envelope is a consistent multi-field read of the index: totals, the cache

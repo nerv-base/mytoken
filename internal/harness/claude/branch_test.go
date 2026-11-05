@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zzstar101/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness"
 )
 
 // branchLine renders a minimal assistant transcript line. The real transcript

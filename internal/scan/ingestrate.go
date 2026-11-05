@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/ingestrate"
+	"github.com/nerv-base/mytoken/internal/ingestrate"
 )
 
 // IngestRateSettingKey is the exact settings key the newest committed

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zzstar101/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness"
 )
 
 // Real record shapes, shortened: a chunk carries its own absolute time, a packed

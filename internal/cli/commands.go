@@ -12,10 +12,10 @@ import (
 	"runtime/pprof"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/app"
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/paths"
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/app"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/paths"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 type doctorRoot struct {

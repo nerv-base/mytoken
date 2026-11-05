@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // UsageRow is one local day's usage of one tool, model and provider.

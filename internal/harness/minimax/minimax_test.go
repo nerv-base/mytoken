@@ -15,8 +15,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // ledgerSchema is the official table (packages/local-runtime-v2/src/infra/db/

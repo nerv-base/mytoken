@@ -3,9 +3,9 @@ package kimi
 import (
 	"testing"
 
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/harness/harnesstest"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness/harnesstest"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // TestConformance runs the shared conformance suite (docs/ARCHITECTURE.md#conformance-suite) against

@@ -23,7 +23,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/zzstar101/mytoken/internal/harness/trae"
+	"github.com/nerv-base/mytoken/internal/harness/trae"
 )
 
 const (

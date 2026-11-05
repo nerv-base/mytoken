@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/scan"
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/scan"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 // DiagnosticsObservation is one harness instance's persisted collection

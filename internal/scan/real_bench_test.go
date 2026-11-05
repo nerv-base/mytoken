@@ -2,7 +2,7 @@ package scan_test
 
 import (
 	"context"
-	"github.com/zzstar101/mytoken/internal/app"
+	"github.com/nerv-base/mytoken/internal/app"
 	"os"
 	"path/filepath"
 	"runtime"

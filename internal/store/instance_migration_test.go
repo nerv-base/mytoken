@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // legacyFactSnapshot is the per-request oracle for the legacy physical fixture:

@@ -9,8 +9,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/harness/harnesstest"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness/harnesstest"
 )
 
 // conformanceSeed holds the fixture's SQL seed. MiniMax Code's runtime ledger is

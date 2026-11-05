@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/source"
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/source"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 type config struct {

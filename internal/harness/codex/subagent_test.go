@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zzstar101/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness"
 )
 
 // TestSubagentUsageStaysInItsOwnSession guards the subagent session collapse.

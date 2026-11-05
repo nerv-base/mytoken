@@ -10,8 +10,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/zzstar101/mytoken/internal/app"
-	"github.com/zzstar101/mytoken/internal/gui"
+	"github.com/nerv-base/mytoken/internal/app"
+	"github.com/nerv-base/mytoken/internal/gui"
 )
 
 // TestRealShots renders the interface over the real index at MYTOKEN_HOME,

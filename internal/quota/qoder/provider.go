@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/quota/plan"
+	"github.com/nerv-base/mytoken/internal/quota/plan"
 )
 
 // ProviderID is the stable id used in settings keys and by the dashboard.

@@ -9,9 +9,9 @@ import (
 	"time"
 	_ "time/tzdata" // ship the IANA database so --timezone works without host zoneinfo
 
-	"github.com/zzstar101/mytoken/internal/app"
-	"github.com/zzstar101/mytoken/internal/query"
-	"github.com/zzstar101/mytoken/internal/snapshot"
+	"github.com/nerv-base/mytoken/internal/app"
+	"github.com/nerv-base/mytoken/internal/query"
+	"github.com/nerv-base/mytoken/internal/snapshot"
 )
 
 // outputFormat is the value of --format.

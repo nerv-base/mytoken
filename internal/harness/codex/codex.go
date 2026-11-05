@@ -47,8 +47,8 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 const (

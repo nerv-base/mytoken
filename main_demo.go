@@ -5,7 +5,7 @@ package main
 import (
 	"os"
 
-	"github.com/zzstar101/mytoken/internal/gui"
+	"github.com/nerv-base/mytoken/internal/gui"
 )
 
 // A `go build -tags demo` binary runs the app on synthetic data, for the

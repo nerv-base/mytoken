@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nerv-base/mytoken/internal/model"
 	"github.com/pelletier/go-toml/v2"
-	"github.com/zzstar101/mytoken/internal/model"
 )
 
 // HarnessConfig is the set of local config files that say which provider each

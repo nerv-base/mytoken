@@ -5,13 +5,14 @@
 <h1 align="center">MyToken!!!!!</h1>
 
 <p align="center">
-  <a href="https://github.com/zzstar101/mytoken/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/zzstar101/mytoken?style=flat-square&color=5AA9D6&label=release"></a>
-  <a href="https://github.com/zzstar101/mytoken/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/zzstar101/mytoken/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/zzstar101/mytoken/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/zzstar101/mytoken/total?style=flat-square&color=FF7896"></a>
+  <a href="https://github.com/nerv-base/mytoken/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/nerv-base/mytoken?style=flat-square&color=5AA9D6&label=release"></a>
+  <a href="https://github.com/nerv-base/mytoken/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/nerv-base/mytoken/ci.yml?branch=main&style=flat-square&label=CI"></a>
+  <a href="https://github.com/nerv-base/mytoken/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/nerv-base/mytoken/total?style=flat-square&color=FF7896"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-50C878?style=flat-square">
-  <a href="go.mod"><img alt="Go" src="https://img.shields.io/github/go-mod/go-version/zzstar101/mytoken?style=flat-square&color=F0B43C"></a>
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/zzstar101/mytoken?style=flat-square&color=7C6CD4"></a>
+  <a href="go.mod"><img alt="Go" src="https://img.shields.io/github/go-mod/go-version/nerv-base/mytoken?style=flat-square&color=F0B43C"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/nerv-base/mytoken?style=flat-square&color=7C6CD4"></a>
   <a href="https://github.com/egoist/mygo"><img alt="Built with MyGo" src="https://img.shields.io/badge/built%20with-MyGo-5AA9D6?style=flat-square&labelColor=2B2640"></a>
+  <a href="https://awesomemygo.dev/apps/mytoken"><img alt="Listed on Awesome MyGo" src="https://awesomemygo.dev/badge.svg"></a>
 </p>
 
 <p align="center"><b>⚡ 由 <a href="https://github.com/egoist/mygo">MyGo</a> 强力驱动！</b></p>
@@ -60,7 +61,7 @@ API 价格给每次请求算出等价费用，展示今日与本月花费、套�
 
 ### macOS（磁盘映像）
 
-从 [Releases](https://github.com/zzstar101/mytoken/releases) 下载 `mytoken-<版本>-darwin-universal.dmg`，打开后把
+从 [Releases](https://github.com/nerv-base/mytoken/releases) 下载 `mytoken-<版本>-darwin-universal.dmg`，打开后把
 **MyToken!!!!!** 拖进 *应用程序*。这个 bundle 是 ad-hoc 签名、未公证的，所以第一次启动需要右键 → *打开*
 （或者执行 `xattr -dr com.apple.quarantine /Applications/mytoken.app`）。应用文件名是 `mytoken.app`，
 Finder 和菜单栏显示 `MyToken!!!!!`。
@@ -74,8 +75,8 @@ Finder 和菜单栏显示 `MyToken!!!!!`。
 
 ```sh
 v=0.5.2 arch=amd64   # or arm64
-curl -fLO https://github.com/zzstar101/mytoken/releases/download/v$v/mytoken-$v-linux-$arch.tar.gz
-curl -fLO https://github.com/zzstar101/mytoken/releases/download/v$v/install.sh
+curl -fLO https://github.com/nerv-base/mytoken/releases/download/v$v/mytoken-$v-linux-$arch.tar.gz
+curl -fLO https://github.com/nerv-base/mytoken/releases/download/v$v/install.sh
 sh install.sh mytoken-$v-linux-$arch.tar.gz
 ```
 
@@ -94,10 +95,12 @@ libayatana-appindicator3（托盘图标）。
 ### 用 Go 工具链安装
 
 ```sh
-go install github.com/zzstar101/mytoken@latest
+go install github.com/nerv-base/mytoken@latest
 ```
 
 编译出与发行包相同的二进制（含 CLI），位于 `$(go env GOPATH)/bin/mytoken`。
+需要迁移到 `github.com/nerv-base/mytoken` 之后发布的第一个版本（v0.6.0 或更新）；更早的 tag
+仍可通过旧路径安装，GitHub 会重定向：`go install github.com/zzstar101/mytoken@v0.5.7`。
 
 ## 支持的工具
 

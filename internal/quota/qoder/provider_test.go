@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/quota/plan"
+	"github.com/nerv-base/mytoken/internal/quota/plan"
 )
 
 const (

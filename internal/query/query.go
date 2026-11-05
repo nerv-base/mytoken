@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // Range is a half-open local-time interval [From, To). Zero values mean unbounded.

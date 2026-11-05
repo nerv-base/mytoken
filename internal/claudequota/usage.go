@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/quota/plan"
+	"github.com/nerv-base/mytoken/internal/quota/plan"
 )
 
 // Target is Anthropic's OAuth usage endpoint, the one Claude Code's own /usage

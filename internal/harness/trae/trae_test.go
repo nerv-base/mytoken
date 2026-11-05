@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/harness/harnesstest"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness/harnesstest"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // writeDB lays down a file at dir/<name> holding body.

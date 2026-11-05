@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // fmtUSD formats an API-equivalent cost: cents below $1000, whole dollars

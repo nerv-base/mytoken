@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zzstar101/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness"
 )
 
 // clearStepEnv removes every variable this parser reads so a test starts from

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 // versionedParser is a fake harness whose dedup key carries its parse version.

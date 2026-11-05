@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/zzstar101/mytoken/internal/provider"
+	"github.com/nerv-base/mytoken/internal/provider"
 )
 
 const providerIdentityVersion = "provider.identity.v1"

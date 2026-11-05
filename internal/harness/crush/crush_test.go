@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // Fixtures live at the repository root (testdata/crush) like the other harness

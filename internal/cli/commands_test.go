@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 type sumPeriodJSON struct {

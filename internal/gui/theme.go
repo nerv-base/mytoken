@@ -11,7 +11,7 @@ import (
 	"embed"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // Faces. display is for big figures and titles; text for everything else.
