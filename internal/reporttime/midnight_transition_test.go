@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/reporttime"
+	"github.com/nerv-base/mytoken/internal/reporttime"
 )
 
 // transitionInstant builds the instant at a UTC wall-clock reading and presents

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zzstar101/mytoken/internal/sqlitedsn"
+	"github.com/nerv-base/mytoken/internal/sqlitedsn"
 )
 
 // legacyPhysicalSchema is the real pre-0.4 on-disk index: a physical events table

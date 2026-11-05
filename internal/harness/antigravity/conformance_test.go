@@ -8,9 +8,9 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/harness/harnesstest"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness/harnesstest"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // The conformance fixture grows two cascade databases instead of shipping binary

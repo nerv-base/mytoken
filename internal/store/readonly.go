@@ -11,7 +11,7 @@ import (
 
 	modernsqlite "modernc.org/sqlite"
 
-	"github.com/zzstar101/mytoken/internal/sqlitedsn"
+	"github.com/nerv-base/mytoken/internal/sqlitedsn"
 )
 
 // This file is the read-only half of the store: it opens the existing index

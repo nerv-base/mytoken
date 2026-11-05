@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/app"
-	"github.com/zzstar101/mytoken/internal/gui"
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/query"
-	"github.com/zzstar101/mytoken/internal/quota/plan"
+	"github.com/nerv-base/mytoken/internal/app"
+	"github.com/nerv-base/mytoken/internal/gui"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/query"
+	"github.com/nerv-base/mytoken/internal/quota/plan"
 )
 
 // guiDeps is the interface's view of the opened app: adapters from the app's

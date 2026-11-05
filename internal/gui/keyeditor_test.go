@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/traekey"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/traekey"
 )
 
 // keySources is a one-tool source list whose database is encrypted: it reports

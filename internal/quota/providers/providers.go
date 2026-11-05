@@ -7,17 +7,17 @@
 package providers
 
 import (
-	"github.com/zzstar101/mytoken/internal/claudequota"
-	"github.com/zzstar101/mytoken/internal/quota/codex"
-	"github.com/zzstar101/mytoken/internal/quota/copilot"
-	"github.com/zzstar101/mytoken/internal/quota/cursor"
-	"github.com/zzstar101/mytoken/internal/quota/deepseek"
-	"github.com/zzstar101/mytoken/internal/quota/glm"
-	"github.com/zzstar101/mytoken/internal/quota/plan"
-	"github.com/zzstar101/mytoken/internal/quota/qoder"
-	"github.com/zzstar101/mytoken/internal/quota/trae"
-	"github.com/zzstar101/mytoken/internal/quota/workbuddy"
-	"github.com/zzstar101/mytoken/internal/quota/zcode"
+	"github.com/nerv-base/mytoken/internal/claudequota"
+	"github.com/nerv-base/mytoken/internal/quota/codex"
+	"github.com/nerv-base/mytoken/internal/quota/copilot"
+	"github.com/nerv-base/mytoken/internal/quota/cursor"
+	"github.com/nerv-base/mytoken/internal/quota/deepseek"
+	"github.com/nerv-base/mytoken/internal/quota/glm"
+	"github.com/nerv-base/mytoken/internal/quota/plan"
+	"github.com/nerv-base/mytoken/internal/quota/qoder"
+	"github.com/nerv-base/mytoken/internal/quota/trae"
+	"github.com/nerv-base/mytoken/internal/quota/workbuddy"
+	"github.com/nerv-base/mytoken/internal/quota/zcode"
 )
 
 // All returns the supported providers in display order.

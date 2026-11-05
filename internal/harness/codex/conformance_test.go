@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/harness/harnesstest"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness/harnesstest"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // The materialized conformance tree mirrors ~/.codex, where a live rollout and

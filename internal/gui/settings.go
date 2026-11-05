@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/query"
-	"github.com/zzstar101/mytoken/internal/traekey"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/query"
+	"github.com/nerv-base/mytoken/internal/traekey"
 )
 
 // settingsState is the Settings page's data and what is being edited.

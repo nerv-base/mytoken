@@ -13,8 +13,8 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/sqlitedsn"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/sqlitedsn"
 )
 
 // CCSwitch reads the cc-switch SQLite database, opened read-only. It supplies

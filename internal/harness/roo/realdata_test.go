@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/harness/clinetask"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/harness/clinetask"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // TestRealData runs Discover+Parse over the real Roo Code tree — the VS Code

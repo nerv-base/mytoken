@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/paths"
-	"github.com/zzstar101/mytoken/internal/traekey"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/paths"
+	"github.com/nerv-base/mytoken/internal/traekey"
 )
 
 // Some harnesses encrypt their local database and keep the key nowhere on

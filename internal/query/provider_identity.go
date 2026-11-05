@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/provider"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/provider"
 )
 
 // ProviderMember retains original attribution for pricing/account drilldown.

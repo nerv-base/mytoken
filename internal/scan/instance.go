@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/zzstar101/mytoken/internal/attrib"
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/pricing"
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/attrib"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/pricing"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 // Instance is one scannable configuration: a parser bound to the instance id

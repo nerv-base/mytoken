@@ -1,4 +1,4 @@
-module github.com/zzstar101/mytoken
+module github.com/nerv-base/mytoken
 
 go 1.27.3
 

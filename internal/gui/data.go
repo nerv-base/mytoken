@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/query"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/query"
 )
 
 // Query is the read API the interface needs: a subset of query.Service, so

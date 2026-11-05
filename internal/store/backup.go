@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/sqlitedsn"
+	"github.com/nerv-base/mytoken/internal/sqlitedsn"
 )
 
 // verifyBackupArtifact rejects artifacts that cannot be a usable snapshot even

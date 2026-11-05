@@ -3,7 +3,7 @@ package pricing
 import (
 	"context"
 	"encoding/json"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 	"math"
 	"net/http"
 	"net/http/httptest"

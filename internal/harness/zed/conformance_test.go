@@ -9,9 +9,9 @@ import (
 	"github.com/klauspost/compress/zstd"
 	_ "modernc.org/sqlite"
 
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/harness/harnesstest"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness/harnesstest"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // The conformance database is grown in three steps rather than copied, because

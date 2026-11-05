@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/sqlitedsn"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/sqlitedsn"
 )
 
 // v2DDL is the session_message generation OpenCode added for v2 usage: the row

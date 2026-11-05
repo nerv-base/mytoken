@@ -42,9 +42,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/harness/opencode/sqlitecore"
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/harness/opencode/sqlitecore"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // HarnessID is the source identity of MiMo Code. It is separate from

@@ -15,8 +15,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/zzstar101/mytoken/internal/quota/plan"
-	"github.com/zzstar101/mytoken/internal/sqlitedsn"
+	"github.com/nerv-base/mytoken/internal/quota/plan"
+	"github.com/nerv-base/mytoken/internal/sqlitedsn"
 )
 
 const (

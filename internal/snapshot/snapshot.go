@@ -15,11 +15,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/paths"
-	"github.com/zzstar101/mytoken/internal/query"
-	"github.com/zzstar101/mytoken/internal/quota/plan"
-	"github.com/zzstar101/mytoken/internal/scan"
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/paths"
+	"github.com/nerv-base/mytoken/internal/query"
+	"github.com/nerv-base/mytoken/internal/quota/plan"
+	"github.com/nerv-base/mytoken/internal/scan"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 // Version is the envelope contract version. Consumers switch on it; additive

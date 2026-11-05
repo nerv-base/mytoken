@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // RecomputeCosts makes one bounded-memory pass, excluding authoritative log costs.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // ErrInvalidRecentWindow reports a CommitManyOutcomeRecent call whose window

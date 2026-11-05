@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/attrib"
-	"github.com/zzstar101/mytoken/internal/harness"
-	"github.com/zzstar101/mytoken/internal/model"
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/attrib"
+	"github.com/nerv-base/mytoken/internal/harness"
+	"github.com/nerv-base/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 // fixedParser yields prepared events once per discovered source. It exists so a

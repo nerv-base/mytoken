@@ -9,7 +9,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // ProviderInfo describes one provider a source knows about. Keys are never

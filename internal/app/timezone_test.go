@@ -9,7 +9,7 @@ import (
 	"time"
 	_ "time/tzdata" // pin the IANA database for a machine without zoneinfo
 
-	"github.com/zzstar101/mytoken/internal/store"
+	"github.com/nerv-base/mytoken/internal/store"
 )
 
 func openStore(t *testing.T, path string) *store.Store {

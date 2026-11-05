@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/reporttime"
+	"github.com/nerv-base/mytoken/internal/reporttime"
 )
 
 // StatsTimezoneKey is the settings key holding the reporting timezone every

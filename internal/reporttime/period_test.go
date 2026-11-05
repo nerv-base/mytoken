@@ -6,7 +6,7 @@ import (
 	"time"
 	_ "time/tzdata" // pin the IANA database so America/New_York DST rules are stable
 
-	"github.com/zzstar101/mytoken/internal/reporttime"
+	"github.com/nerv-base/mytoken/internal/reporttime"
 )
 
 func loadLoc(t *testing.T, name string) *time.Location {

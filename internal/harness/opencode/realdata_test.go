@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzstar101/mytoken/internal/model"
+	"github.com/nerv-base/mytoken/internal/model"
 )
 
 // TestRealData parses whatever OpenCode data exists on this machine. It is
