@@ -247,15 +247,20 @@ func (a *App) deckFront(c *ui.Context, pal palette, s activeSession, moving, hov
 						})
 						ui.Text(c, tr("thisSession")).FontSize(12).TextColor(pal.muted).NoWrap().Padding(0, 0, 4, 0)
 					})
-					// Output speed, estimated from the gaps between requests.
+					// Output speed: the log's own decode window when it timed
+					// one, the gaps between requests otherwise.
 					ui.Row(c).Gap(6).AlignItems(ui.End).Children(func() {
 						v := "—"
 						if s.rate > 0 {
 							v = fmtTokens(int64(math.Round(s.rate)))
 						}
+						unit := "tpsUnit"
+						if s.measured {
+							unit = "tpsMeasured"
+						}
 						ui.Text(c.Key("tps"), v).Font(display).FontSize(24).FontWeight(700).TextColor(pal.ink).FontFeatures("tnum").LetterSpacing(-0.4).NoWrap().
 							ContentTransition(ui.ContentTransition{Numeric: true})
-						ui.Text(c, tr("tpsUnit")).FontSize(12).TextColor(pal.muted).NoWrap().Padding(0, 0, 4, 0)
+						ui.Text(c, tr(unit)).FontSize(12).TextColor(pal.muted).NoWrap().Padding(0, 0, 4, 0)
 					})
 				})
 				ui.Text(c.Key("pace"), trf("perHour", fmtUSD(s.perHour))+"  ·  "+tr("hitRate")+" "+fmtPct(s.hit)+"  ·  "+trn("reqIn10m", s.requests)).
