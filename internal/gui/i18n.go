@@ -170,6 +170,7 @@ var strs = map[string][2]string{
 	"signInAgain":   {"%s turned the saved login away. Sign in to %[1]s again to see the quota.", "%s 拒绝了已保存的登录，重新登录 %[1]s 后才能看到额度。"},
 	"signInShort":   {"Sign in again", "需重新登录"},
 	"tpsUnit":       {"tok/s (est.)", "tok/s · 约"},
+	"tpsMeasured":   {"tok/s", "tok/s"},
 	"tpsShort":      {"~%s tok/s", "约 %s tok/s"},
 	"reqIn10m":      {"%d requests in 10 min", "10 分钟 %d 次请求"},
 	"reqIn10m1":     {"%d request in 10 min", "10 分钟 %d 次请求"},
