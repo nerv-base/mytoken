@@ -25,7 +25,7 @@ API 价格给每次请求算出等价费用，展示今日与本月花费、套�
 或命令行里都能看。一切都在你自己的机器上完成。
 
 - **一个窗口里看三十三个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
-  Cline、Roo Code、Kilo Code、Claude Desktop、WorkBuddy、CodeBuddy、Hermes、Qwen Code、Kimi、
+  Cline、Roo Code、Kilo Code、Claude Desktop、WorkBuddy、CodeBuddy、CodeBuddy CN、Hermes、Qwen Code、Kimi、
   OpenClaude、Grok、OpenClaw、Droid、Goose、Forge、Amp、Kiro、Zed、Antigravity、Codebuff、Mux、
   ZCode、MiniMax Code、MiMo Code、Step Code 与 Trae。
 - **会话 × 供应商 × 模型** —— 五类 token 分开统计（input、output、cache read、cache write、
@@ -122,6 +122,7 @@ MyToken!!!!! 读取每个工具本来就保留的日志，只读、不回写：�
 | Claude Desktop | `claude-desktop` | — |
 | WorkBuddy | `workbuddy` | WorkBuddy |
 | CodeBuddy | `codebuddy` | — |
+| CodeBuddy CN | `codebuddy-cn` | — |
 | Hermes | `hermes` | — |
 | Qwen Code | `qwen` | — |
 | Kimi / Kimi Code | `kimi` | — |
@@ -185,6 +186,7 @@ mytoken key trae --clear            # 清除
 | Claude Desktop | `claude-desktop` | `…/Claude/local-agent-mode-sessions` 及其 `Claude-3p` 同级目录（macOS：`~/Library/Application Support`，Windows：`%APPDATA%`），以及 Cowork 用量账本 |
 | WorkBuddy | `workbuddy` | `$WORKBUDDY_HOME/projects`（默认 `~/.workbuddy/projects`） |
 | CodeBuddy | `codebuddy` | `$CODEBUDDY_HOME/projects`（默认 `~/.codebuddy/projects`） |
+| CodeBuddy CN | `codebuddy-cn` | 桌面版日志（macOS：`~/Library/Application Support/CodeBuddy CN/logs`、`…/CodeBuddyExtension/Logs/{CodeBuddyIDE,VSCode}`；Windows：`%APPDATA%\CodeBuddy CN\logs`、`%LOCALAPPDATA%\CodeBuddyExtension\Logs`；Linux：`$XDG_CONFIG_HOME`、`$XDG_DATA_HOME` 下同名目录）加 CLI 会话 `$CODEBUDDYCN_HOME/projects`（默认 `~/.codebuddycn/projects`） |
 | Hermes | `hermes` | `$HERMES_HOME`（默认 `~/.hermes`），SQLite |
 | Qwen Code | `qwen` | `$QWEN_DATA_DIR/projects`（默认 `~/.qwen/projects`） |
 | Kimi / Kimi Code | `kimi` | 旧版 `$KIMI_SHARE_DIR/sessions`（`~/.kimi/sessions`）加 `$KIMI_CODE_HOME/sessions`（`~/.kimi-code/sessions`） |
@@ -229,6 +231,7 @@ Linux 为 `~/.config/<editor>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…`�
 | `MYTOKEN_CLINE_DIRS`、`MYTOKEN_ROO_DIRS`、`MYTOKEN_KILO_DIRS` | 显式的 Cline / Roo / Kilo 目录（路径列表） |
 | `MYTOKEN_CLAUDEDESKTOP_DIRS` | 显式的 Claude Desktop 会话目录（路径列表） |
 | `WORKBUDDY_HOME`、`CODEBUDDY_HOME` | WorkBuddy / CodeBuddy 主目录 |
+| `CODEBUDDYCN_HOME`、`CODEBUDDY_CN_HOME` | CodeBuddy 国内版主目录，替代 `~/.codebuddycn` |
 | `HERMES_HOME` | Hermes 主目录，替代 `~/.hermes` |
 | `QWEN_DATA_DIR`、`MYTOKEN_QWEN_DIRS` | Qwen Code 数据目录，或显式目录（路径列表） |
 | `KIMI_SHARE_DIR`、`KIMI_CODE_HOME`、`MYTOKEN_KIMI_DIRS` | Kimi / Kimi Code 数据目录，或显式目录（路径列表） |

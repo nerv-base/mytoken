@@ -23,6 +23,7 @@ import (
 	_ "github.com/nerv-base/mytoken/internal/harness/claudedesktop"
 	_ "github.com/nerv-base/mytoken/internal/harness/cline"
 	_ "github.com/nerv-base/mytoken/internal/harness/codebuddy"
+	_ "github.com/nerv-base/mytoken/internal/harness/codebuddycn"
 	_ "github.com/nerv-base/mytoken/internal/harness/codebuff"
 	_ "github.com/nerv-base/mytoken/internal/harness/codex"
 	_ "github.com/nerv-base/mytoken/internal/harness/crush"

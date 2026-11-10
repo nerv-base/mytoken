@@ -171,6 +171,9 @@ func harnessColor(h model.Harness) ui.Color {
 		return ui.Hex("#5FBB9D")
 	case model.CodeBuddy:
 		return ui.Hex("#9A8FDF")
+	case model.CodeBuddyCN:
+		// The mainland build keeps the same mark, shifted to its own blue.
+		return ui.Hex("#6C8EF5")
 	case model.Hermes:
 		return ui.Hex("#C9B16A")
 	case model.Amp:
@@ -257,6 +260,7 @@ var harnessIcons = func() map[model.Harness]brandMark {
 		model.Crush:         {icon(`<path d="M12 19.5s-7.5-4.4-7.5-10A4.2 4.2 0 0 1 12 7a4.2 4.2 0 0 1 7.5 2.5c0 5.6-7.5 10-7.5 10z"/>`), false, false},
 		model.ClaudeDesktop: {load("claude-color"), true, false},
 		model.CodeBuddy:     {load("codebuddy-color"), true, true},
+		model.CodeBuddyCN:   {load("codebuddy-color"), true, true},
 		model.Hermes:        {load("hermesagent"), false, false},
 		model.Qwen:          {load("qwen-color"), true, false},
 		model.Kimi:          {load("kimi-color"), true, false},
