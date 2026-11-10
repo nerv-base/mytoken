@@ -44,6 +44,7 @@ var overrideEnvSurface = []struct {
 	{model.ClaudeDesktop, []string{"MYTOKEN_CLAUDEDESKTOP_DIRS"}},
 	{model.Cline, []string{"MYTOKEN_CLINE_DIRS", "CLINE_DATA_DIR", "CLINE_DIR", "CLINE_SESSION_DATA_DIR"}},
 	{model.CodeBuddy, []string{"CODEBUDDY_HOME"}},
+	{model.CodeBuddyCN, []string{"CODEBUDDYCN_HOME", "CODEBUDDY_CN_HOME"}},
 	{model.Codebuff, []string{"MYTOKEN_CODEBUFF_DIRS", "CODEBUFF_DATA_DIR"}},
 	{model.Codex, []string{"CODEX_HOME"}},
 	{model.Crush, []string{"MYTOKEN_CRUSH_DIRS", "CRUSH_GLOBAL_DATA"}},
