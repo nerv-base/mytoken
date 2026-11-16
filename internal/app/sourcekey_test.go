@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -20,9 +21,10 @@ func useTraeRoots(t *testing.T, roots ...string) {
 	t.Cleanup(func() { harness.Register(prev) })
 }
 
-// TestSourceKeyLivesOutsideTheIndex checks the key goes to a 0600 file under the
-// data directory and never into the settings table: the index is a usage ledger
-// that can be copied or shipped in a bug report.
+// TestSourceKeyLivesOutsideTheIndex checks the key goes to a 0600 file (where
+// Unix permission bits exist) under the data directory and never into the
+// settings table: the index is a usage ledger that can be copied or shipped in
+// a bug report.
 func TestSourceKeyLivesOutsideTheIndex(t *testing.T) {
 	useTraeRoots(t) // no roots: nothing to prove the key against, nothing to read
 	a := openTestApp(t)
@@ -54,7 +56,9 @@ func TestSourceKeyLivesOutsideTheIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := st.Mode().Perm(); perm != 0o600 {
+	// Windows has no Unix permission bits: os.Chmod only controls the read-only
+	// flag, so a file created under the per-user data directory reports 0666.
+	if perm := st.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Fatalf("key file mode = %o, want 600", perm)
 	}
 	var n int

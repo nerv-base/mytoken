@@ -13,8 +13,15 @@ on:
 permissions:
   contents: read
 
+# Concurrency:
+# - Pull requests share one group per PR, so a new push to the same PR cancels
+#   its stale run.
+# - Every push gets its own group keyed by commit. GitHub keeps at most one
+#   running and one pending run per group; a group keyed on the branch alone
+#   makes a burst of merges replace the pending run, cancelling that commit
+#   before any job starts and leaving it without a CI verdict.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: true
 
 jobs:
