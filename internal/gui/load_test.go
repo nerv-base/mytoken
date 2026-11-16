@@ -34,7 +34,7 @@ func TestOutputRateSteadySpacing(t *testing.T) {
 		rateSpec{age: 20 * time.Second, out: 200}, rateSpec{age: 16 * time.Second, out: 200},
 		rateSpec{age: 12 * time.Second, out: 200}, rateSpec{age: 8 * time.Second, out: 200},
 		rateSpec{age: 4 * time.Second, out: 200}, rateSpec{age: 0, out: 200})
-	rate, requests := outputRate(ev, now)
+	rate, requests, _ := outputRate(ev, now)
 	if requests != 5 {
 		t.Fatalf("requests = %d, want 5", requests)
 	}
@@ -47,7 +47,7 @@ func TestOutputRateCountsReasoning(t *testing.T) {
 	now := time.Now()
 	// Reasoning is generated output too: 200 output + 200 reasoning over 8 s.
 	ev := rateEvents(now, rateSpec{age: 8 * time.Second}, rateSpec{age: 0, out: 200, reasoning: 200})
-	rate, _ := outputRate(ev, now)
+	rate, _, _ := outputRate(ev, now)
 	if math.Abs(rate-50) > 1e-9 {
 		t.Fatalf("rate = %v, want 50", rate)
 	}
@@ -58,7 +58,7 @@ func TestOutputRateCountsReasoning(t *testing.T) {
 func TestOutputRateRepairsMillisecondTimestamps(t *testing.T) {
 	now := time.Now()
 	ev := rateEvents(now, rateSpec{age: 60 * time.Second}, rateSpec{age: 59*time.Second - time.Millisecond, out: 4131})
-	rate, _ := outputRate(ev, now)
+	rate, _, _ := outputRate(ev, now)
 	if rate <= 0 {
 		t.Fatalf("rate = %v, want a positive estimate", rate)
 	}
@@ -80,7 +80,7 @@ func TestOutputRateOneBadPairDoesNotPoison(t *testing.T) {
 		rateSpec{age: 8 * time.Second, out: 200},
 		rateSpec{age: 4 * time.Second, out: 200},
 		rateSpec{age: 0, out: 200})
-	rate, _ := outputRate(ev, now)
+	rate, _, _ := outputRate(ev, now)
 	if rate > 300 {
 		t.Fatalf("rate = %v, want at most 300 tok/s", rate)
 	}
@@ -94,7 +94,7 @@ func TestOutputRateOneBadPairDoesNotPoison(t *testing.T) {
 func TestOutputRateSameTimestamp(t *testing.T) {
 	now := time.Now()
 	ev := rateEvents(now, rateSpec{age: 0, out: 300}, rateSpec{age: 0, out: 300})
-	rate, requests := outputRate(ev, now)
+	rate, requests, _ := outputRate(ev, now)
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1", requests)
 	}
@@ -108,7 +108,7 @@ func TestOutputRateSameTimestamp(t *testing.T) {
 func TestOutputRateDropsPause(t *testing.T) {
 	now := time.Now()
 	ev := rateEvents(now, rateSpec{age: 9 * time.Minute}, rateSpec{age: 0, out: 90})
-	rate, _ := outputRate(ev, now)
+	rate, _, _ := outputRate(ev, now)
 	if rate != 0 {
 		t.Fatalf("rate = %v, want 0: a nine-minute pause is not a speed", rate)
 	}
@@ -123,7 +123,7 @@ func TestOutputRateGoesQuietWhenNothingArrives(t *testing.T) {
 		rateSpec{age: 6 * time.Minute, out: 200},
 		rateSpec{age: 5 * time.Minute, out: 200},
 		rateSpec{age: 4 * time.Minute, out: 200})
-	rate, requests := outputRate(ev, now)
+	rate, requests, _ := outputRate(ev, now)
 	if rate != 0 {
 		t.Fatalf("rate = %v, want 0 for requests four minutes old", rate)
 	}
@@ -138,7 +138,7 @@ func TestOutputRateMeasurementGoesQuiet(t *testing.T) {
 	ev := rateEvents(now,
 		rateSpec{age: 3 * time.Minute, out: 250, decodeMS: 1000},
 		rateSpec{age: 2 * time.Minute, out: 250, decodeMS: 1000})
-	if rate, _ := outputRate(ev, now); rate != 0 {
+	if rate, _, _ := outputRate(ev, now); rate != 0 {
 		t.Fatalf("rate = %v, want 0 for a window that ended two minutes ago", rate)
 	}
 }
@@ -146,7 +146,7 @@ func TestOutputRateMeasurementGoesQuiet(t *testing.T) {
 func TestOutputRateIgnoresOldRequests(t *testing.T) {
 	now := time.Now()
 	ev := rateEvents(now, rateSpec{age: 30 * time.Minute, out: 500}, rateSpec{age: 20 * time.Minute, out: 500})
-	rate, requests := outputRate(ev, now)
+	rate, requests, _ := outputRate(ev, now)
 	if rate != 0 || requests != 0 {
 		t.Fatalf("rate = %v, requests = %d; want 0, 0", rate, requests)
 	}
@@ -154,15 +154,15 @@ func TestOutputRateIgnoresOldRequests(t *testing.T) {
 
 func TestOutputRateDegenerate(t *testing.T) {
 	now := time.Now()
-	if rate, requests := outputRate(nil, now); rate != 0 || requests != 0 {
+	if rate, requests, _ := outputRate(nil, now); rate != 0 || requests != 0 {
 		t.Fatalf("empty: rate = %v, requests = %d; want 0, 0", rate, requests)
 	}
 	// A single request has no gap to learn from.
-	if rate, _ := outputRate(rateEvents(now, rateSpec{age: 0, out: 500}), now); rate != 0 {
+	if rate, _, _ := outputRate(rateEvents(now, rateSpec{age: 0, out: 500}), now); rate != 0 {
 		t.Fatalf("one request: rate = %v, want 0", rate)
 	}
 	// Input-only records generate no output tokens.
-	if rate, _ := outputRate(rateEvents(now, rateSpec{age: 4 * time.Second}, rateSpec{age: 0}), now); rate != 0 {
+	if rate, _, _ := outputRate(rateEvents(now, rateSpec{age: 4 * time.Second}, rateSpec{age: 0}), now); rate != 0 {
 		t.Fatalf("no output: rate = %v, want 0", rate)
 	}
 }
@@ -171,7 +171,7 @@ func TestOutputRateDegenerate(t *testing.T) {
 func TestOutputRateClockRegression(t *testing.T) {
 	now := time.Now()
 	ev := rateEvents(now, rateSpec{age: 8 * time.Second, out: 200}, rateSpec{age: 0, out: 900}, rateSpec{age: 4 * time.Second, out: 200})
-	rate, _ := outputRate(ev, now)
+	rate, _, _ := outputRate(ev, now)
 	if math.IsNaN(rate) || math.IsInf(rate, 0) {
 		t.Fatalf("rate = %v, want a finite estimate", rate)
 	}
@@ -188,7 +188,7 @@ func TestOutputRateUsesMeasuredDecodeWindow(t *testing.T) {
 	ev := rateEvents(now,
 		rateSpec{age: 5 * time.Second, out: 250, decodeMS: 1000},
 		rateSpec{age: 0, out: 250, decodeMS: 1000})
-	rate, requests := outputRate(ev, now)
+	rate, requests, _ := outputRate(ev, now)
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1", requests)
 	}
@@ -204,7 +204,7 @@ func TestOutputRateMeasurementExcludesReasoning(t *testing.T) {
 	ev := rateEvents(now,
 		rateSpec{age: 2 * time.Second, out: 100, reasoning: 900, decodeMS: 1000},
 		rateSpec{age: 0, out: 100, reasoning: 900, decodeMS: 1000})
-	rate, _ := outputRate(ev, now)
+	rate, _, _ := outputRate(ev, now)
 	if math.Abs(rate-100) > 1e-9 {
 		t.Fatalf("rate = %v, want 100 (counted reasoning would read 1000)", rate)
 	}
@@ -218,7 +218,7 @@ func TestOutputRateMeasurementWinsOverGaps(t *testing.T) {
 		rateSpec{age: 6 * time.Second, out: 200},
 		rateSpec{age: 3 * time.Second, out: 200, decodeMS: 2000},
 		rateSpec{age: 0, out: 200})
-	rate, _ := outputRate(ev, now)
+	rate, _, _ := outputRate(ev, now)
 	if math.Abs(rate-100) > 1e-9 {
 		t.Fatalf("rate = %v, want 100 (200 tokens over the 2 s the log timed)", rate)
 	}
@@ -230,8 +230,108 @@ func TestOutputRateMeasuredIgnoredWhenOld(t *testing.T) {
 	ev := rateEvents(now,
 		rateSpec{age: 30 * time.Minute, out: 250, decodeMS: 1000},
 		rateSpec{age: 29 * time.Minute, out: 250, decodeMS: 1000})
-	rate, _ := outputRate(ev, now)
+	rate, _, _ := outputRate(ev, now)
 	if rate != 0 {
 		t.Fatalf("rate = %v, want 0 (both requests are outside the window)", rate)
+	}
+}
+
+// A provider that flushes a finished answer makes the decode window time the
+// flush instead of the generation: DSH logs 10,713 tokens "decoded" in 4 ms for
+// a Gemini tool call whose arguments arrived as one delta, which read 2.7M
+// tok/s on the card. A refuted window is not a measurement, so that request
+// falls back to the bounded estimate rather than being believed.
+func TestOutputRateRefutesFlushedWindow(t *testing.T) {
+	now := time.Now()
+	ev := rateEvents(now,
+		rateSpec{age: 60 * time.Second, out: 200},
+		rateSpec{age: 0, out: 10713, decodeMS: 4})
+	rate, requests, measured := outputRate(ev, now)
+	if measured {
+		t.Fatal("measured = true; want false: 10,713 tokens in 4 ms is a flush, not a generation")
+	}
+	if rate <= 0 || rate > 300 {
+		t.Fatalf("rate = %v, want a positive bounded estimate of at most 300 tok/s", rate)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
+// A flush measured in milliseconds must not be believed even when a plausible
+// measurement shares the window: the honest request keeps its own number and
+// the flush is dropped from it rather than averaged in.
+func TestOutputRateRefutedWindowDoesNotPoisonMeasurement(t *testing.T) {
+	now := time.Now()
+	ev := rateEvents(now,
+		rateSpec{age: 60 * time.Second, out: 200},
+		rateSpec{age: 30 * time.Second, out: 19119, decodeMS: 12}, // a flush
+		rateSpec{age: 8 * time.Second, out: 200, decodeMS: 2000},
+		rateSpec{age: 4 * time.Second, out: 200, decodeMS: 2000})
+	rate, _, measured := outputRate(ev, now)
+	if !measured {
+		t.Fatal("measured = false, want true: the honest windows are still measurements")
+	}
+	if math.Abs(rate-100) > 1e-9 {
+		t.Fatalf("rate = %v, want 100 (400 tokens over the 4 s two logs timed)", rate)
+	}
+}
+
+// The refutation is deliberately loose: a genuine measurement above the
+// estimate's fast ceiling is kept, so a fast provider is not reported at
+// somebody else's speed.
+func TestOutputRateKeepsFastPlausibleMeasurement(t *testing.T) {
+	now := time.Now()
+	ev := rateEvents(now,
+		rateSpec{age: 3 * time.Second, out: 500, decodeMS: 1000},
+		rateSpec{age: 0, out: 500, decodeMS: 1000})
+	rate, _, measured := outputRate(ev, now)
+	if !measured {
+		t.Fatal("measured = false, want true: 500 tokens in 1 s is possible")
+	}
+	if math.Abs(rate-500) > 1e-9 {
+		t.Fatalf("rate = %v, want 500", rate)
+	}
+}
+
+// The card labels a measurement differently from an estimate, so the flag has
+// to follow the branch that produced the number.
+func TestOutputRateReportsProvenance(t *testing.T) {
+	now := time.Now()
+	if _, _, measured := outputRate(rateEvents(now, rateSpec{age: 4 * time.Second}, rateSpec{age: 0, out: 200}), now); measured {
+		t.Fatal("measured = true for a gap estimate, want false")
+	}
+	ev := rateEvents(now,
+		rateSpec{age: 2 * time.Second, out: 100, decodeMS: 1000},
+		rateSpec{age: 0, out: 100, decodeMS: 1000})
+	rate, _, measured := outputRate(ev, now)
+	if !measured {
+		t.Fatal("measured = false for a decode window, want true")
+	}
+	if math.Abs(rate-100) > 1e-9 {
+		t.Fatalf("rate = %v, want 100", rate)
+	}
+}
+
+// measuredWindow is the boundary itself: exactly plausibleRate is still a
+// window the log could have watched.
+func TestMeasuredWindowBoundary(t *testing.T) {
+	e := query.AttributedEvent{UsageEvent: model.UsageEvent{DecodeMS: 1000}}
+	e.Tokens = model.Tokens{Output: 1000}
+	if !measuredWindow(e) {
+		t.Fatal("1000 tokens in 1 s must be believed")
+	}
+	e.Tokens.Output = 1001
+	if measuredWindow(e) {
+		t.Fatal("1001 tokens in 1 s is faster than any model writes")
+	}
+	e.Tokens.Output = 0
+	if measuredWindow(e) {
+		t.Fatal("a window that decoded nothing is no measurement")
+	}
+	e.Tokens.Output = 100
+	e.DecodeMS = 0
+	if measuredWindow(e) {
+		t.Fatal("a request that timed no window is no measurement")
 	}
 }

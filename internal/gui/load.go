@@ -60,9 +60,12 @@ type dayCost struct {
 // activeSession is a session that made a request in the last minutes.
 type activeSession struct {
 	row query.SessionRow
-	// rate is the output speed in tokens per second, estimated from the
-	// gaps between requests (logs carry no durations); 0 when unknown.
+	// rate is the output speed in tokens per second: measured from the decode
+	// window when the log timed one, estimated from the gaps between requests
+	// otherwise; 0 when unknown. measured says which of the two it is, so the
+	// card can label it honestly.
 	rate     float64
+	measured bool
 	perHour  float64 // cost of the last hour
 	hit      float64
 	last     time.Time
@@ -353,6 +356,19 @@ const (
 	countWindow = 10 * time.Minute
 )
 
+// plausibleRate refutes a measured decode window. A provider that hands a
+// finished answer over in one flush — Gemini through an Anthropic-messages
+// relay sends a tool call's whole arguments as a single delta — leaves the
+// window timing the flush instead of the generation: 10,713 tokens "decoded"
+// in 4 ms. No request in the index decodes faster than about 500 tok/s when
+// its window covers at least half the gap before it, while every window that
+// measured a flush instead of a generation sits in the thousands, so a window
+// implying more than this never watched the model write and is discarded
+// rather than believed. It is deliberately loose: a genuine 400-600 tok/s
+// measurement is kept, and the estimate that replaces a refuted one is still
+// bounded by `fast`.
+const plausibleRate = 1000 // tokens per second
+
 // recentEvents keeps the last hour of each running session's requests, so
 // the refresh that runs every couple of seconds while something is running
 // (and after every commit) reads a session's whole history again only when
@@ -433,7 +449,7 @@ func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentE
 			return nil, err
 		}
 		s := activeSession{row: r, hit: r.Tokens.HitRate(), last: r.UpdatedAt}
-		s.rate, s.requests = outputRate(events, now)
+		s.rate, s.requests, s.measured = outputRate(events, now)
 		for i := len(events) - 1; i >= 0; i-- {
 			e := events[i]
 			if now.Sub(e.Timestamp) <= activeWindow {
@@ -460,7 +476,8 @@ func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentE
 	return out, nil
 }
 
-// outputRate reports output tokens per second over the last liveWindow.
+// outputRate reports output tokens per second over the last liveWindow, and
+// whether that number is a measurement rather than an estimate.
 //
 // A request whose log timed its own stream (DecodeMS, currently only DSH) is
 // read the way that tool reads itself: its output tokens over exactly the
@@ -470,6 +487,15 @@ func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentE
 // reasoning excluded, as the tool displays it. When a session has such
 // measurements they are the answer, because an estimate must not overrule a
 // measurement.
+//
+// A window can be refuted, though, and then it is not a measurement. The
+// window is the time between the first and the last chunk of the answer as
+// they arrived, which only measures generation while the chunks arrive as the
+// model writes them; a provider that buffers the answer and delivers it in one
+// piece makes the window the flush latency instead, and the request reads
+// thousands of tokens per second (see plausibleRate). Such a window is dropped
+// and that request falls through to the estimate below, so a buffered session
+// reads as fast rather than as impossible.
 //
 // Everything else is estimated over the gap since the request before it, since
 // a log measures the requests, not the generation inside them. Both ends of
@@ -485,7 +511,7 @@ func activeSessions(ctx context.Context, q Query, now time.Time, recent *recentE
 //     millions of tokens per second, and since the window divides summed
 //     tokens by summed gaps, one bad pair made a whole session absurd.
 //     Requests that share a timestamp count too, instead of being dropped.
-func outputRate(events []query.AttributedEvent, now time.Time) (float64, int) {
+func outputRate(events []query.AttributedEvent, now time.Time) (rate float64, requests int, measured bool) {
 	const window = liveWindow
 	// fast is faster than any model generates; it only has to be an honest
 	// upper bound for the estimate.
@@ -508,7 +534,7 @@ func outputRate(events []query.AttributedEvent, now time.Time) (float64, int) {
 		if age > window {
 			continue
 		}
-		if e.DecodeMS > 0 {
+		if measuredWindow(e) {
 			timed += e.Tokens.Output
 			decode += time.Duration(e.DecodeMS) * time.Millisecond
 			continue
@@ -525,12 +551,24 @@ func outputRate(events []query.AttributedEvent, now time.Time) (float64, int) {
 		secs += gap.Seconds()
 	}
 	if decode > 0 && timed > 0 {
-		return float64(timed) / decode.Seconds(), n
+		return float64(timed) / decode.Seconds(), n, true
 	}
 	if secs < 1 || out == 0 {
-		return 0, n
+		return 0, n, false
 	}
-	return float64(out) / secs, n
+	return float64(out) / secs, n, false
+}
+
+// measuredWindow reports whether a request's own decode window can be believed:
+// the request must have timed its stream, produced output, and stayed slow
+// enough that the window could have held those tokens while the model wrote
+// them. A window implying more than plausibleRate timed the provider's flush,
+// not the generation.
+func measuredWindow(e query.AttributedEvent) bool {
+	if e.DecodeMS <= 0 || e.Tokens.Output <= 0 {
+		return false
+	}
+	return float64(e.Tokens.Output)*1000 <= float64(e.DecodeMS)*plausibleRate
 }
 
 // rangeFilter is the filter of the shared range choice i, ending today.
