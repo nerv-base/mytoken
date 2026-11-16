@@ -29,6 +29,7 @@ const (
 	OpenClaude    Harness = "openclaude"
 	WorkBuddy     Harness = "workbuddy"
 	CodeBuddy     Harness = "codebuddy"
+	CodeBuddyCN   Harness = "codebuddy-cn"
 	Hermes        Harness = "hermes"
 	Amp           Harness = "amp"
 	Kiro          Harness = "kiro"
@@ -80,6 +81,8 @@ func (h Harness) DisplayName() string {
 		return "WorkBuddy"
 	case CodeBuddy:
 		return "CodeBuddy"
+	case CodeBuddyCN:
+		return "CodeBuddy CN"
 	case Hermes:
 		return "Hermes"
 	case Amp:

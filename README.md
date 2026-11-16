@@ -27,7 +27,7 @@ now — in a native desktop app, a menu-bar panel, or the command line. Everythi
 machine.
 
 - **Thirty-three harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
-  Crush, Cline, Roo Code, Kilo Code, Claude Desktop, WorkBuddy, CodeBuddy, Hermes, Qwen Code, Kimi,
+  Crush, Cline, Roo Code, Kilo Code, Claude Desktop, WorkBuddy, CodeBuddy, CodeBuddy CN, Hermes, Qwen Code, Kimi,
   OpenClaude, Grok, OpenClaw, Droid, Goose, Forge, Amp, Kiro, Zed, Antigravity, Codebuff, Mux,
   ZCode, MiniMax Code, MiMo Code, Step Code and Trae.
 - **Session × provider × model** — the five token classes kept apart (input, output, cache read,
@@ -134,6 +134,7 @@ still counts toward spend.
 | Claude Desktop | `claude-desktop` | — |
 | WorkBuddy | `workbuddy` | WorkBuddy |
 | CodeBuddy | `codebuddy` | — |
+| CodeBuddy CN | `codebuddy-cn` | — |
 | Hermes | `hermes` | — |
 | Qwen Code | `qwen` | — |
 | Kimi / Kimi Code | `kimi` | — |
@@ -202,6 +203,7 @@ takes a key recovered elsewhere, such as with
 | Claude Desktop | `claude-desktop` | `…/Claude/local-agent-mode-sessions` and its `Claude-3p` sibling (macOS: `~/Library/Application Support`, Windows: `%APPDATA%`), plus the Cowork usage ledger |
 | WorkBuddy | `workbuddy` | `$WORKBUDDY_HOME/projects` (`~/.workbuddy/projects` by default) |
 | CodeBuddy | `codebuddy` | `$CODEBUDDY_HOME/projects` (`~/.codebuddy/projects` by default) |
+| CodeBuddy CN | `codebuddy-cn` | Desktop logs (macOS `~/Library/Application Support/CodeBuddy CN/logs` and `…/CodeBuddyExtension/Logs/{CodeBuddyIDE,VSCode}`; Windows `%APPDATA%\CodeBuddy CN\logs`, `%LOCALAPPDATA%\CodeBuddyExtension\Logs`; Linux the same names under `$XDG_CONFIG_HOME`/`$XDG_DATA_HOME`) plus CLI transcripts in `$CODEBUDDYCN_HOME/projects` (`~/.codebuddycn/projects` by default) |
 | Hermes | `hermes` | `$HERMES_HOME` (`~/.hermes` by default), SQLite |
 | Qwen Code | `qwen` | `$QWEN_DATA_DIR/projects` (`~/.qwen/projects` by default) |
 | Kimi / Kimi Code | `kimi` | Legacy `$KIMI_SHARE_DIR/sessions` (`~/.kimi/sessions`) plus `$KIMI_CODE_HOME/sessions` (`~/.kimi-code/sessions`) |
@@ -247,6 +249,7 @@ Every reader can be pointed somewhere else for non-default installs, containers 
 | `MYTOKEN_CLINE_DIRS`, `MYTOKEN_ROO_DIRS`, `MYTOKEN_KILO_DIRS` | Explicit Cline / Roo / Kilo dirs (path list) |
 | `MYTOKEN_CLAUDEDESKTOP_DIRS` | Explicit Claude Desktop session dirs (path list) |
 | `WORKBUDDY_HOME`, `CODEBUDDY_HOME` | WorkBuddy / CodeBuddy home dir |
+| `CODEBUDDYCN_HOME`, `CODEBUDDY_CN_HOME` | CodeBuddy CN home dir, instead of `~/.codebuddycn` |
 | `HERMES_HOME` | Hermes home dir instead of `~/.hermes` |
 | `QWEN_DATA_DIR`, `MYTOKEN_QWEN_DIRS` | Qwen Code data dir, or explicit dirs (path list) |
 | `KIMI_SHARE_DIR`, `KIMI_CODE_HOME`, `MYTOKEN_KIMI_DIRS` | Kimi / Kimi Code data dirs, or explicit dirs (path list) |
