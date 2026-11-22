@@ -3,6 +3,36 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## 0.6.0
+
+- **CodeBuddy CN is readable now.** The mainland desktop build journals every
+  finished request as a plain-text line instead of a token table; MyToken reads
+  those lines, splits the five token classes without double counting, and keeps
+  the app's own credit charge as a native bill. Duplicate entries written by the
+  app and its extension are collapsed, and the CLI transcripts share the
+  WorkBuddy reader.
+- **Cindy's local history is counted.** Cindy records per-message usage in a
+  SQLite database; MyToken reads it WAL included and emits one event per
+  message. Daily totals that are not itemized are backfilled as day/model rows,
+  so nothing is dropped when only a daily sum exists.
+- **Qoder sessions are read now.** Both the mainland and international CLI
+  transcript folders are read, streamed fragments are merged by message id, and
+  subagents stay under the session that spawned them. Plan-billed rows keep
+  their native credit charge; tokens are estimated from the transcript where
+  the source records credits only.
+- **T3 Code's Antigravity conversations count.** Antigravity sessions stored
+  under T3 Code's provider folders are now discovered alongside the normal ACP
+  conversations, including multiple instances.
+- **The live card no longer shows impossible output speeds.** Some providers
+  flush a whole answer at once, which made a few milliseconds look like millions
+  of tokens per second; those windows are now rejected and the bounded gap
+  estimate is used instead. A genuine 500 tok/s measurement still reads as
+  measured.
+- **macOS releases are signed and notarized.** `make dmg` signs the app with the
+  project's Developer ID certificate, notarizes it with Apple, and staples the
+  ticket; the release workflow does the same with the organization secrets.
+  Gatekeeper opens the downloaded DMG without a right-click.
+
 ## 0.5.7
 
 - **The Codex subagent sessions 0.5.6 promised are actually there now.** 0.5.6
