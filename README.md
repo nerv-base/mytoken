@@ -26,10 +26,10 @@ list price, and shows today's and this month's spend, your plan quotas and what 
 now — in a native desktop app, a menu-bar panel, or the command line. Everything stays on your
 machine.
 
-- **Thirty-three harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
+- **Thirty-five harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
   Crush, Cline, Roo Code, Kilo Code, Claude Desktop, WorkBuddy, CodeBuddy, CodeBuddy CN, Hermes, Qwen Code, Kimi,
   OpenClaude, Grok, OpenClaw, Droid, Goose, Forge, Amp, Kiro, Zed, Antigravity, Codebuff, Mux,
-  ZCode, MiniMax Code, MiMo Code, Step Code and Trae.
+  ZCode, MiniMax Code, MiMo Code, Step Code, Qoder and Trae.
 - **Session × provider × model** — the five token classes kept apart (input, output, cache read,
   cache write, reasoning), with cache-hit rate, per-project and per-day breakdowns, and sub-agent
   trees.
@@ -125,6 +125,7 @@ still counts toward spend.
 | Codex CLI | `codex` | ChatGPT |
 | DSH — DeepSeek Harness | `dsh` | DeepSeek balance |
 | pi / OMP / OMO-senpi | `pi` | — |
+| Qoder | `qoder` | Qoder |
 | Gemini CLI | `gemini` | — |
 | opencode | `opencode` | — |
 | Crush | `crush` | — |
@@ -156,9 +157,11 @@ still counts toward spend.
 | Step Code | `step-code` | — |
 | Trae | `trae` | database key, see [below](#encrypted-databases) |
 
-Cursor, GitHub Copilot, GLM and Qoder are quota sources without a session-log reader: their local
-formats report no usable tokens (Cursor's per-message `tokenCount` is always zero, Qoder carries
-credits rather than tokens). See [Plan quotas](#plan-quotas).
+Cursor, GitHub Copilot and GLM are quota sources without a session-log reader: their local formats
+report no usable tokens (Cursor's per-message `tokenCount` is always zero). Qoder has a session-log
+reader: its CLI transcripts record credits rather than tokens on plan-billed rows, so MyToken
+estimates tokens from the transcript and keeps the credits as a native credit bill. See
+[Plan quotas](#plan-quotas).
 
 ### Encrypted databases
 
@@ -242,6 +245,7 @@ Every reader can be pointed somewhere else for non-default installs, containers 
 | `PI_HOME`, `MYTOKEN_PI_DIRS` | pi data dir, or explicit pi-compatible session roots (path list) |
 | `PI_CODING_AGENT_DIR`, `OMP_PROFILE`, `PI_PROFILE`, `PI_CONFIG_DIR` | OMP agent/profile roots reused by the `pi` reader |
 | `OMO_CODING_AGENT_DIR`, `SENPI_CODING_AGENT_DIR` | OMO/senpi agent roots reused by the `pi` reader |
+| `QODERCN_CONFIG_DIR`, `QODER_CONFIG_DIR`, `MYTOKEN_QODER_DIRS` | Qoder config dir, or explicit session roots (path list) |
 | `GEMINI_CLI_HOME`, `MYTOKEN_GEMINI_DIRS` | Gemini CLI data dir, or explicit dirs (path list) |
 | `OPENCODE_DATA_HOME`, `MYTOKEN_OPENCODE_DIRS` | opencode data dir, or explicit dirs (path list) |
 | `CRUSH_GLOBAL_DATA`, `MYTOKEN_CRUSH_DIRS` | Crush data dir, or explicit dirs (path list) |

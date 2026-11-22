@@ -199,6 +199,9 @@ func harnessColor(h model.Harness) ui.Color {
 	case model.Trae:
 		// Trae's own mark is a black tile; the color is the red it accents with.
 		return ui.Hex("#E2564A")
+	case model.Qoder:
+		// Qoder's mark is green.
+		return ui.Hex("#2ADB5C")
 	}
 	return ui.Hex("#9297A3")
 }
@@ -233,6 +236,7 @@ var quotaHarness = map[string]model.Harness{
 	"codebuddy": model.CodeBuddy,
 	"kimi":      model.Kimi,
 	"deepseek":  model.DSH,
+	"qoder":     model.Qoder,
 }
 
 // quotaIcons are the marks of quota accounts without a tracked tool.
@@ -281,6 +285,7 @@ var harnessIcons = func() map[model.Harness]brandMark {
 		model.MiMoCode:      {load("xiaomimimo"), false, false},
 		model.StepCode:      {load("stepfun-color"), true, false},
 		model.Trae:          {load("trae-color"), true, false},
+		model.Qoder:         {load("qoder-color"), true, false},
 	}
 }()
 

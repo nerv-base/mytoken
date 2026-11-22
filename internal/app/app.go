@@ -41,6 +41,7 @@ import (
 	_ "github.com/nerv-base/mytoken/internal/harness/openclaw"
 	_ "github.com/nerv-base/mytoken/internal/harness/opencode"
 	_ "github.com/nerv-base/mytoken/internal/harness/pi"
+	_ "github.com/nerv-base/mytoken/internal/harness/qoder"
 	_ "github.com/nerv-base/mytoken/internal/harness/qwen"
 	_ "github.com/nerv-base/mytoken/internal/harness/roo"
 	_ "github.com/nerv-base/mytoken/internal/harness/stepcode"

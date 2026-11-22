@@ -42,6 +42,7 @@ const (
 	MiMoCode      Harness = "mimo-code"
 	StepCode      Harness = "step-code"
 	Trae          Harness = "trae"
+	Qoder         Harness = "qoder"
 )
 
 // DisplayName is the human label of a harness.
@@ -115,6 +116,8 @@ func (h Harness) DisplayName() string {
 		return "Step Code"
 	case Trae:
 		return "Trae"
+	case Qoder:
+		return "Qoder"
 	}
 	return string(h)
 }

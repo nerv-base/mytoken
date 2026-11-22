@@ -24,10 +24,10 @@
 API 价格给每次请求算出等价费用，展示今日与本月花费、套餐额度和正在进行的会话 —— 在原生桌面应用、菜单栏面板
 或命令行里都能看。一切都在你自己的机器上完成。
 
-- **一个窗口里看三十三个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
+- **一个窗口里看三十五个 harness** —— Claude Code、Codex CLI、DSH、pi、Gemini CLI、opencode、Crush、
   Cline、Roo Code、Kilo Code、Claude Desktop、WorkBuddy、CodeBuddy、CodeBuddy CN、Hermes、Qwen Code、Kimi、
   OpenClaude、Grok、OpenClaw、Droid、Goose、Forge、Amp、Kiro、Zed、Antigravity、Codebuff、Mux、
-  ZCode、MiniMax Code、MiMo Code、Step Code 与 Trae。
+  ZCode、MiniMax Code、MiMo Code、Step Code、Qoder 与 Trae。
 - **会话 × 供应商 × 模型** —— 五类 token 分开统计（input、output、cache read、cache write、
   reasoning），同时给出缓存命中率、按项目 / 按天的拆分，以及子代理树。
 - **API 等价费用** —— 优先用 models.dev 的价格、LiteLLM 兜底，界面明确标注这是“按官方 API 价”的等价费用。
@@ -113,6 +113,7 @@ MyToken!!!!! 读取每个工具本来就保留的日志，只读、不回写：�
 | Codex CLI | `codex` | ChatGPT |
 | DSH — DeepSeek Harness | `dsh` | DeepSeek 余额 |
 | pi / OMP / OMO-senpi | `pi` | — |
+| Qoder | `qoder` | Qoder |
 | Gemini CLI | `gemini` | — |
 | opencode | `opencode` | — |
 | Crush | `crush` | — |
@@ -144,8 +145,9 @@ MyToken!!!!! 读取每个工具本来就保留的日志，只读、不回写：�
 | Step Code | `step-code` | — |
 | Trae | `trae` | 需要数据库密钥，见[加密数据库](#加密数据库) |
 
-Cursor、GitHub Copilot、GLM 和 Qoder 只有额度来源，没有会话日志读取器：它们的本地格式不记录可用的
-token（Cursor 每条消息的 `tokenCount` 恒为 0，Qoder 只有 credits）。见[套餐额度](#套餐额度)。
+Cursor、GitHub Copilot 和 GLM 只有额度来源，没有会话日志读取器：它们的本地格式不记录可用的
+token（Cursor 每条消息的 `tokenCount` 恒为 0）。Qoder 有会话日志读取器：套餐计费记录只有 credits，
+因此 MyToken 从会话日志估算 token，并把 credits 保留为原生积分账单。见[套餐额度](#套餐额度)。
 
 ### 加密数据库
 
@@ -224,6 +226,7 @@ Linux 为 `~/.config/<editor>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…`�
 | `PI_HOME`、`MYTOKEN_PI_DIRS` | pi 数据目录，或显式的 pi 兼容会话目录（路径列表） |
 | `PI_CODING_AGENT_DIR`、`OMP_PROFILE`、`PI_PROFILE`、`PI_CONFIG_DIR` | `pi` 读取器复用的 OMP agent / profile 目录 |
 | `OMO_CODING_AGENT_DIR`、`SENPI_CODING_AGENT_DIR` | `pi` 读取器复用的 OMO/senpi agent 目录 |
+| `QODERCN_CONFIG_DIR`、`QODER_CONFIG_DIR`、`MYTOKEN_QODER_DIRS` | Qoder 配置目录，或显式会话目录（路径列表） |
 | `GEMINI_CLI_HOME`、`MYTOKEN_GEMINI_DIRS` | Gemini CLI 数据目录，或显式目录（路径列表） |
 | `OPENCODE_DATA_HOME`、`MYTOKEN_OPENCODE_DIRS` | opencode 数据目录，或显式目录（路径列表） |
 | `CRUSH_GLOBAL_DATA`、`MYTOKEN_CRUSH_DIRS` | Crush 数据目录，或显式目录（路径列表） |
