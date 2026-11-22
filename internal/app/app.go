@@ -16,6 +16,7 @@ import (
 	"github.com/nerv-base/mytoken/internal/harness"
 	_ "github.com/nerv-base/mytoken/internal/harness/amp"
 	_ "github.com/nerv-base/mytoken/internal/harness/antigravity"
+	_ "github.com/nerv-base/mytoken/internal/harness/cindy"
 	_ "github.com/nerv-base/mytoken/internal/harness/claude"
 	_ "github.com/nerv-base/mytoken/internal/harness/claudedesktop"
 	_ "github.com/nerv-base/mytoken/internal/harness/cline"
