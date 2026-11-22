@@ -1,0 +1,146 @@
+{
+  "harness": "cindy",
+  "sources": [
+    {
+      "path": "cindy-test.db",
+      "kind": "sqlite"
+    }
+  ],
+  "events": [
+    {
+      "harness": "cindy",
+      "dedupKey": "daily:2026-11-08:claude-sonnet-4.5",
+      "sessionId": "cindy-daily",
+      "timestamp": "2026-11-08T12:00:00Z",
+      "model": "claude-sonnet-4.5",
+      "tokens": {
+        "input": 100,
+        "output": 10,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "cindy",
+      "dedupKey": "daily:2026-11-09:gpt-6.1-sol",
+      "sessionId": "cindy-daily",
+      "timestamp": "2026-11-09T12:00:00Z",
+      "model": "gpt-6.1-sol",
+      "tokens": {
+        "input": 5000,
+        "output": 500,
+        "cacheRead": 8000,
+        "cacheWrite": 1000,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "cindy",
+      "dedupKey": "msg:s1:m2",
+      "sessionId": "s1",
+      "projectPath": "/work/app",
+      "timestamp": "2026-11-10T06:34:31.114Z",
+      "model": "gpt-6.1-sol",
+      "provider": "openai",
+      "tokens": {
+        "input": 1000,
+        "output": 100,
+        "cacheRead": 2000,
+        "cacheWrite": 300,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "cindy",
+      "dedupKey": "msg:s2:m5",
+      "sessionId": "s2",
+      "parentId": "s1",
+      "projectPath": "/work/app",
+      "timestamp": "2026-11-10T06:34:15Z",
+      "model": "claude-sonnet-4.5",
+      "provider": "anthropic",
+      "tokens": {
+        "input": 500,
+        "output": 50,
+        "cacheRead": 700,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "cindy",
+      "dedupKey": "msg:s3:m8",
+      "sessionId": "s3",
+      "projectPath": "/work/other",
+      "timestamp": "2026-11-10T06:40:00Z",
+      "model": "gpt-6.1-sol",
+      "provider": "openai",
+      "tokens": {
+        "input": 200,
+        "output": 20,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "harness": "cindy",
+      "dedupKey": "msg:s5:m21",
+      "sessionId": "s5",
+      "projectPath": "/work/app",
+      "timestamp": "2026-11-11T12:00:02Z",
+      "model": "gpt-6.1-sol",
+      "provider": "openai",
+      "tokens": {
+        "input": 300,
+        "output": 30,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "harness": "cindy",
+      "sessionId": "cindy-daily",
+      "title": "Cindy daily totals",
+      "startedAt": "2026-11-08T12:00:00Z",
+      "updatedAt": "2026-11-09T12:00:00Z"
+    },
+    {
+      "harness": "cindy",
+      "sessionId": "s1",
+      "title": "Fix login bug",
+      "project": "/work/app",
+      "startedAt": "2026-11-10T06:34:04.986Z",
+      "updatedAt": "2026-11-10T06:49:09.257Z"
+    },
+    {
+      "harness": "cindy",
+      "sessionId": "s2",
+      "parentId": "s1",
+      "title": "Explore tests",
+      "project": "/work/app",
+      "startedAt": "2026-11-10T06:34:05Z",
+      "updatedAt": "2026-11-10T06:43:20Z"
+    },
+    {
+      "harness": "cindy",
+      "sessionId": "s3",
+      "title": "Explain the deployment script",
+      "project": "/work/other",
+      "startedAt": "2026-11-10T06:34:06Z",
+      "updatedAt": "2026-11-10T06:40:10Z"
+    },
+    {
+      "harness": "cindy",
+      "sessionId": "s5",
+      "title": "Ship release",
+      "project": "/work/app",
+      "startedAt": "2026-11-11T12:00:00Z",
+      "updatedAt": "2026-11-11T12:01:40Z"
+    }
+  ]
+}
