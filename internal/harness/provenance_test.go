@@ -39,7 +39,7 @@ var overrideEnvSurface = []struct {
 	envs []string
 }{
 	{model.Amp, []string{"MYTOKEN_AMP_DIRS", "AMP_DATA_DIR"}},
-	{model.Antigravity, []string{"MYTOKEN_ANTIGRAVITY_DIRS", "GEMINI_CLI_HOME"}},
+	{model.Antigravity, []string{"MYTOKEN_ANTIGRAVITY_DIRS", "GEMINI_CLI_HOME", "T3CODE_HOME"}},
 	{model.ClaudeCode, []string{"CLAUDE_CONFIG_DIR"}},
 	{model.ClaudeDesktop, []string{"MYTOKEN_CLAUDEDESKTOP_DIRS"}},
 	{model.Cline, []string{"MYTOKEN_CLINE_DIRS", "CLINE_DATA_DIR", "CLINE_DIR", "CLINE_SESSION_DATA_DIR"}},

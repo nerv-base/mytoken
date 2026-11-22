@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -142,6 +143,75 @@ func TestDiscoverSkipsNonDatabases(t *testing.T) {
 	}
 	if want := []string{"cascade-a.db", "cascade-b.DB"}; !reflect.DeepEqual(paths, want) {
 		t.Fatalf("discovered %v, want %v", paths, want)
+	}
+}
+
+func TestRootProvenanceIncludesACPAndT3CodeRoots(t *testing.T) {
+	gemini := t.TempDir()
+	t3 := t.TempDir()
+	t.Setenv("MYTOKEN_ANTIGRAVITY_DIRS", "")
+	t.Setenv("GEMINI_CLI_HOME", gemini)
+	t.Setenv("T3CODE_HOME", t3)
+
+	roots, err := rootProvenance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := make(map[string]harness.Root, len(roots))
+	for _, root := range roots {
+		byPath[root.Path] = root
+	}
+	for _, path := range conversationDirs(gemini) {
+		root, ok := byPath[path]
+		if !ok || root.Origin != harness.OriginEnv || root.Env != "GEMINI_CLI_HOME" {
+			t.Errorf("gemini root %q = %+v, want env origin GEMINI_CLI_HOME", path, root)
+		}
+	}
+	for _, path := range t3CodeProviderDirs(t3) {
+		root, ok := byPath[path]
+		if !ok || root.Origin != harness.OriginEnv || root.Env != "T3CODE_HOME" {
+			t.Errorf("T3 Code root %q = %+v, want env origin T3CODE_HOME", path, root)
+		}
+	}
+	if _, ok := byPath[filepath.Join(gemini, "antigravity-acp", "conversations")]; !ok {
+		t.Errorf("standalone ACP conversation root missing from %+v", roots)
+	}
+}
+
+func TestDiscoverT3CodeProviderRoots(t *testing.T) {
+	base := t.TempDir()
+	var want []string
+	for _, state := range []string{"userdata", "dev"} {
+		for _, instance := range []string{"inst-a", "inst-b"} {
+			dir := filepath.Join(base, state, "providers", "antigravity", instance, "antigravity-acp", "conversations")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, instance+".db")
+			if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			want = append(want, path)
+		}
+	}
+	// A provider root may contain files and ordinary directories; only an
+	// instance's antigravity-acp/conversations directory is a source root.
+	if err := os.WriteFile(filepath.Join(base, "userdata", "providers", "antigravity", "notes.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := NewWithRoots(t3CodeProviderDirs(base)...)
+	sources, err := p.Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, src := range sources {
+		got = append(got, src.Path)
+	}
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("discovered %v, want %v", got, want)
 	}
 }
 

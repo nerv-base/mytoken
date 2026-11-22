@@ -202,7 +202,7 @@ mytoken key trae --clear            # 清除
 | Amp | `amp` | `$AMP_DATA_DIR`（逗号分隔），否则 `~/.local/share/amp` |
 | Kiro | `kiro` | `$KIRO_HOME`（默认 `~/.kiro`），以及平台 Kiro 的 `globalStorage` agent 目录 |
 | Zed | `zed` | `…/Zed/threads/threads.db`（macOS：`~/Library/Application Support`，Windows：`%LOCALAPPDATA%`，Linux：`~/.local/share/zed`），SQLite |
-| Antigravity | `antigravity` | `$GEMINI_CLI_HOME/antigravity{,-cli,-ide}/conversations` 及对应的 `implicit` 目录（默认 `~/.gemini`），只读 `*.db` |
+| Antigravity | `antigravity` | `$GEMINI_CLI_HOME/antigravity{,-cli,-ide}/conversations` 及对应的 `implicit` 目录、`$GEMINI_CLI_HOME/antigravity-acp/conversations`，以及 T3 Code 的 `$T3CODE_HOME/{userdata,dev}/providers/antigravity/*/antigravity-acp/conversations`（默认 `~/.t3`）；只读 `*.db` |
 | Codebuff | `codebuff` | `$CODEBUFF_DATA_DIR`，否则 `~/.config/manicode`、`~/.config/manicode-dev`、`~/.config/manicode-staging` |
 | Mux | `mux` | `$CODEBURN_MUX_DIR` 或 `$MUX_ROOT`，否则 `~/.mux`、`~/.mux-dev`、`~/.cmux` |
 | ZCode | `zcode` | `$MYTOKEN_ZCODE_DIRS`，否则 `~/.zcode/cli/db/db.sqlite`，只读 SQLite |
@@ -249,7 +249,7 @@ Linux 为 `~/.config/<editor>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…`�
 | `AMP_DATA_DIR`、`MYTOKEN_AMP_DIRS` | Amp 数据目录（逗号分隔），或显式目录（路径列表） |
 | `KIRO_HOME`、`MYTOKEN_KIRO_DIRS` | Kiro 主目录，或显式目录（路径列表） |
 | `MYTOKEN_ZED_DIRS` | 显式的 Zed threads 目录（路径列表） |
-| `MYTOKEN_ANTIGRAVITY_DIRS` | 显式的 Antigravity 会话目录（路径列表） |
+| `T3CODE_HOME`、`MYTOKEN_ANTIGRAVITY_DIRS` | T3 Code 数据目录，或显式的 Antigravity 会话目录（路径列表） |
 | `CODEBUFF_DATA_DIR`、`MYTOKEN_CODEBUFF_DIRS` | Codebuff 数据目录，或显式目录（路径列表） |
 | `CODEBURN_MUX_DIR`、`MUX_ROOT`、`MYTOKEN_MUX_DIRS` | Mux 数据目录，或显式目录（路径列表） |
 | `MYTOKEN_ZCODE_DIRS` | 显式的 ZCode 数据库文件或所在目录（路径列表） |
