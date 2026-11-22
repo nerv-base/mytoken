@@ -30,7 +30,7 @@ to identify each tool.
 | antigravity.svg | Antigravity (one-color, unused for now) |
 | cursor.svg | Cursor (quota account) |
 | trae-color.svg | Trae (quota account) |
-| qoder-color.svg | Qoder (quota account) |
+| qoder-color.svg | Qoder |
 | githubcopilot.svg | GitHub Copilot (quota account) |
 | zai.svg | Z Code (Z.ai) |
 | minimax-color.svg | MiniMax Code |

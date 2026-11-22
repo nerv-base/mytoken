@@ -53,6 +53,7 @@ var installHints = map[model.Harness]installHint{
 	model.MiMoCode:      {"curl -fsSL https://mimo.xiaomi.com/install | bash", "https://github.com/XiaomiMiMo/MiMo-Code"},
 	model.StepCode:      {"curl -fsSL https://static-openapi.stepfun.com/stepcode/install.sh | bash", "https://www.stepfun.com/stepcode"},
 	model.Trae:          {"", "https://www.trae.ai/"},
+	model.Qoder:         {"curl -fsSL https://qoder.com/install | bash", "https://qoder.com"},
 }
 
 // installCard lists the tools not found on this machine, each with how to

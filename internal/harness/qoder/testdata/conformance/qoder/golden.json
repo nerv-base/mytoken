@@ -1,0 +1,101 @@
+{
+  "harness": "qoder",
+  "sources": [
+    {
+      "path": "projects/-fixture-project/session-1.jsonl",
+      "kind": "jsonl"
+    },
+    {
+      "path": "projects/-fixture-project/session-1/subagents/agent-1.jsonl",
+      "kind": "jsonl"
+    }
+  ],
+  "events": [
+    {
+      "harness": "qoder",
+      "dedupKey": "qoder:agent-msg-1",
+      "sessionId": "agent-1",
+      "parentId": "session-1",
+      "projectPath": "fixture-project",
+      "timestamp": "2026-10-16T01:21:32Z",
+      "model": "qfmodel",
+      "provider": "qoder",
+      "tokens": {
+        "input": 10000,
+        "output": 12,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "requestId": "agent-req-1",
+      "bill": {
+        "amount": 0.1,
+        "unit": "credit"
+      },
+      "gitBranch": "main"
+    },
+    {
+      "harness": "qoder",
+      "dedupKey": "qoder:msg-1",
+      "sessionId": "session-1",
+      "projectPath": "fixture-project",
+      "timestamp": "2026-10-16T01:21:25.1Z",
+      "model": "qfmodel",
+      "provider": "qoder",
+      "tokens": {
+        "input": 20000,
+        "output": 31,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "requestId": "req-1",
+      "bill": {
+        "amount": 0.25,
+        "unit": "credit"
+      },
+      "gitBranch": "main"
+    },
+    {
+      "harness": "qoder",
+      "dedupKey": "qoder:msg-2",
+      "sessionId": "session-1",
+      "projectPath": "fixture-project",
+      "timestamp": "2026-10-16T01:21:28.1Z",
+      "model": "qfmodel",
+      "provider": "qoder",
+      "tokens": {
+        "input": 24000,
+        "output": 13,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "requestId": "req-2",
+      "bill": {
+        "amount": 0.5,
+        "unit": "credit"
+      },
+      "gitBranch": "main"
+    }
+  ],
+  "sessions": [
+    {
+      "harness": "qoder",
+      "sessionId": "agent-1",
+      "parentId": "session-1",
+      "title": "Check the handler for edge cases",
+      "project": "fixture-project",
+      "startedAt": "2026-10-16T01:21:23.065Z",
+      "updatedAt": "2026-10-16T01:21:32Z"
+    },
+    {
+      "harness": "qoder",
+      "sessionId": "session-1",
+      "title": "Add a health check endpoint",
+      "project": "fixture-project",
+      "startedAt": "2026-10-16T01:21:10.6Z",
+      "updatedAt": "2026-10-16T01:21:28.1Z"
+    }
+  ]
+}

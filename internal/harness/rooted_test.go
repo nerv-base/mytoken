@@ -44,6 +44,7 @@ import (
 	_ "github.com/nerv-base/mytoken/internal/harness/openclaw"
 	_ "github.com/nerv-base/mytoken/internal/harness/opencode"
 	_ "github.com/nerv-base/mytoken/internal/harness/pi"
+	_ "github.com/nerv-base/mytoken/internal/harness/qoder"
 	_ "github.com/nerv-base/mytoken/internal/harness/qwen"
 	_ "github.com/nerv-base/mytoken/internal/harness/roo"
 	_ "github.com/nerv-base/mytoken/internal/harness/stepcode"
@@ -57,7 +58,7 @@ import (
 // (internal/app/app.go imports exactly these). The suite stops only if fewer
 // are present, so a newly registered harness is covered automatically while a
 // dropped registration cannot make the suite vacuous.
-const wantRegistered = 32
+const wantRegistered = 34
 
 // TestNewRootedSupportsEveryRegisteredHarness is the coverage check: every
 // registered parser must implement harness.Rooted, and NewRooted must build a

@@ -65,6 +65,7 @@ var overrideEnvSurface = []struct {
 	{model.OpenClaw, []string{"MYTOKEN_OPENCLAW_DIRS"}},
 	{model.OpenCode, []string{"MYTOKEN_OPENCODE_DIRS", "OPENCODE_DATA_HOME"}},
 	{model.Pi, []string{"MYTOKEN_PI_DIRS", "PI_HOME", "PI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR", "SENPI_CODING_AGENT_DIR"}},
+	{model.Qoder, []string{"MYTOKEN_QODER_DIRS", "QODERCN_CONFIG_DIR", "QODER_CONFIG_DIR"}},
 	{model.Qwen, []string{"MYTOKEN_QWEN_DIRS", "QWEN_DATA_DIR"}},
 	{model.Roo, []string{"MYTOKEN_ROO_DIRS"}},
 	{model.StepCode, []string{"MYTOKEN_STEP_CODE_DIRS", "STEP_CODING_AGENT_SESSION_DIR", "STEP_CODING_AGENT_DIR"}},

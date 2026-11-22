@@ -8,7 +8,7 @@ The data layer is deliberately small and linear:
 
 ```mermaid
 flowchart LR
-    logs["Tool logs<br/>JSONL · JSON · zstd · SQLite"] --> parsers["internal/harness<br/>35 readers · Discover · Parse"]
+    logs["Tool logs<br/>JSONL · JSON · zstd · SQLite"] --> parsers["internal/harness<br/>36 readers · Discover · Parse"]
     parsers --> scanner["internal/scan<br/>full · quick · watched · poll"]
     pricing["internal/pricing<br/>models.dev · LiteLLM · custom"] --> scanner
     scanner --> store[("internal/store<br/>mytoken.db (SQLite)")]
@@ -422,7 +422,7 @@ performance rescan against the normal app data directory; copy the index to a te
 
 ## Harness coverage status
 
-Each of the 35 registered parsers has a conformance fixture. Passing synthetic conformance is
+Each of the 36 registered parsers has a conformance fixture. Passing synthetic conformance is
 **not** the same as validation against real logs:
 
 - **Protocol-validated against upstream plus synthetic fixtures, without a committed anonymized
@@ -440,10 +440,13 @@ Each of the 35 registered parsers has a conformance fixture. Passing synthetic c
   encrypted and carries conversation text. It needs one thing no other parser does — the SQLCipher
   key the app keeps in memory — and the cross-check between what the app's own UI counted and what
   the reader produced was done by hand, not by the suite.
-- **No harness is possible from local logs for Cursor and Qoder.** Cursor v3 reports per-message
+- **Schema validated against a real install, fixture synthetic:** Qoder. Its CLI transcript records
+  per-request `credits` rather than token counts on plan-billed rows; the reader estimates input
+  from `context_usage_ratio` and output from transcript characters, and keeps the credits as a
+  native credit bill. The committed fixture is built from synthetic records.
+- **No harness is possible from local logs for Cursor.** Cursor v3 reports per-message
   `tokenCount` as `{0,0}` (and `composerData.usageData` is empty), so a parser could only emit zeros
-  or a character estimate. Qoder transcripts carry `credits` rather than tokens; credits cannot be
-  converted to USD. Both have **quota** support instead, which uses the provider's own API.
+  or a character estimate. Cursor has **quota** support instead, which uses the provider's own API.
 - **VS Code-family paths.** `…/globalStorage` is resolved for VS Code, Insiders, Cursor, Windsurf,
   VSCodium and Trae on macOS, Linux and Windows; the Cline/Roo/Kilo readers use the same
   resolution.
