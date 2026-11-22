@@ -69,9 +69,8 @@ machine.
 ### macOS (disk image)
 
 Download `mytoken-<version>-darwin-universal.dmg` from [Releases](https://github.com/nerv-base/mytoken/releases), open it and drag **MyToken!!!!!**
-into *Applications*. The bundle is ad-hoc signed rather than notarized, so the first launch needs
-right-click → *Open* (or `xattr -dr com.apple.quarantine /Applications/mytoken.app`). The app's file
-name is `mytoken.app`; Finder and the menu bar show `MyToken!!!!!`.
+into *Applications*. The bundle is signed with a Developer ID and notarized by Apple, so it opens
+normally. The app's file name is `mytoken.app`; Finder and the menu bar show `MyToken!!!!!`.
 
 ### Windows (installer)
 
