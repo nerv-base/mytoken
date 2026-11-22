@@ -15,12 +15,11 @@
 # latest release, so an update goes out when the release is published. The
 # notes come from the version's section in CHANGELOG.md.
 #
-# Code signing needs no secrets: macOS bundles are ad-hoc signed by default
-# (`macos.signingIdentity` is "-") and the Windows installer is unsigned.
-# To ship signed and notarized builds, add the secrets below, set
-# `macos.signingIdentity` and a `macos.notarize` block in mygo.json, and
-# import the certificate into a keychain before the build step — see
-# docs/github-actions.md in the MyGo repository.
+# macOS builds are signed with the Developer ID named in mygo.json and
+# notarized, so this workflow needs the secrets below; the macOS job fails
+# early when one is missing. docs/SIGNING.md walks through creating them
+# (`scripts/macos-signing export-p12` writes the p12 for MACOS_CERTIFICATE).
+# The Windows installer is still unsigned.
 #
 #   secrets.MACOS_CERTIFICATE           base64 .p12 signing certificate
 #   secrets.MACOS_CERTIFICATE_PASSWORD  its password
@@ -91,8 +90,49 @@ jobs:
       - name: Install NSIS, for the Windows installers
         if: matrix.name == 'Windows'
         run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Import the Developer ID certificate and notary credentials
+        if: matrix.name == 'macOS'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::macOS builds are signed and notarized; missing secrets:$missing"
+            echo "See docs/SIGNING.md for how to create them."
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/mytoken-signing.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          # codesign must use the key without an interactive prompt.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | sed 's/"//g')
+          # mygo.json names only the profile, so notarytool must find it in the
+          # login keychain (its default); the runner's login keychain is fresh
+          # per job. The certificate can stay in the temporary keychain.
+          xcrun notarytool store-credentials mytoken-notary \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --keychain "$HOME/Library/Keychains/login.keychain-db"
       - name: Build
         run: go tool mygo build -platform "${{ matrix.platform }}"
+      - name: Remove the signing keychain
+        if: always() && matrix.name == 'macOS'
+        run: security delete-keychain "$RUNNER_TEMP/mytoken-signing.keychain-db" 2>/dev/null || true
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}

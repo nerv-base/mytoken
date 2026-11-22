@@ -62,9 +62,8 @@ API 价格给每次请求算出等价费用，展示今日与本月花费、套�
 ### macOS（磁盘映像）
 
 从 [Releases](https://github.com/nerv-base/mytoken/releases) 下载 `mytoken-<版本>-darwin-universal.dmg`，打开后把
-**MyToken!!!!!** 拖进 *应用程序*。这个 bundle 是 ad-hoc 签名、未公证的，所以第一次启动需要右键 → *打开*
-（或者执行 `xattr -dr com.apple.quarantine /Applications/mytoken.app`）。应用文件名是 `mytoken.app`，
-Finder 和菜单栏显示 `MyToken!!!!!`。
+**MyToken!!!!!** 拖进 *应用程序*。这个 bundle 使用 Developer ID 签名并通过 Apple 公证，可以直接打开。
+应用文件名是 `mytoken.app`，Finder 和菜单栏显示 `MyToken!!!!!`。
 
 ### Windows（安装包）
 

@@ -1,0 +1,590 @@
+#!/bin/bash
+#
+# macos-signing sets up and checks what a notarized MyToken!!!!! release
+# needs: a "Developer ID Application" certificate and the credentials of
+# Apple's notary service. `make dmg` signs and notarizes with what this
+# leaves in the keychain; docs/SIGNING.md walks through it.
+#
+#   scripts/macos-signing check
+#   scripts/macos-signing csr [--out DIR]
+#   scripts/macos-signing install-cert CERT [--key KEY] [--keychain FILE]
+#   scripts/macos-signing credentials [--apple-id ID] [--key FILE --key-id ID [--issuer UUID]]
+#   scripts/macos-signing verify [PATH]
+#   scripts/macos-signing export-p12 --out FILE
+#
+# Issuing the certificate needs a paid Apple Developer Program membership:
+# a free (Personal Team) account cannot create a Developer ID certificate,
+# so there is nothing to notarize with.
+
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+CONFIG="$ROOT/mygo.json"
+PROFILE=${MYTOKEN_NOTARY_PROFILE:-mytoken-notary}
+TEAM_ID=${MYTOKEN_TEAM_ID:-X84WC7J5JH}
+SIGNING_DIR=${APPLE_SIGNING_DIR:-${MYTOKEN_SIGNING_DIR:-$HOME/apple-signing}}
+IDENTITY_PREFIX="Developer ID Application"
+# LibreSSL from /usr/bin writes the RC2 .p12 that the Security framework
+# reads; OpenSSL 3 and later write PBES2, which `security import` may reject.
+OPENSSL=${MYTOKEN_OPENSSL:-/usr/bin/openssl}
+
+if [ -t 1 ]; then
+	BOLD=$(printf '\033[1m')
+	DIM=$(printf '\033[2m')
+	RED=$(printf '\033[31m')
+	GREEN=$(printf '\033[32m')
+	YELLOW=$(printf '\033[33m')
+	RESET=$(printf '\033[0m')
+else
+	BOLD='' DIM='' RED='' GREEN='' YELLOW='' RESET=''
+fi
+
+say() { printf '%s\n' "$*"; }
+ok() { printf '%s✓%s %s\n' "$GREEN" "$RESET" "$*"; }
+warn() { printf '%s!%s %s\n' "$YELLOW" "$RESET" "$*"; }
+die() {
+	printf '%s✗%s %s\n' "$RED" "$RESET" "$*" >&2
+	exit 1
+}
+
+usage() {
+	cat <<'EOF'
+macos-signing: the Developer ID and notary-service steps behind `make dmg`.
+
+  check                 report whether this Mac can sign and notarize
+  csr [--out DIR]       make a key and a certificate signing request
+  install-cert CERT     install a downloaded certificate with its key
+      [--key KEY] [--keychain FILE] [--keychain-password PASSWORD]
+  credentials           store the notary-service credentials in the keychain
+      [--apple-id ID] [--key FILE --key-id ID [--issuer UUID]]
+  verify [PATH]         verify a .dmg or .app: signature, ticket, Gatekeeper
+  export-p12 --out FILE export the identity for the CI secrets
+      [--key KEY] [--cert CERT] [--password PASSWORD]
+
+Environment: MYTOKEN_TEAM_ID (default X84WC7J5JH), MYTOKEN_NOTARY_PROFILE
+(default mytoken-notary), APPLE_SIGNING_DIR (default ~/apple-signing;
+MYTOKEN_SIGNING_DIR is still honoured).
+
+See docs/SIGNING.md.
+EOF
+}
+
+require_darwin() {
+	[ "$(uname -s)" = "Darwin" ] || die "signing and notarization need macOS"
+}
+
+# identities [KEYCHAIN] prints the valid "Developer ID Application" identities
+# of a keychain, or of the search list when none is given.
+identities() {
+	local listing
+	if [ "$#" -gt 0 ]; then
+		listing=$(security find-identity -v -p codesigning "$1" 2>/dev/null || true)
+	else
+		listing=$(security find-identity -v -p codesigning 2>/dev/null || true)
+	fi
+	printf '%s\n' "$listing" |
+		sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p'
+}
+
+# pem_certificate CERT OUT converts a DER (Apple's .cer download) or PEM
+# certificate to PEM, which is what openssl pkcs12 reads.
+pem_certificate() {
+	if "$OPENSSL" x509 -inform DER -in "$1" -out "$2" 2>/dev/null; then
+		return 0
+	fi
+	"$OPENSSL" x509 -in "$1" -out "$2" 2>/dev/null
+}
+
+# newest_file FILES... prints the most recently modified existing file, or
+# nothing when none exist (unmatched globs arrive literally and are skipped).
+newest_file() {
+	local file newest=""
+	for file in "$@"; do
+		[ -e "$file" ] || continue
+		if [ -z "$newest" ] || [ "$file" -nt "$newest" ]; then
+			newest=$file
+		fi
+	done
+	printf '%s' "$newest"
+}
+
+configured_identity() {
+	sed -n 's/.*"signingIdentity"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" 2>/dev/null | head -n 1
+}
+
+configured_profile() {
+	sed -n 's/.*"keychainProfile"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" 2>/dev/null | head -n 1
+}
+
+cmd_check() {
+	require_darwin
+	local rc=0
+
+	if xcode-select -p >/dev/null 2>&1; then
+		ok "Xcode command line tools: $(xcode-select -p)"
+	else
+		warn "Xcode command line tools are missing: xcode-select --install"
+		rc=1
+	fi
+
+	local tool
+	for tool in codesign notarytool stapler; do
+		if xcrun --find "$tool" >/dev/null 2>&1; then
+			ok "$tool: $(xcrun --find "$tool")"
+		else
+			warn "$tool is missing (install Xcode)"
+			rc=1
+		fi
+	done
+
+	local ids first
+	ids=$(identities)
+	if [ -n "$ids" ]; then
+		first=$(printf '%s\n' "$ids" | head -n 1)
+		ok "identity: $first"
+		if [ "$(configured_identity)" != "$first" ]; then
+			warn "mygo.json signs with \"$(configured_identity)\", the keychain has \"$first\""
+			say "  make dmg passes the detected identity with -sign, so it still works;"
+			say "  keep macos.signingIdentity in step for a plain 'go tool mygo build'."
+		fi
+	else
+		warn "no \"$IDENTITY_PREFIX\" certificate in the keychain"
+		say "  create one:  scripts/macos-signing csr"
+		say "  then upload the CSR at https://developer.apple.com/account/resources/certificates/add"
+		rc=1
+	fi
+
+	if [ "$(configured_profile)" != "$PROFILE" ]; then
+		warn "mygo.json notarizes with profile \"$(configured_profile)\", this checks \"$PROFILE\""
+	fi
+	if xcrun notarytool history --keychain-profile "$PROFILE" --output-format json >/dev/null 2>&1; then
+		ok "notary credentials: keychain profile \"$PROFILE\""
+	else
+		warn "no working notary credentials for keychain profile \"$PROFILE\""
+		say "  store them:  scripts/macos-signing credentials"
+		rc=1
+	fi
+
+	say ""
+	if [ "$rc" -eq 0 ]; then
+		say "Ready: 'make dmg' builds, signs and notarizes the universal disk image."
+	else
+		say "Not ready: docs/SIGNING.md has the portal steps."
+	fi
+	return "$rc"
+}
+
+cmd_csr() {
+	require_darwin
+	local out=$SIGNING_DIR
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+		--out)
+			[ "$#" -ge 2 ] || die "--out needs a directory"
+			out=$2
+			shift 2
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*) die "unknown argument: $1" ;;
+		esac
+	done
+
+	local key="$out/DeveloperID.key"
+	local csr="$out/DeveloperID.certSigningRequest"
+	if [ -e "$key" ]; then
+		die "$key exists: a new request needs a new key. Move it aside, or pass --out DIR."
+	fi
+	mkdir -p "$out"
+	chmod 700 "$out"
+	"$OPENSSL" genrsa -out "$key" 2048 2>/dev/null
+	chmod 600 "$key"
+	"$OPENSSL" req -new -key "$key" -out "$csr" -subj "/CN=MyToken Developer ID/O=xia li/C=US" 2>/dev/null
+
+	say "Wrote $csr"
+	say "Key   $key ${DIM}(mode 600: never commit it or send it anywhere)${RESET}"
+	say ""
+	say "${BOLD}Next${RESET}"
+	say "1. Open https://developer.apple.com/account/resources/certificates/add"
+	say "   Choose \"Developer ID Application\" (not \"Apple Development\"), continue,"
+	say "   upload the CSR. If the account already has such a certificate, download"
+	say "   that one instead: five per account is the limit."
+	say "2. Download the .cer and install it with this key:"
+	say "     scripts/macos-signing install-cert ~/Downloads/developerID_application.cer --key \"$key\""
+	say "3. Store the notary credentials:"
+	say "     scripts/macos-signing credentials"
+	say ""
+	say "A free (Personal Team) account cannot issue a Developer ID certificate."
+}
+
+cmd_install_cert() {
+	require_darwin
+	local cert="" key="" keychain="" keychain_password=""
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+		--key)
+			[ "$#" -ge 2 ] || die "--key needs a file"
+			key=$2
+			shift 2
+			;;
+		--keychain)
+			[ "$#" -ge 2 ] || die "--keychain needs a file"
+			keychain=$2
+			shift 2
+			;;
+		--keychain-password)
+			[ "$#" -ge 2 ] || die "--keychain-password needs a password"
+			keychain_password=$2
+			shift 2
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		-*) die "unknown option: $1" ;;
+		*)
+			[ -z "$cert" ] || die "one certificate at a time"
+			cert=$1
+			shift
+			;;
+		esac
+	done
+	[ -n "$cert" ] || die "usage: scripts/macos-signing install-cert CERT [--key KEY]"
+	[ -f "$cert" ] || die "$cert: no such file"
+
+	if [ -z "$key" ]; then
+		key="$SIGNING_DIR/DeveloperID.key"
+		if [ ! -f "$key" ]; then
+			die "no --key, and $key does not exist. If the request was made in Keychain Access the identity is already installed: run 'scripts/macos-signing check'."
+		fi
+	fi
+	[ -f "$key" ] || die "$key: no such file"
+	if [ -z "$keychain" ]; then
+		# `security default-keychain` prints the path indented and quoted.
+		keychain=$(security default-keychain -d user | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//')
+	fi
+
+	# `security import` reads the format from the extension, hence the .p12.
+	local work p12 password cert_pem
+	work=$(mktemp -d -t mytoken-identity)
+	p12="$work/identity.p12"
+	cert_pem="$work/cert.pem"
+	pem_certificate "$cert" "$cert_pem" || die "$cert: not a certificate this openssl can read"
+	password=$("$OPENSSL" rand -hex 16)
+	"$OPENSSL" pkcs12 -export -inkey "$key" -in "$cert_pem" -out "$p12" \
+		-name "$IDENTITY_PREFIX" -passout "pass:$password" 2>/dev/null
+	security import "$p12" -k "$keychain" -P "$password" \
+		-T /usr/bin/codesign -T /usr/bin/security
+	rm -rf "$work"
+
+	# Keep the certificate beside the key: export-p12 rebuilds the CI
+	# secret from the two without touching the keychain.
+	cp "$cert" "$(dirname "$key")/DeveloperID.cer"
+
+	local identity
+	identity=$(identities "$keychain" | head -n 1)
+	if [ -z "$identity" ]; then
+		# An identity whose chain does not validate (a missing intermediate,
+		# or a self-signed certificate) is imported but hidden from -v.
+		identity=$(security find-identity -p codesigning "$keychain" 2>/dev/null |
+			sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1 || true)
+		if [ -n "$identity" ]; then
+			die "imported \"$identity\", but macOS does not trust it: install the \"Developer ID Certification Authority\" intermediate (Keychain Access shows whether the certificate is valid), or check that the certificate matches this key."
+		fi
+		die "imported, but codesign sees no \"$IDENTITY_PREFIX\" identity. Is this certificate the one for this key?"
+	fi
+	ok "installed in $keychain"
+	say "identity: $identity"
+	if [ "$(configured_identity)" != "$identity" ]; then
+		warn "mygo.json signs with \"$(configured_identity)\""
+		say "  make dmg passes the detected identity with -sign, so it still works;"
+		say "  update macos.signingIdentity for a plain 'go tool mygo build'."
+	fi
+	if [ -n "$keychain_password" ]; then
+		security set-key-partition-list -S apple-tool:,apple: -s \
+			-k "$keychain_password" "$keychain" >/dev/null
+	fi
+	say ""
+	say "If codesign asks to use the key the first time, choose \"Always Allow\"."
+	say "Next: scripts/macos-signing credentials"
+}
+
+cmd_credentials() {
+	require_darwin
+	local apple_id="" key="" key_id="" issuer=""
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+		--apple-id)
+			[ "$#" -ge 2 ] || die "--apple-id needs a value"
+			apple_id=$2
+			shift 2
+			;;
+		--key)
+			[ "$#" -ge 2 ] || die "--key needs a file"
+			key=$2
+			shift 2
+			;;
+		--key-id)
+			[ "$#" -ge 2 ] || die "--key-id needs a value"
+			key_id=$2
+			shift 2
+			;;
+		--issuer)
+			[ "$#" -ge 2 ] || die "--issuer needs a value"
+			issuer=$2
+			shift 2
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*) die "unknown argument: $1" ;;
+		esac
+	done
+
+	if [ -n "$key" ]; then
+		[ -n "$key_id" ] || die "--key needs --key-id"
+		set -- store-credentials "$PROFILE" --key "$key" --key-id "$key_id"
+		[ -n "$issuer" ] && set -- "$@" --issuer "$issuer"
+	else
+		say "Apple ID, team $TEAM_ID, and an app-specific password."
+		say "Create one at https://account.apple.com, under Sign-In and Security."
+		say ""
+		set -- store-credentials "$PROFILE" --team-id "$TEAM_ID"
+		[ -n "$apple_id" ] && set -- "$@" --apple-id "$apple_id"
+	fi
+
+	xcrun notarytool "$@"
+
+	if xcrun notarytool history --keychain-profile "$PROFILE" --output-format json >/dev/null 2>&1; then
+		ok "notary credentials stored as \"$PROFILE\""
+		say "Next: make dmg"
+	else
+		warn "stored, but a history request with \"$PROFILE\" failed"
+		say "  run 'scripts/macos-signing credentials' again, or check the team and password"
+	fi
+}
+
+verify_app() {
+	local app=$1 ticket=${2:-required} rc=0 out
+
+	say "app: $app"
+	if out=$(codesign --verify --deep --strict --verbose=2 "$app" 2>&1); then
+		ok "signature verifies"
+	else
+		warn "signature does not verify"
+		printf '%s\n' "$out" | sed 's/^/  /'
+		rc=1
+	fi
+
+	out=$(codesign -dvvv "$app" 2>&1)
+	printf '%s\n' "$out" | grep -E '^(Authority|TeamIdentifier|Timestamp|flags)=' | sed 's/^/  /' || true
+	case "$out" in
+	*"flags=0x"*"(runtime)"*) ok "hardened runtime" ;;
+	*)
+		warn "not signed with the hardened runtime"
+		rc=1
+		;;
+	esac
+	case "$out" in
+	*"Authority=Developer ID Application"*) ok "signed with a Developer ID Application certificate" ;;
+	*)
+		warn "not signed with a Developer ID Application certificate"
+		rc=1
+		;;
+	esac
+	case "$out" in
+	*"Timestamp="*) ok "secure timestamp" ;;
+	*)
+		warn "no secure timestamp"
+		rc=1
+		;;
+	esac
+
+	if out=$(xcrun stapler validate "$app" 2>&1); then
+		ok "notarization ticket stapled"
+	elif [ "$ticket" = "optional" ]; then
+		# MyGo staples the standalone app for updates, not the copy inside
+		# the image: the image's ticket covers it (see cmd/mygo/dmg.go).
+		say "  the image carries the ticket; the app copy inside it does not"
+	else
+		warn "no stapled ticket"
+		printf '%s\n' "$out" | sed 's/^/  /'
+		rc=1
+	fi
+	if out=$(spctl --assess --type execute --verbose=4 "$app" 2>&1); then
+		ok "Gatekeeper accepts the app"
+	else
+		warn "Gatekeeper rejects the app"
+		printf '%s\n' "$out" | sed 's/^/  /'
+		rc=1
+	fi
+	return "$rc"
+}
+
+verify_dmg() {
+	local dmg=$1 rc=0 out
+
+	say "disk image: $dmg"
+	if out=$(xcrun stapler validate "$dmg" 2>&1); then
+		ok "notarization ticket stapled to the image"
+	else
+		warn "no stapled ticket on the image"
+		printf '%s\n' "$out" | sed 's/^/  /'
+		rc=1
+	fi
+	if out=$(spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg" 2>&1); then
+		ok "Gatekeeper accepts the image"
+	else
+		warn "Gatekeeper rejects the image"
+		printf '%s\n' "$out" | sed 's/^/  /'
+		rc=1
+	fi
+
+	local mnt app
+	mnt=$(mktemp -d)
+	if hdiutil attach "$dmg" -mountpoint "$mnt" -nobrowse -readonly -quiet; then
+		app=$(find "$mnt" -maxdepth 1 -name '*.app' | head -n 1)
+		if [ -n "$app" ]; then
+			say ""
+			verify_app "$app" optional || rc=1
+		else
+			warn "no app in the image"
+			rc=1
+		fi
+		hdiutil detach "$mnt" -quiet || true
+	else
+		warn "could not mount the image"
+		rc=1
+	fi
+	rmdir "$mnt" 2>/dev/null || true
+	return "$rc"
+}
+
+cmd_verify() {
+	require_darwin
+	local path=${1:-}
+	if [ -z "$path" ]; then
+		path=$(newest_file "$ROOT"/build/darwin-universal/*.dmg)
+	fi
+	if [ -z "$path" ]; then
+		path=$(newest_file "$ROOT"/build/darwin-*/*.dmg)
+	fi
+	[ -n "$path" ] || die "no disk image in build/: run make dmg first, or give a path"
+	[ -e "$path" ] || die "$path: no such file"
+
+	local rc=0
+	case "$path" in
+	*.app) verify_app "$path" || rc=1 ;;
+	*.dmg) verify_dmg "$path" || rc=1 ;;
+	*) die "give a .app or a .dmg" ;;
+	esac
+	say ""
+	if [ "$rc" -eq 0 ]; then
+		say "Notarized and accepted by Gatekeeper."
+	else
+		say "Not notarized: fix the lines above (docs/SIGNING.md, Troubleshooting)."
+	fi
+	return "$rc"
+}
+
+cmd_export_p12() {
+	require_darwin
+	local out="" key="$SIGNING_DIR/DeveloperID.key" cert="$SIGNING_DIR/DeveloperID.cer" password=""
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+		--out)
+			[ "$#" -ge 2 ] || die "--out needs a file"
+			out=$2
+			shift 2
+			;;
+		--key)
+			[ "$#" -ge 2 ] || die "--key needs a file"
+			key=$2
+			shift 2
+			;;
+		--cert)
+			[ "$#" -ge 2 ] || die "--cert needs a file"
+			cert=$2
+			shift 2
+			;;
+		--password)
+			[ "$#" -ge 2 ] || die "--password needs a value"
+			password=$2
+			shift 2
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*) die "unknown argument: $1" ;;
+		esac
+	done
+	[ -n "$out" ] || die "usage: scripts/macos-signing export-p12 --out FILE"
+	[ -f "$key" ] || die "$key: no such file; pass --key, or export the identity from Keychain Access"
+	[ -f "$cert" ] || die "$cert: no such file; pass --cert"
+
+	if [ -z "$password" ]; then
+		password=${MYTOKEN_P12_PASSWORD:-}
+	fi
+	if [ -z "$password" ]; then
+		local first
+		read -r -s -p "Password for the .p12: " password
+		say ""
+		read -r -s -p "Again: " first
+		say ""
+		[ "$password" = "$first" ] || die "the passwords differ"
+		[ -n "$password" ] || die "empty password"
+	fi
+
+	local work cert_pem
+	work=$(mktemp -d -t mytoken-p12)
+	cert_pem="$work/cert.pem"
+	pem_certificate "$cert" "$cert_pem" || die "$cert: not a certificate this openssl can read"
+	"$OPENSSL" pkcs12 -export -inkey "$key" -in "$cert_pem" -out "$out" \
+		-name "$IDENTITY_PREFIX" -passout "pass:$password" 2>/dev/null
+	rm -rf "$work"
+	chmod 600 "$out"
+	ok "wrote $out"
+	say ""
+	say "Add it to the repository's secrets:"
+	say "  base64 -i '$out' | gh secret set MACOS_CERTIFICATE"
+	say "  gh secret set MACOS_CERTIFICATE_PASSWORD   # the password you typed"
+	say ""
+	say "Then delete the file: rm '$out'"
+}
+
+case "${1:-}" in
+check)
+	shift
+	cmd_check "$@"
+	;;
+csr)
+	shift
+	cmd_csr "$@"
+	;;
+install-cert)
+	shift
+	cmd_install_cert "$@"
+	;;
+credentials)
+	shift
+	cmd_credentials "$@"
+	;;
+verify)
+	shift
+	cmd_verify "$@"
+	;;
+export-p12)
+	shift
+	cmd_export_p12 "$@"
+	;;
+"" | -h | --help | help)
+	usage
+	;;
+*)
+	die "unknown command: $1 (try --help)"
+	;;
+esac
