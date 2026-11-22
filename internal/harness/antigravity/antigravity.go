@@ -1,13 +1,16 @@
 // Package antigravity parses the Antigravity app and IDE agent conversations.
 //
 // Roots: $MYTOKEN_ANTIGRAVITY_DIRS when set, else the per-surface conversation
-// directories under $GEMINI_CLI_HOME (default ~/.gemini):
+// directories under $GEMINI_CLI_HOME (default ~/.gemini), plus T3 Code's
+// per-instance ACP conversation directories under $T3CODE_HOME (default ~/.t3):
 //
 //	~/.gemini/antigravity/conversations       standalone app
 //	~/.gemini/antigravity-cli/conversations   CLI
 //	~/.gemini/antigravity-cli/implicit
 //	~/.gemini/antigravity-ide/conversations   IDE
 //	~/.gemini/antigravity-ide/implicit
+//	~/.gemini/antigravity-acp/conversations   standalone ACP
+//	~/.t3/{userdata,dev}/providers/antigravity/<instance>/antigravity-acp/conversations
 //
 // Only the SQLite cascades (`*.db`) are read. Newer builds also write `*.pb`
 // cascade files, whose contents are only decodable through the language server's
@@ -75,7 +78,9 @@ func init() { harness.Register(New()) }
 
 // rootProvenance reports Antigravity's default roots and where each came from.
 // MYTOKEN_ANTIGRAVITY_DIRS replaces the whole set; GEMINI_CLI_HOME is an
-// explicit harness-specific base; otherwise the base is the platform default.
+// explicit harness-specific base for the standalone surfaces and T3CODE_HOME
+// the base for T3 Code's per-instance ACP sessions; otherwise those bases are
+// the platform defaults.
 func rootProvenance() ([]harness.Root, error) {
 	if v, ok := harness.Getenv("MYTOKEN_ANTIGRAVITY_DIRS"); ok {
 		dirs, err := harness.SplitEnvList("MYTOKEN_ANTIGRAVITY_DIRS", v)
@@ -84,13 +89,21 @@ func rootProvenance() ([]harness.Root, error) {
 		}
 		return harness.EnvRoots("MYTOKEN_ANTIGRAVITY_DIRS", dirs...), nil
 	}
+	var roots []harness.Root
 	if base, ok := harness.Getenv("GEMINI_CLI_HOME"); ok {
-		return harness.EnvRoots("GEMINI_CLI_HOME", conversationDirs(base)...), nil
+		roots = append(roots, harness.EnvRoots("GEMINI_CLI_HOME", conversationDirs(base)...)...)
+	} else {
+		roots = append(roots, harness.BuiltinRoots(conversationDirs(filepath.Join(harness.Home(), ".gemini"))...)...)
 	}
-	return harness.BuiltinRoots(conversationDirs(filepath.Join(harness.Home(), ".gemini"))...), nil
+	if base, ok := harness.Getenv("T3CODE_HOME"); ok {
+		roots = append(roots, harness.EnvRoots("T3CODE_HOME", t3CodeProviderDirs(base)...)...)
+	} else {
+		roots = append(roots, harness.BuiltinRoots(t3CodeProviderDirs(filepath.Join(harness.Home(), ".t3"))...)...)
+	}
+	return roots, nil
 }
 
-// conversationDirs returns the five conversation directories under base.
+// conversationDirs returns the six per-surface conversation directories under base.
 func conversationDirs(base string) []string {
 	return []string{
 		filepath.Join(base, "antigravity", "conversations"),
@@ -98,7 +111,47 @@ func conversationDirs(base string) []string {
 		filepath.Join(base, "antigravity-cli", "implicit"),
 		filepath.Join(base, "antigravity-ide", "conversations"),
 		filepath.Join(base, "antigravity-ide", "implicit"),
+		filepath.Join(base, "antigravity-acp", "conversations"),
 	}
+}
+
+// t3CodeProviderDirs returns the two T3 Code state roots that hold Antigravity
+// provider instances. Each instance keeps its ACP agent state under
+// <instance>/antigravity-acp, so Discover expands these roots per instance.
+func t3CodeProviderDirs(base string) []string {
+	return []string{
+		filepath.Join(base, "userdata", "providers", "antigravity"),
+		filepath.Join(base, "dev", "providers", "antigravity"),
+	}
+}
+
+// conversationRoots expands one root into the directories Discover reads. T3
+// Code provider roots hold one directory per instance; every other root is
+// returned unchanged.
+func conversationRoots(root string) []string {
+	if !strings.EqualFold(filepath.Base(root), "antigravity") ||
+		!strings.EqualFold(filepath.Base(filepath.Dir(root)), "providers") {
+		return []string{root}
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, entry.Name(), "antigravity-acp", "conversations")
+		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+			dirs = append(dirs, dir)
+		}
+	}
+	if len(dirs) == 0 {
+		return []string{root}
+	}
+	sort.Strings(dirs)
+	return dirs
 }
 
 // DefaultRoots returns the Antigravity conversation directories for this machine.
@@ -148,24 +201,26 @@ func (p *Parser) Discover(ctx context.Context) ([]harness.Source, error) {
 		if root == "" {
 			continue
 		}
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if e.IsDir() {
+		for _, dir := range conversationRoots(root) {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
 				continue
 			}
-			name := e.Name()
-			if !strings.EqualFold(filepath.Ext(name), ".db") {
-				continue
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				name := e.Name()
+				if !strings.EqualFold(filepath.Ext(name), ".db") {
+					continue
+				}
+				path := filepath.Join(dir, name)
+				if seen[path] {
+					continue
+				}
+				seen[path] = true
+				out = append(out, harness.Source{Path: path, Kind: kindSQLite})
 			}
-			path := filepath.Join(root, name)
-			if seen[path] {
-				continue
-			}
-			seen[path] = true
-			out = append(out, harness.Source{Path: path, Kind: kindSQLite})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })

@@ -214,7 +214,7 @@ takes a key recovered elsewhere, such as with
 | Amp | `amp` | `$AMP_DATA_DIR` (comma-separated), else `~/.local/share/amp` |
 | Kiro | `kiro` | `$KIRO_HOME` (`~/.kiro` by default), plus the platform Kiro `globalStorage` agent directory |
 | Zed | `zed` | `…/Zed/threads/threads.db` (macOS: `~/Library/Application Support`, Windows: `%LOCALAPPDATA%`, Linux: `~/.local/share/zed`), SQLite |
-| Antigravity | `antigravity` | `$GEMINI_CLI_HOME/antigravity{,-cli,-ide}/conversations` and the matching `implicit` dirs (`~/.gemini` by default), only `*.db` |
+| Antigravity | `antigravity` | `$GEMINI_CLI_HOME/antigravity{,-cli,-ide}/conversations` and the matching `implicit` dirs, `$GEMINI_CLI_HOME/antigravity-acp/conversations`, and T3 Code's `$T3CODE_HOME/{userdata,dev}/providers/antigravity/*/antigravity-acp/conversations` (`~/.t3` by default); only `*.db` |
 | Codebuff | `codebuff` | `$CODEBUFF_DATA_DIR`, else `~/.config/manicode`, `~/.config/manicode-dev` and `~/.config/manicode-staging` |
 | Mux | `mux` | `$CODEBURN_MUX_DIR` or `$MUX_ROOT`, else `~/.mux`, `~/.mux-dev` and `~/.cmux` |
 | ZCode | `zcode` | `$MYTOKEN_ZCODE_DIRS`, else `~/.zcode/cli/db/db.sqlite`, query-only SQLite |
@@ -259,7 +259,7 @@ Every reader can be pointed somewhere else for non-default installs, containers 
 | `AMP_DATA_DIR`, `MYTOKEN_AMP_DIRS` | Amp data dirs (comma-separated), or explicit dirs (path list) |
 | `KIRO_HOME`, `MYTOKEN_KIRO_DIRS` | Kiro home dir, or explicit dirs (path list) |
 | `MYTOKEN_ZED_DIRS` | Explicit Zed threads dirs (path list) |
-| `MYTOKEN_ANTIGRAVITY_DIRS` | Explicit Antigravity conversation dirs (path list) |
+| `T3CODE_HOME`, `MYTOKEN_ANTIGRAVITY_DIRS` | T3 Code data dir, or explicit Antigravity conversation dirs (path list) |
 | `CODEBUFF_DATA_DIR`, `MYTOKEN_CODEBUFF_DIRS` | Codebuff data dir, or explicit dirs (path list) |
 | `CODEBURN_MUX_DIR`, `MUX_ROOT`, `MYTOKEN_MUX_DIRS` | Mux data dir, or explicit dirs (path list) |
 | `MYTOKEN_ZCODE_DIRS` | Explicit ZCode database files or containing dirs (path list) |
