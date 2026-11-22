@@ -126,23 +126,27 @@ way. `scripts/macos-signing verify path/to/mytoken.app` still requires the app's
 ## 4. CI (GitHub Actions)
 
 `.github/workflows/release.yml` imports the certificate and stores the notary credentials on the
-macOS runner, then builds the same way. Add these repository secrets:
+macOS runner, then builds the same way. Add these repository secrets (or organization secrets with
+`--org <org> --repos <repo>`):
 
 ```sh
 scripts/macos-signing export-p12 --out DeveloperID.p12
 base64 -i DeveloperID.p12 | gh secret set MACOS_CERTIFICATE
 gh secret set MACOS_CERTIFICATE_PASSWORD   # the password from export-p12
-gh secret set APPLE_ID
-gh secret set APPLE_TEAM_ID                # X84WC7J5JH
-gh secret set APPLE_APP_PASSWORD           # the app-specific password
+base64 -i AuthKey_XXXXXX.p8 | gh secret set APPLE_API_KEY
+gh secret set APPLE_API_KEY_ID             # the key ID in the filename
+gh secret set APPLE_API_ISSUER             # the issuer ID, for Team API keys
 rm DeveloperID.p12
 ```
 
+An Apple ID works too: set `APPLE_ID`, `APPLE_TEAM_ID` and `APPLE_APP_PASSWORD` (the app-specific
+password) instead of the three API-key secrets.
+
 `export-p12` asks for a password; any strong one works, it only protects the file in transit. The
-workflow imports the p12 into a temporary keychain, stores the `mytoken-notary` profile in the
-runner's login keychain (notarytool's default), and deletes the temporary keychain afterwards. The
-macOS job fails early, naming what is missing, when a secret is absent — a release must not silently
-fall back to an ad-hoc build.
+workflow imports the p12 into a temporary keychain, decodes the API key into a temporary file,
+stores the `mytoken-notary` profile in the runner's login keychain (notarytool's default), and
+deletes both temporary files and the keychain afterwards. The macOS job fails early, naming what is
+missing, when a secret is absent — a release must not silently fall back to an ad-hoc build.
 
 ## Troubleshooting
 
