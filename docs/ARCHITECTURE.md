@@ -8,7 +8,7 @@ The data layer is deliberately small and linear:
 
 ```mermaid
 flowchart LR
-    logs["Tool logs<br/>JSONL · JSON · zstd · SQLite"] --> parsers["internal/harness<br/>35 readers · Discover · Parse"]
+    logs["Tool logs<br/>JSONL · JSON · zstd · SQLite"] --> parsers["internal/harness<br/>36 readers · Discover · Parse"]
     parsers --> scanner["internal/scan<br/>full · quick · watched · poll"]
     pricing["internal/pricing<br/>models.dev · LiteLLM · custom"] --> scanner
     scanner --> store[("internal/store<br/>mytoken.db (SQLite)")]
@@ -422,7 +422,7 @@ performance rescan against the normal app data directory; copy the index to a te
 
 ## Harness coverage status
 
-Each of the 35 registered parsers has a conformance fixture. Passing synthetic conformance is
+Each of the 36 registered parsers has a conformance fixture. Passing synthetic conformance is
 **not** the same as validation against real logs:
 
 - **Protocol-validated against upstream plus synthetic fixtures, without a committed anonymized
@@ -430,6 +430,10 @@ Each of the 35 registered parsers has a conformance fixture. Passing synthetic c
   compatibility paths.
 - **Conformance-only (no real-world fixture yet):** Amp, Kiro, Zed, Antigravity, Codebuff, Mux,
   Hermes and OpenClaw.
+- **Schema validated against a real install, fixture synthetic:** Cindy. Its
+  `messages.agent_meta.turnUsageDetails` records per-turn token classes, `sessions` carries the
+  session tree, and `daily_model_usage` keeps day/model aggregates after message pruning; the
+  committed fixture is synthetic because a real database carries conversation text.
 - **Schema validated against a real install, fixture synthetic:** Trae. Its `chat_turn.context`
   document, its `token_usage` fields and its project join were read out of a real macOS
   installation, but the committed fixture is built from seed scripts, because a real database is

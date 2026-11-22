@@ -34,6 +34,9 @@ go run . scan       # re-index now; the only CLI command that writes
 binary is both the app and the CLI. Use `go run . gui` to force the window. `make build`, `make run`
 and `make check` wrap the same commands; packaging targets are `make app`, `make dmg`, `make linux`
 and `make windows` (they call `go tool mygo build`, pinned in `go.mod`). `make help` lists them.
+`make dmg` signs and notarizes the macOS release and needs a Developer ID certificate plus notary
+credentials; `make dmg-local` builds the same image ad hoc, and [docs/SIGNING.md](docs/SIGNING.md)
+covers both.
 
 Environment variables that help while developing:
 
@@ -257,9 +260,10 @@ The version lives in [mygo.json](mygo.json) and is read by `go tool mygo build`;
 rewrites only its top-level `"version"` field. Pushing a `v*` tag runs
 [.github/workflows/release.yml](.github/workflows/release.yml), which creates a draft release,
 builds the macOS universal `.dmg`, the Windows installers, and the Linux `.deb`, tarballs and
-`install.sh`, then publishes the release as latest. Builds are ad-hoc signed on macOS and unsigned
-on Windows unless the signing secrets at the top of the workflow are present; the updater needs
-`MYGO_UPDATER_PRIVATE_KEY`.
+`install.sh`, then publishes the release as latest. The macOS build is signed and notarized with the
+Developer ID named in [mygo.json](mygo.json) — the workflow needs the secrets listed at its top, and
+[docs/SIGNING.md](docs/SIGNING.md) explains how to create them; the Windows installer is unsigned.
+The updater needs `MYGO_UPDATER_PRIVATE_KEY`.
 
 `make build`, `make app`, `make dmg`, `make linux` and `make windows` reproduce the artifacts
 locally. `make version` prints what the next build would embed. Follow the structure of the existing

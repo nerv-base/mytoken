@@ -12,6 +12,10 @@
   },
   "macos": {
     "dmgTitle": "MyToken!!!!!",
+    "signingIdentity": "Developer ID Application: xia li (X84WC7J5JH)",
+    "notarize": {
+      "keychainProfile": "mytoken-notary"
+    },
     "infoPlist": {
       "CFBundleName": "MyToken!!!!!",
       "CFBundleDisplayName": "MyToken!!!!!",

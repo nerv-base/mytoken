@@ -1,0 +1,5 @@
+-- Append one more session, its message and its daily aggregate.
+INSERT INTO sessions (id,title,working_dir,project_dir,model,provider_id,agent_kind,parent_session_id,created_at,updated_at,last_activity_at) VALUES ('s5','Ship release','/work/app','','gpt-6.1-sol','openai','codex',NULL,1794398400000,1794398500000,1794398500000)
+INSERT INTO messages (id,session_id,role,content,created_at,agent_meta) VALUES ('m20','s5','user','Ship the release',1794398401000,'')
+INSERT INTO messages (id,session_id,role,content,created_at,agent_meta) VALUES ('m21','s5','assistant','Release is shipped.',1794398402000,'{"turnUsageDetails":{"providerId":"openai","providerName":"OpenAI","billingSource":"subscription","inputTokens":300,"outputTokens":30,"cacheReadTokens":0,"cacheCreateTokens":0,"totalTokens":330,"model":"gpt-6.1-sol"}}')
+INSERT INTO daily_model_usage (day,agent_kind,model,cost_usd,updated_at,cost_amount,cost_currency,cost_is_approximate,input_tokens,output_tokens,cache_read_tokens,cache_create_tokens) VALUES ('2026-11-11','codex','gpt-6.1-sol#billing=subscription',0,1794398402000,0.05,'CNY',1,300,30,0,0)

@@ -24,7 +24,14 @@ LDFLAGS := -s -w -X $(PKG)/internal/cli.Version=$(VERSION)
 # The app is pure Go: no cgo, on every platform.
 export CGO_ENABLED := 0
 
-.PHONY: all help build run test vet fmt fmt-check check app dmg linux windows clean version bump
+# The first Developer ID Application certificate in the keychain, if any.
+# `make dmg` signs and notarizes with it; on a machine without one, use
+# `make dmg-local`. See docs/SIGNING.md.
+SIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)
+MYGO_SIGN = $(if $(SIGN_IDENTITY),-sign '$(SIGN_IDENTITY)',-sign -)
+
+.PHONY: all help build run test vet fmt fmt-check check app dmg dmg-local linux windows \
+	signing-check notary-credentials clean version bump
 
 all: check build
 
@@ -32,8 +39,11 @@ help:
 	@echo "make build        build ./$(BINARY) for this machine (version $(VERSION))"
 	@echo "make run          run the app from source"
 	@echo "make check        gofmt check, go vet and go test"
-	@echo "make app          package the app for this platform with MyGo"
-	@echo "make dmg          package the universal macOS .app and .dmg"
+	@echo "make app          package the app for this platform (signed if a Developer ID exists, never notarized)"
+	@echo "make dmg          package, sign and notarize the universal macOS .app and .dmg (release)"
+	@echo "make dmg-local    package the universal macOS .app and .dmg ad hoc, no notarization"
+	@echo "make signing-check    check the Developer ID certificate and notary credentials"
+	@echo "make notary-credentials  store notarytool credentials for mygo.json's keychainProfile"
 	@echo "make linux        package the Linux binaries, .deb and tarballs"
 	@echo "make windows      package the Windows .exe and installer (needs makensis)"
 	@echo "make version      print the version that would be built"
@@ -66,10 +76,26 @@ check: fmt-check vet test
 # --- packaging (go tool mygo build, configured by mygo.json) ----------------
 
 app:
-	$(GO) tool mygo build
+	$(GO) tool mygo build -skip-notarize $(MYGO_SIGN)
 
+# The release build. Needs a Developer ID Application certificate in the
+# keychain and notary credentials for mygo.json's keychainProfile; the
+# preflight stops before a full build when either is missing.
 dmg:
-	$(GO) tool mygo build -platform darwin/universal -skip-notarize
+	@scripts/macos-signing check >/dev/null 2>&1 || { \
+		echo "cannot sign and notarize yet:"; scripts/macos-signing check; \
+		echo; echo "or build unsigned with 'make dmg-local'"; exit 1; \
+	}
+	$(GO) tool mygo build -platform darwin/universal -sign '$(SIGN_IDENTITY)'
+
+dmg-local:
+	$(GO) tool mygo build -platform darwin/universal -sign - -skip-notarize
+
+signing-check:
+	@scripts/macos-signing check
+
+notary-credentials:
+	@scripts/macos-signing credentials
 
 linux:
 	$(GO) tool mygo build -platform linux/amd64,linux/arm64

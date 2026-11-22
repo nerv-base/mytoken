@@ -26,10 +26,10 @@ list price, and shows today's and this month's spend, your plan quotas and what 
 now — in a native desktop app, a menu-bar panel, or the command line. Everything stays on your
 machine.
 
-- **Thirty-five harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
-  Crush, Cline, Roo Code, Kilo Code, Claude Desktop, WorkBuddy, CodeBuddy, CodeBuddy CN, Hermes, Qwen Code, Kimi,
-  OpenClaude, Grok, OpenClaw, Droid, Goose, Forge, Amp, Kiro, Zed, Antigravity, Codebuff, Mux,
-  ZCode, MiniMax Code, MiMo Code, Step Code, Qoder and Trae.
+- **Thirty-six harnesses in one window** — Claude Code, Codex CLI, DSH, pi, Gemini CLI, opencode,
+  Crush, Cline, Roo Code, Kilo Code, Claude Desktop, WorkBuddy, CodeBuddy, CodeBuddy CN, Cindy, Hermes,
+  Qwen Code, Kimi, OpenClaude, Grok, OpenClaw, Droid, Goose, Forge, Amp, Kiro, Zed, Antigravity,
+  Codebuff, Mux, ZCode, MiniMax Code, MiMo Code, Step Code, Qoder and Trae.
 - **Session × provider × model** — the five token classes kept apart (input, output, cache read,
   cache write, reasoning), with cache-hit rate, per-project and per-day breakdowns, and sub-agent
   trees.
@@ -69,9 +69,8 @@ machine.
 ### macOS (disk image)
 
 Download `mytoken-<version>-darwin-universal.dmg` from [Releases](https://github.com/nerv-base/mytoken/releases), open it and drag **MyToken!!!!!**
-into *Applications*. The bundle is ad-hoc signed rather than notarized, so the first launch needs
-right-click → *Open* (or `xattr -dr com.apple.quarantine /Applications/mytoken.app`). The app's file
-name is `mytoken.app`; Finder and the menu bar show `MyToken!!!!!`.
+into *Applications*. The bundle is signed with a Developer ID and notarized by Apple, so it opens
+normally. The app's file name is `mytoken.app`; Finder and the menu bar show `MyToken!!!!!`.
 
 ### Windows (installer)
 
@@ -136,6 +135,7 @@ still counts toward spend.
 | WorkBuddy | `workbuddy` | WorkBuddy |
 | CodeBuddy | `codebuddy` | — |
 | CodeBuddy CN | `codebuddy-cn` | — |
+| Cindy | `cindy` | — |
 | Hermes | `hermes` | — |
 | Qwen Code | `qwen` | — |
 | Kimi / Kimi Code | `kimi` | — |
@@ -207,6 +207,7 @@ takes a key recovered elsewhere, such as with
 | WorkBuddy | `workbuddy` | `$WORKBUDDY_HOME/projects` (`~/.workbuddy/projects` by default) |
 | CodeBuddy | `codebuddy` | `$CODEBUDDY_HOME/projects` (`~/.codebuddy/projects` by default) |
 | CodeBuddy CN | `codebuddy-cn` | Desktop logs (macOS `~/Library/Application Support/CodeBuddy CN/logs` and `…/CodeBuddyExtension/Logs/{CodeBuddyIDE,VSCode}`; Windows `%APPDATA%\CodeBuddy CN\logs`, `%LOCALAPPDATA%\CodeBuddyExtension\Logs`; Linux the same names under `$XDG_CONFIG_HOME`/`$XDG_DATA_HOME`) plus CLI transcripts in `$CODEBUDDYCN_HOME/projects` (`~/.codebuddycn/projects` by default) |
+| Cindy | `cindy` | OS app-data `Cindy/cindy-*.db` (macOS: `~/Library/Application Support`, Windows: `%APPDATA%`, Linux: `${XDG_CONFIG_HOME:-~/.config}`), SQLite |
 | Hermes | `hermes` | `$HERMES_HOME` (`~/.hermes` by default), SQLite |
 | Qwen Code | `qwen` | `$QWEN_DATA_DIR/projects` (`~/.qwen/projects` by default) |
 | Kimi / Kimi Code | `kimi` | Legacy `$KIMI_SHARE_DIR/sessions` (`~/.kimi/sessions`) plus `$KIMI_CODE_HOME/sessions` (`~/.kimi-code/sessions`) |
@@ -254,6 +255,7 @@ Every reader can be pointed somewhere else for non-default installs, containers 
 | `MYTOKEN_CLAUDEDESKTOP_DIRS` | Explicit Claude Desktop session dirs (path list) |
 | `WORKBUDDY_HOME`, `CODEBUDDY_HOME` | WorkBuddy / CodeBuddy home dir |
 | `CODEBUDDYCN_HOME`, `CODEBUDDY_CN_HOME` | CodeBuddy CN home dir, instead of `~/.codebuddycn` |
+| `MYTOKEN_CINDY_DIRS`, `CINDY_HOST_DATA_DIR` | Explicit Cindy data roots, or a host data directory |
 | `HERMES_HOME` | Hermes home dir instead of `~/.hermes` |
 | `QWEN_DATA_DIR`, `MYTOKEN_QWEN_DIRS` | Qwen Code data dir, or explicit dirs (path list) |
 | `KIMI_SHARE_DIR`, `KIMI_CODE_HOME`, `MYTOKEN_KIMI_DIRS` | Kimi / Kimi Code data dirs, or explicit dirs (path list) |

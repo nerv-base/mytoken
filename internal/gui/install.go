@@ -40,6 +40,7 @@ var installHints = map[model.Harness]installHint{
 	model.WorkBuddy:     {"", "https://www.codebuddy.cn/work"},
 	model.CodeBuddy:     {"npm install -g @tencent-ai/codebuddy-code", "https://www.codebuddy.ai"},
 	model.CodeBuddyCN:   {"", "https://www.codebuddy.cn"},
+	model.Cindy:         {"", "https://cindy.app"},
 	model.Hermes:        {"curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash", "https://hermes-agent.nousresearch.com/"},
 	model.Amp:           {"curl -fsSL https://ampcode.com/install.sh | bash", "https://ampcode.com"},
 	model.Kiro:          {"curl -fsSL https://cli.kiro.dev/install | bash", "https://kiro.dev"},
