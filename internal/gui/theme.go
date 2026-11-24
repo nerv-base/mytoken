@@ -233,12 +233,13 @@ func loadBrand(name string) *ui.SVG {
 // quotaHarness maps quota accounts that belong to a tracked tool to it, so
 // they wear the tool's badge.
 var quotaHarness = map[string]model.Harness{
-	"codex":     model.Codex,
-	"workbuddy": model.WorkBuddy,
-	"codebuddy": model.CodeBuddy,
-	"kimi":      model.Kimi,
-	"deepseek":  model.DSH,
-	"qoder":     model.Qoder,
+	"codex":       model.Codex,
+	"workbuddy":   model.WorkBuddy,
+	"codebuddy":   model.CodeBuddy,
+	"kimi":        model.Kimi,
+	"deepseek":    model.DSH,
+	"qoder":       model.Qoder,
+	"antigravity": model.Antigravity,
 }
 
 // quotaIcons are the marks of quota accounts without a tracked tool.
