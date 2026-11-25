@@ -3,6 +3,19 @@
 The section of each version is also what the app's update window shows, so
 every release needs one here (`## 0.2.1`), written for the people updating.
 
+## 0.6.1
+
+- **Antigravity's Gemini quota is on the dashboard.** The plan card reads the
+  Gemini 5-hour and weekly windows from Antigravity's own local language server
+  while the desktop app is running, falling back to the `agy` CLI login in the
+  macOS Keychain or the token T3 Code saved. It asks Cloud Code's own quota
+  endpoint, never refreshes or rewrites a stored login, and ignores the Claude
+  and GPT groups in the same response.
+- **MyToken installs with Homebrew.** A new cask installs the app into
+  *Applications* and links `mytoken` into Homebrew's `bin`; `brew upgrade
+  --cask mytoken` keeps it current. If the disk-image build is already there,
+  `brew install --cask --adopt mytoken` takes it over in place.
+
 ## 0.6.0
 
 - **CodeBuddy CN is readable now.** The mainland desktop build journals every

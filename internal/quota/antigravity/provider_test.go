@@ -220,6 +220,7 @@ func TestFetchDaemonFallsBackToToken(t *testing.T) {
 		Transport: apiSrv.Client(),
 		BaseURL:   apiSrv.URL,
 		GOOS:      "linux",
+		Now:       func() time.Time { return time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC) },
 	})
 	snap, err := p.Fetch(context.Background())
 	if err != nil {
@@ -307,9 +308,15 @@ func TestFetchMalformed(t *testing.T) {
 	root := t.TempDir()
 	writeToken(t, root, "instance-a", tokenJSON("token", "2026-11-25T01:00:00Z"))
 	srv := serveFixture(t, `not json`)
-	p := New(Options{Home: t.TempDir(), T3Roots: []string{root}, Transport: srv.Client(), BaseURL: srv.URL, GOOS: "linux"})
-	_, err := p.Fetch(context.Background())
-	if !plan.IsReason(err, plan.ReasonMalformed) {
+	p := New(Options{
+		Home:      t.TempDir(),
+		T3Roots:   []string{root},
+		Transport: srv.Client(),
+		BaseURL:   srv.URL,
+		GOOS:      "linux",
+		Now:       func() time.Time { return time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC) },
+	})
+	if _, err := p.Fetch(context.Background()); !plan.IsReason(err, plan.ReasonMalformed) {
 		t.Fatalf("err = %v, want malformed_response", err)
 	}
 }
@@ -318,9 +325,15 @@ func TestFetchNoGeminiGroup(t *testing.T) {
 	root := t.TempDir()
 	writeToken(t, root, "instance-a", tokenJSON("token", "2026-11-25T01:00:00Z"))
 	srv := serveFixture(t, `{"groups":[{"displayName":"Claude and GPT models","buckets":[{"bucketId":"3p-5h","remainingFraction":1}]}]}`)
-	p := New(Options{Home: t.TempDir(), T3Roots: []string{root}, Transport: srv.Client(), BaseURL: srv.URL, GOOS: "linux"})
-	_, err := p.Fetch(context.Background())
-	if !plan.IsReason(err, plan.ReasonNoData) {
+	p := New(Options{
+		Home:      t.TempDir(),
+		T3Roots:   []string{root},
+		Transport: srv.Client(),
+		BaseURL:   srv.URL,
+		GOOS:      "linux",
+		Now:       func() time.Time { return time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC) },
+	})
+	if _, err := p.Fetch(context.Background()); !plan.IsReason(err, plan.ReasonNoData) {
 		t.Fatalf("err = %v, want no_data", err)
 	}
 }
