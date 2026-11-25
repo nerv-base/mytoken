@@ -33,7 +33,7 @@ API 价格给每次请求算出等价费用，展示今日与本月花费、套�
 - **API 等价费用** —— 优先用 models.dev 的价格、LiteLLM 兜底，界面明确标注这是“按官方 API 价”的等价费用。
   套餐、网关或议价不同时，可以按模型自定义单价；不叠加供应商倍率，也不推断折扣。
 - **花费优先** —— 今日花费大字显示，本月累计带月末预测，每日花费按工具堆叠，排行按花费。
-- **套餐额度** —— Codex、Claude、Cursor、Copilot、GLM、Trae、WorkBuddy、Qoder、ZCode 以及 DeepSeek API 余额，
+- **套餐额度** —— Codex、Claude、Cursor、Copilot、Antigravity、GLM、Trae、WorkBuddy、Qoder、ZCode 以及 DeepSeek API 余额，
   自动检测并向各服务商请求。用量窗口显示已用比例和重置时间；积分余额显示剩余和还能用多少天。
 - **正在进行** —— 当前运行中的会话：已花费、每小时花费、缓存命中率和估算的输出速度。
 - **菜单栏** —— 图标旁显示今日花费（也可选每小时花费、缓存命中率、额度）；面板显示今日、正在进行的会话和
@@ -149,7 +149,7 @@ MyToken!!!!! 读取每个工具本来就保留的日志，只读、不回写：�
 | Amp | `amp` | — |
 | Kiro | `kiro` | — |
 | Zed | `zed` | — |
-| Antigravity | `antigravity` | — |
+| Antigravity | `antigravity` | Antigravity（Gemini） |
 | Codebuff | `codebuff` | — |
 | Mux | `mux` | — |
 | ZCode | `zcode` | — |
@@ -287,6 +287,7 @@ Linux 为 `~/.config/<editor>/User/globalStorage`（或 `$XDG_CONFIG_HOME/…`�
 | Claude | Claude 套餐的用量窗口，来自 Claude Code 的登录 |
 | Cursor | Cursor 套餐用量，来自 Cursor 应用登录 |
 | GitHub Copilot | Copilot 用量，来自 Copilot 登录 |
+| Antigravity | Gemini 套餐用量窗口，来自桌面应用、agy CLI 或 T3 Code 的登录 |
 | GLM | Z.ai / BigModel Coding Plan 限额，来自 `Z_AI_API_KEY` 或 `BIGMODEL_API_KEY` |
 | Trae（CN / Global） | Trae 套餐用量，来自应用登录 |
 | WorkBuddy | WorkBuddy 套餐用量，来自应用登录 |

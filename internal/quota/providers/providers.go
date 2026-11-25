@@ -8,6 +8,7 @@ package providers
 
 import (
 	"github.com/nerv-base/mytoken/internal/claudequota"
+	"github.com/nerv-base/mytoken/internal/quota/antigravity"
 	"github.com/nerv-base/mytoken/internal/quota/codex"
 	"github.com/nerv-base/mytoken/internal/quota/copilot"
 	"github.com/nerv-base/mytoken/internal/quota/cursor"
@@ -27,6 +28,7 @@ func All() []plan.Provider {
 		claudequota.New(claudequota.Options{}),
 		cursor.New(cursor.Options{}),
 		copilot.New(copilot.Options{}),
+		antigravity.New(antigravity.Options{}),
 		glm.New(glm.Options{}),
 		deepseek.New(deepseek.Options{}),
 		trae.New(trae.Options{}),

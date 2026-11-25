@@ -38,7 +38,7 @@ machine.
   there are no provider multipliers or inferred discounts.
 - **Spend first** — today's cost in big type, the month so far with a forecast, daily spend stacked
   by tool, and rankings by cost.
-- **Plan quotas** — Codex, Claude, Cursor, Copilot, GLM, Trae, WorkBuddy, Qoder, ZCode and your
+- **Plan quotas** — Codex, Claude, Cursor, Copilot, Antigravity, GLM, Trae, WorkBuddy, Qoder, ZCode and your
   DeepSeek API balance, fetched from each provider and detected automatically. Usage windows show
   the share used and when they reset; credit balances show what is left and how many days that buys.
 - **Live sessions** — what is running right now, with its cost so far, spend per hour, cache hit
@@ -162,7 +162,7 @@ still counts toward spend.
 | Amp | `amp` | — |
 | Kiro | `kiro` | — |
 | Zed | `zed` | — |
-| Antigravity | `antigravity` | — |
+| Antigravity | `antigravity` | Antigravity (Gemini) |
 | Codebuff | `codebuff` | — |
 | Mux | `mux` | — |
 | ZCode | `zcode` | — |
@@ -308,6 +308,7 @@ login, and it never derives a quota from local usage.
 | Claude | Claude plan usage windows, from the Claude Code sign-in |
 | Cursor | Cursor plan usage, from the Cursor app login |
 | GitHub Copilot | Copilot usage, from the Copilot sign-in |
+| Antigravity | Gemini plan usage windows, from the desktop app, agy CLI or T3 Code sign-in |
 | GLM | Z.ai / BigModel Coding Plan limits, from `Z_AI_API_KEY` or `BIGMODEL_API_KEY` |
 | Trae (CN / Global) | Trae plan usage, from the app login |
 | WorkBuddy | WorkBuddy plan usage, from the app login |

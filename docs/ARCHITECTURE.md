@@ -360,12 +360,14 @@ type Provider interface {
   exponentially (1 → 30 minutes, honoring `Retry-After` up to an hour). Only the last good
   snapshot and the status are persisted, under `quota.plan.<id>`; `Offline` reads the cache
   without fetching.
-- `internal/quota/providers/providers.go` wires Codex, Claude Code, Cursor, GitHub Copilot, GLM,
-  DeepSeek, Trae (CN and Global), WorkBuddy (and its AI variant), Qoder and ZCode. Codex reads its
-  existing `$CODEX_HOME/auth.json` (default `~/.codex`) and calls the ChatGPT backend usage endpoint;
-  DeepSeek reads its Harness credential or `DEEPSEEK_API_KEY` and calls the balance endpoint. ZCode
-  unseals the token the ZCode app stores in `~/.zcode/v2/credentials.json` and calls the ZCode
-  gateway's plan-balance endpoint. No provider refreshes or rewrites a stored login.
+- `internal/quota/providers/providers.go` wires Codex, Claude Code, Cursor, GitHub Copilot,
+  Antigravity, GLM, DeepSeek, Trae (CN and Global), WorkBuddy (and its AI variant), Qoder and ZCode.
+  Codex reads its existing `$CODEX_HOME/auth.json` (default `~/.codex`) and calls the ChatGPT
+  backend usage endpoint; DeepSeek reads its Harness credential or `DEEPSEEK_API_KEY` and calls the
+  balance endpoint. ZCode unseals the token the ZCode app stores in `~/.zcode/v2/credentials.json`
+  and calls the ZCode gateway's plan-balance endpoint. Antigravity queries the desktop app's local
+  language server when it is running, otherwise falls back to the agy or T3 Code OAuth token and
+  Cloud Code's `retrieveUserQuotaSummary`. No provider refreshes or rewrites a stored login.
 - The UI only shows a quota card for a provider whose credential was detected. There is no
   separate consent step, and no credential is copied into the index.
 
