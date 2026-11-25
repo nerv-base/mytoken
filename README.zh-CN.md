@@ -59,6 +59,19 @@ API 价格给每次请求算出等价费用，展示今日与本月花费、套�
 
 ## 安装
 
+### macOS（Homebrew）
+
+```sh
+brew tap nerv-base/tap
+brew trust --cask nerv-base/tap/mytoken
+brew install --cask mytoken
+```
+
+把 **MyToken!!!!!** 安装到 *应用程序*，并把 `mytoken` 命令链接到 Homebrew 的 `bin`。
+用 `brew upgrade --cask mytoken` 升级；应用本身也会检查更新。Cask 维护在
+[nerv-base/homebrew-tap](https://github.com/nerv-base/homebrew-tap)。如果已经通过磁盘映像
+安装过，在 `brew install --cask` 后加 `--adopt`，让 Homebrew 接管现有应用，而不是因已存在而停止。
+
 ### macOS（磁盘映像）
 
 从 [Releases](https://github.com/nerv-base/mytoken/releases) 下载 `mytoken-<版本>-darwin-universal.dmg`，打开后把
