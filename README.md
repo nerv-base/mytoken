@@ -66,6 +66,20 @@ machine.
 
 ## Install
 
+### macOS (Homebrew)
+
+```sh
+brew tap nerv-base/tap
+brew trust --cask nerv-base/tap/mytoken
+brew install --cask mytoken
+```
+
+Installs **MyToken!!!!!** into *Applications* and links the `mytoken` command into Homebrew's
+`bin`. Upgrade with `brew upgrade --cask mytoken`; the app also checks for updates. The cask lives
+in [nerv-base/homebrew-tap](https://github.com/nerv-base/homebrew-tap). If MyToken is already in
+*Applications* from the disk image, add `--adopt` to `brew install --cask` so Homebrew takes over
+the identical app instead of stopping on the existing copy.
+
 ### macOS (disk image)
 
 Download `mytoken-<version>-darwin-universal.dmg` from [Releases](https://github.com/nerv-base/mytoken/releases), open it and drag **MyToken!!!!!**
